@@ -1,0 +1,610 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Mic,
+  FileText,
+  History,
+  Settings,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Square,
+} from 'lucide-react';
+import {
+  AppDataSnapshot,
+  AppSettings,
+  AsrModelInfo,
+  AudioDeviceInfo,
+  AudioSourceMode,
+  DictionaryEntry,
+  IntegrationAdapterInfo,
+  Note,
+  RecordingStatus,
+  SecretStatus,
+} from './types';
+import {
+  apiChatNotes,
+  apiCopyAndPreparePaste,
+  apiDeleteDictionaryEntry,
+  apiDeleteNote,
+  apiDownloadAsrModel,
+  apiDraftFollowup,
+  apiExportAllData,
+  apiGetMcpConfigPreview,
+  apiGetRecordingStatus,
+  apiGetSecretStatus,
+  apiGetSnapshot,
+  apiListAsrModels,
+  apiListAudioDevices,
+  apiListIntegrationAdapters,
+  apiNotionExchangeCode,
+  apiNotionOAuthUrl,
+  apiNotionSaveNote,
+  apiNotionSearchTargets,
+  apiPauseRecording,
+  apiPurgeAllData,
+  apiResumeRecording,
+  apiRunRecipe,
+  apiSaveDictionaryEntry,
+  apiSaveNote,
+  apiSaveSettings,
+  apiSendWebhook,
+  apiSetSecret,
+  apiShareToSlack,
+  apiStartRecording,
+  apiStopRecording,
+  apiSummarizeNote,
+  apiTranscribeRecording,
+  isTauriRuntime,
+} from './lib/tauri';
+import { createEmptyNote, formatMs } from './lib/format';
+import { HomeView } from './components/HomeView';
+import { RecordingView } from './components/RecordingView';
+import { NoteEditorView } from './components/NoteEditorView';
+import { HistoryView } from './components/HistoryView';
+import { SettingsView } from './components/SettingsView';
+
+type NavView = 'home' | 'recording' | 'editor' | 'history' | 'settings';
+
+const FALLBACK_SETTINGS: AppSettings = {
+  plan_tier: 'basic',
+  active_asr_model_id: 'whisper-small-q5',
+  active_asr_provider: 'local_whisper',
+  language: 'ja',
+  allow_cloud_asr: false,
+  llm_provider: 'none',
+  llm_model: 'gpt-4o-mini',
+  llm_endpoint: 'http://localhost:11434',
+  record_shortcut: 'CommandOrControl+Shift+R',
+  voice_typing_shortcut: 'CommandOrControl+Shift+V',
+  delete_audio_after_transcribe: true,
+  encrypt_retained_audio: true,
+  retention_days: 0,
+  participant_notice_enabled: false,
+  participant_notice_text: 'この会話はメモ作成のために録音・文字起こしを行っています。',
+  admin_enforced_notice: false,
+  opt_out_model_training: true,
+  org_opt_out_model_training: true,
+  copy_format: 'markdown',
+  notion_target_id: '',
+  notion_target_type: 'database',
+  notion_target_name: '',
+  notion_mapping: {
+    title_prop: 'Name',
+    date_prop: 'Date',
+    participants_prop: 'Participants',
+    summary_prop: 'Summary',
+    actions_prop: 'Action Items',
+  },
+  whisper_cli_path: '',
+  parakeet_cli_path: '',
+  slack_webhook_configured: false,
+  generic_webhook_url: '',
+  mcp_enabled: false,
+  mcp_scope: 'personal_30d',
+  active_template_id: 'standard',
+};
+
+const INITIAL_RECORDING_STATUS: RecordingStatus = {
+  state: 'idle',
+  elapsed_ms: 0,
+  level_rms: 0,
+  waveform: new Array(48).fill(0),
+  device_name: '',
+  source_mode: 'mic',
+  is_silent_warning: false,
+  error_message: null,
+  recovery_hint: null,
+  temp_wav_path: null,
+};
+
+export const App: React.FC = () => {
+  const [view, setView] = useState<NavView>('home');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [snapshot, setSnapshot] = useState<AppDataSnapshot>({
+    notes: [],
+    folders: [{ id: 'personal', name: '個人ノート（ローカル）', is_shared: false, permission: 'owner' }],
+    dictionary: [],
+    recipes: [],
+    settings: FALLBACK_SETTINGS,
+    audit_logs: [],
+  });
+  const [models, setModels] = useState<AsrModelInfo[]>([]);
+  const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
+  const [adapters, setAdapters] = useState<IntegrationAdapterInfo[]>([]);
+  const [secretStatus, setSecretStatus] = useState<SecretStatus | null>(null);
+  const [mcpPreview, setMcpPreview] = useState('');
+  const [sourceMode, setSourceMode] = useState<AudioSourceMode>('mic');
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [recStatus, setRecStatus] = useState<RecordingStatus>(INITIAL_RECORDING_STATUS);
+  const [liveManualNotes, setLiveManualNotes] = useState('');
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcribeError, setTranscribeError] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
+  const [bannerMessage, setBannerMessage] = useState<string | null>(null);
+
+  const refreshAll = useCallback(async () => {
+    if (!isTauriRuntime()) return;
+    const [snap, mdl, devs, sec, adp, mcp] = await Promise.all([
+      apiGetSnapshot(),
+      apiListAsrModels(),
+      apiListAudioDevices(),
+      apiGetSecretStatus(),
+      apiListIntegrationAdapters(),
+      apiGetMcpConfigPreview(),
+    ]);
+    setSnapshot(snap);
+    setModels(mdl);
+    setDevices(devs);
+    setSecretStatus(sec);
+    setAdapters(adp);
+    setMcpPreview(mcp);
+  }, []);
+
+  useEffect(() => {
+    void refreshAll();
+  }, [refreshAll]);
+
+  // Listen to Tauri events (download progress & global shortcut)
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlistenDl: (() => void) | undefined;
+    let unlistenSc: (() => void) | undefined;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      unlistenDl = await listen<{ model_id: string; progress: number }>('asr-download-progress', (ev) => {
+        setDownloadProgress((prev) => ({ ...prev, [ev.payload.model_id]: ev.payload.progress }));
+        if (ev.payload.progress >= 100) {
+          void refreshAll();
+        }
+      });
+      unlistenSc = await listen<string>('global-shortcut-triggered', () => {
+        if (recStatus.state === 'recording' || recStatus.state === 'paused') {
+          void handleStopAndFinish();
+        } else {
+          void handleStartRecording();
+        }
+      });
+    });
+    return () => {
+      unlistenDl?.();
+      unlistenSc?.();
+    };
+  }, [recStatus.state, refreshAll]);
+
+  // Poll recording status when active
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (recStatus.state !== 'recording' && recStatus.state !== 'paused') return;
+    const timer = setInterval(async () => {
+      try {
+        const st = await apiGetRecordingStatus();
+        setRecStatus(st);
+      } catch {
+        // ignore transient polling error
+      }
+    }, 150);
+    return () => clearInterval(timer);
+  }, [recStatus.state]);
+
+  const handleStartRecording = async () => {
+    setTranscribeError(null);
+    setLiveManualNotes('');
+    if (!isTauriRuntime()) {
+      setBannerMessage('ブラウザ単体プレビューのため、ネイティブ録音は Tauri デスクトップ実行時に有効になります。');
+      return;
+    }
+    try {
+      const st = await apiStartRecording(sourceMode, selectedDeviceId || null);
+      setRecStatus(st);
+      setView('recording');
+    } catch (e) {
+      setBannerMessage(String(e));
+    }
+  };
+
+  const handleStopAndFinish = async () => {
+    const finalStatus = isTauriRuntime() ? await apiStopRecording() : recStatus;
+    setRecStatus(INITIAL_RECORDING_STATUS);
+    const newNote = createEmptyNote();
+    newNote.duration_sec = Math.round(finalStatus.elapsed_ms / 1000);
+    newNote.manual_notes = liveManualNotes;
+    newNote.language = snapshot.settings.language;
+
+    if (isTauriRuntime()) {
+      const nextSnap = await apiSaveNote(newNote);
+      setSnapshot(nextSnap);
+      setActiveNoteId(newNote.id);
+      setView('editor');
+
+      if (finalStatus.temp_wav_path) {
+        setTranscribing(true);
+        setTranscribeError(null);
+        try {
+          const updatedNote = await apiTranscribeRecording(finalStatus.temp_wav_path, newNote.id);
+          setSnapshot((prev) => ({
+            ...prev,
+            notes: prev.notes.map((n) => (n.id === updatedNote.id ? updatedNote : n)),
+          }));
+        } catch (err) {
+          setTranscribeError(String(err));
+        } finally {
+          setTranscribing(false);
+        }
+      }
+    } else {
+      setSnapshot((prev) => ({ ...prev, notes: [newNote, ...prev.notes] }));
+      setActiveNoteId(newNote.id);
+      setView('editor');
+    }
+  };
+
+  const handleUpdateNote = async (updated: Note) => {
+    setSnapshot((prev) => ({
+      ...prev,
+      notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+    }));
+    if (isTauriRuntime()) {
+      const nextSnap = await apiSaveNote(updated);
+      setSnapshot(nextSnap);
+    }
+  };
+
+  const handleCreateManualNote = async () => {
+    const note = createEmptyNote();
+    if (isTauriRuntime()) {
+      const next = await apiSaveNote(note);
+      setSnapshot(next);
+    } else {
+      setSnapshot((prev) => ({ ...prev, notes: [note, ...prev.notes] }));
+    }
+    setActiveNoteId(note.id);
+    setView('editor');
+  };
+
+  const activeNote =
+    snapshot.notes.find((n) => n.id === activeNoteId) || snapshot.notes[0] || null;
+  const isRecordingActive = recStatus.state === 'recording' || recStatus.state === 'paused';
+
+  return (
+    <div className="app-shell">
+      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+        <div className="brand-row">
+          {!sidebarCollapsed && (
+            <div className="brand-mark">
+              <span className="brand-dot">
+                <Mic size={14} strokeWidth={1.75} />
+              </span>
+              <span>KoeNote</span>
+            </div>
+          )}
+          <button
+            type="button"
+            aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
+            className="btn btn-ghost"
+            onClick={() => setSidebarCollapsed((c) => !c)}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={16} strokeWidth={1.5} /> : <PanelLeftClose size={16} strokeWidth={1.5} />}
+          </button>
+        </div>
+
+        <nav className="nav-list" aria-label="メインメニュー">
+          <button
+            type="button"
+            className={`nav-item ${view === 'home' || view === 'recording' ? 'active' : ''}`}
+            onClick={() => setView(isRecordingActive ? 'recording' : 'home')}
+          >
+            <Mic size={16} strokeWidth={1.5} />
+            {!sidebarCollapsed && <span>{isRecordingActive ? '録音中' : '録音'}</span>}
+          </button>
+          <button
+            type="button"
+            className={`nav-item ${view === 'editor' ? 'active' : ''}`}
+            disabled={!activeNote}
+            onClick={() => setView('editor')}
+          >
+            <FileText size={16} strokeWidth={1.5} />
+            {!sidebarCollapsed && <span>ノート確認</span>}
+          </button>
+          <button
+            type="button"
+            className={`nav-item ${view === 'history' ? 'active' : ''}`}
+            onClick={() => setView('history')}
+          >
+            <History size={16} strokeWidth={1.5} />
+            {!sidebarCollapsed && <span>履歴・検索</span>}
+          </button>
+          <button
+            type="button"
+            className={`nav-item ${view === 'settings' ? 'active' : ''}`}
+            onClick={() => setView('settings')}
+          >
+            <Settings size={16} strokeWidth={1.5} />
+            {!sidebarCollapsed && <span>設定</span>}
+          </button>
+        </nav>
+
+        {!sidebarCollapsed && (
+          <div className="sidebar-footer">
+            <div className="text-muted">
+              プラン設定: <strong>{snapshot.settings.plan_tier}</strong>
+            </div>
+            <div className="text-muted">
+              処理方式: {snapshot.settings.allow_cloud_asr ? 'クラウド許可あり' : 'ローカル優先'}
+            </div>
+          </div>
+        )}
+      </aside>
+
+      <main className="main-area">
+        {/* Always-visible Recording Status Banner */}
+        {isRecordingActive && (
+          <div className="recording-dock" role="status" aria-live="polite">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span className="recording-live-dot" />
+              <strong style={{ fontSize: '13px', color: 'var(--danger)' }}>
+                {recStatus.state === 'paused' ? '録音一時停止中' : '録音中'}
+              </strong>
+              <span className="mono-num" style={{ fontWeight: 600 }}>
+                {formatMs(recStatus.elapsed_ms)}
+              </span>
+              <span className="text-muted">{recStatus.device_name}</span>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {view !== 'recording' && (
+                <button type="button" className="btn btn-secondary" style={{ height: '30px' }} onClick={() => setView('recording')}>
+                  録音画面へ
+                </button>
+              )}
+              <button type="button" className="btn btn-danger" style={{ height: '30px' }} onClick={handleStopAndFinish}>
+                <Square size={13} strokeWidth={1.5} />
+                停止
+              </button>
+            </div>
+          </div>
+        )}
+
+        {bannerMessage && (
+          <div
+            style={{
+              padding: '12px 24px',
+              backgroundColor: 'var(--accent-tint)',
+              borderBottom: '1px solid var(--accent-border)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              fontSize: '13px',
+            }}
+          >
+            <span>{bannerMessage}</span>
+            <button type="button" className="btn btn-ghost" onClick={() => setBannerMessage(null)}>
+              閉じる
+            </button>
+          </div>
+        )}
+
+        {view === 'home' && (
+          <HomeView
+            settings={snapshot.settings}
+            models={models}
+            devices={devices}
+            sourceMode={sourceMode}
+            selectedDeviceId={selectedDeviceId}
+            notes={snapshot.notes}
+            secretStatus={secretStatus}
+            onChangeSourceMode={setSourceMode}
+            onChangeDevice={setSelectedDeviceId}
+            onStartRecording={handleStartRecording}
+            onOpenNote={(id) => {
+              setActiveNoteId(id);
+              setView('editor');
+            }}
+            onCreateManualNote={handleCreateManualNote}
+            onGoSettings={() => setView('settings')}
+          />
+        )}
+
+        {view === 'recording' && (
+          <RecordingView
+            status={recStatus}
+            settings={snapshot.settings}
+            manualNotes={liveManualNotes}
+            onChangeManualNotes={setLiveManualNotes}
+            onPause={async () => {
+              if (isTauriRuntime()) setRecStatus(await apiPauseRecording());
+            }}
+            onResume={async () => {
+              if (isTauriRuntime()) setRecStatus(await apiResumeRecording());
+            }}
+            onStopAndFinish={handleStopAndFinish}
+            onCopyNotice={async (text) => {
+              if (isTauriRuntime()) {
+                await apiCopyAndPreparePaste(text);
+              } else {
+                await navigator.clipboard.writeText(text);
+              }
+            }}
+          />
+        )}
+
+        {view === 'editor' && activeNote && (
+          <NoteEditorView
+            note={activeNote}
+            settings={snapshot.settings}
+            recipes={snapshot.recipes}
+            secretStatus={secretStatus}
+            transcribing={transcribing}
+            transcribeError={transcribeError}
+            onUpdateNote={handleUpdateNote}
+            onCopyText={async (text) => {
+              if (isTauriRuntime()) {
+                await apiCopyAndPreparePaste(text);
+              } else {
+                await navigator.clipboard.writeText(text);
+              }
+            }}
+            onPastePrepare={async (text) => {
+              if (isTauriRuntime()) {
+                const hint = await apiCopyAndPreparePaste(text);
+                setBannerMessage(hint);
+              } else {
+                await navigator.clipboard.writeText(text);
+                setBannerMessage('クリップボードにコピーしました。貼り付け先で Ctrl+V / Cmd+V を押してください。');
+              }
+            }}
+            onSaveToNotion={async (noteId) => {
+              const updated = await apiNotionSaveNote(noteId);
+              setSnapshot((prev) => ({
+                ...prev,
+                notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+              }));
+            }}
+            onSummarize={async (noteId) => {
+              const updated = await apiSummarizeNote(noteId);
+              setSnapshot((prev) => ({
+                ...prev,
+                notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+              }));
+            }}
+            onDraftFollowup={async (noteId) => {
+              const updated = await apiDraftFollowup(noteId);
+              setSnapshot((prev) => ({
+                ...prev,
+                notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+              }));
+            }}
+            onRunRecipe={apiRunRecipe}
+            onChatNote={apiChatNotes}
+            onShareSlack={apiShareToSlack}
+            onSendWebhook={apiSendWebhook}
+            onAddDictionaryTerm={async (term) => {
+              const entry: DictionaryEntry = {
+                id: crypto.randomUUID(),
+                term,
+                reading: '',
+                note: '',
+                scope: 'personal',
+              };
+              if (isTauriRuntime()) {
+                setSnapshot(await apiSaveDictionaryEntry(entry));
+              } else {
+                setSnapshot((prev) => ({ ...prev, dictionary: [...prev.dictionary, entry] }));
+              }
+            }}
+            onGoSettings={() => setView('settings')}
+          />
+        )}
+
+        {view === 'history' && (
+          <HistoryView
+            notes={snapshot.notes}
+            folders={snapshot.folders}
+            settings={snapshot.settings}
+            onOpenNote={(id) => {
+              setActiveNoteId(id);
+              setView('editor');
+            }}
+            onDeleteNote={async (id) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiDeleteNote(id));
+              } else {
+                setSnapshot((prev) => ({ ...prev, notes: prev.notes.filter((n) => n.id !== id) }));
+              }
+            }}
+            onChatAcrossNotes={apiChatNotes}
+          />
+        )}
+
+        {view === 'settings' && (
+          <SettingsView
+            settings={snapshot.settings}
+            models={models}
+            dictionary={snapshot.dictionary}
+            adapters={adapters}
+            auditLogs={snapshot.audit_logs}
+            notes={snapshot.notes}
+            secretStatus={secretStatus}
+            downloadProgress={downloadProgress}
+            mcpPreview={mcpPreview}
+            onSaveSettings={async (next) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiSaveSettings(next));
+                await refreshAll();
+              } else {
+                setSnapshot((prev) => ({ ...prev, settings: next }));
+              }
+            }}
+            onDownloadModel={async (modelId) => {
+              try {
+                await apiDownloadAsrModel(modelId);
+                await refreshAll();
+              } catch (e) {
+                setBannerMessage(String(e));
+              }
+            }}
+            onSetSecret={async (key, val) => {
+              await apiSetSecret(key, val);
+              await refreshAll();
+            }}
+            onSaveDictEntry={async (entry) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiSaveDictionaryEntry(entry));
+              } else {
+                setSnapshot((prev) => ({ ...prev, dictionary: [...prev.dictionary, entry] }));
+              }
+            }}
+            onDeleteDictEntry={async (id) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiDeleteDictionaryEntry(id));
+              } else {
+                setSnapshot((prev) => ({ ...prev, dictionary: prev.dictionary.filter((d) => d.id !== id) }));
+              }
+            }}
+            onNotionSearchTargets={apiNotionSearchTargets}
+            onNotionOAuthUrl={apiNotionOAuthUrl}
+            onNotionExchangeCode={apiNotionExchangeCode}
+            onExportAll={async () => {
+              const json = isTauriRuntime()
+                ? await apiExportAllData()
+                : JSON.stringify(snapshot, null, 2);
+              const blob = new Blob([json], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'koenote-export.json';
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            onPurgeAll={async () => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiPurgeAllData());
+              } else {
+                setSnapshot((prev) => ({ ...prev, notes: [], audit_logs: [] }));
+              }
+            }}
+          />
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default App;
