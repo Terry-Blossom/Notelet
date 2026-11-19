@@ -225,12 +225,9 @@ impl AudioManager {
                 }
             };
 
-            let writer_cb = Arc::clone(&writer);
             let runtime_cb = Arc::clone(&runtime);
-            let paused_cb = Arc::clone(&paused_flag);
             let resample_ratio = sample_rate as f64 / 16_000.0;
             let phase = Arc::new(Mutex::new(0.0f64));
-            let phase_cb = Arc::clone(&phase);
 
             let err_runtime = Arc::clone(&runtime);
             let err_fn = move |err: cpal::StreamError| {
@@ -240,49 +237,20 @@ impl AudioManager {
                 rt.recovery_hint = Some("そこまでの録音はローカルに保存されています。デバイスを確認して再録音するか、途中までの音声で文字起こしを実行できます。".to_string());
             };
 
-            let process_samples = move |mono: &[f32]| {
-                if paused_cb.load(Ordering::SeqCst) || mono.is_empty() {
-                    return;
-                }
-                let mut sum_sq = 0.0f32;
-                for &s in mono {
-                    sum_sq += s * s;
-                }
-                let rms = (sum_sq / mono.len() as f32).sqrt().min(1.0);
+            let w_f32 = Arc::clone(&writer);
+            let r_f32 = Arc::clone(&runtime_cb);
+            let p_f32 = Arc::clone(&paused_flag);
+            let ph_f32 = Arc::clone(&phase);
 
-                // 16kHz へ線形間引きリサンプリングして WAV へ追記
-                if let Ok(mut guard) = writer_cb.lock() {
-                    if let Some(ref mut w) = *guard {
-                        let mut p = phase_cb.lock().unwrap();
-                        let mut idx = *p;
-                        while (idx as usize) < mono.len() {
-                            let s = mono[idx as usize].clamp(-1.0, 1.0);
-                            let pcm = (s * i16::MAX as f32) as i16;
-                            let _ = w.write_sample(pcm);
-                            idx += resample_ratio;
-                        }
-                        *p = idx - mono.len() as f64;
-                    }
-                }
+            let w_i16 = Arc::clone(&writer);
+            let r_i16 = Arc::clone(&runtime_cb);
+            let p_i16 = Arc::clone(&paused_flag);
+            let ph_i16 = Arc::clone(&phase);
 
-                if let Ok(mut rt) = runtime_cb.lock() {
-                    rt.level_rms = rms;
-                    rt.waveform.remove(0);
-                    rt.waveform.push(rms);
-                    if rms < 0.002 {
-                        if let Some(since) = rt.silent_since {
-                            if since.elapsed() >= Duration::from_secs(6) {
-                                rt.is_silent_warning = true;
-                            }
-                        } else {
-                            rt.silent_since = Some(Instant::now());
-                        }
-                    } else {
-                        rt.silent_since = None;
-                        rt.is_silent_warning = false;
-                    }
-                }
-            };
+            let w_u16 = Arc::clone(&writer);
+            let r_u16 = Arc::clone(&runtime_cb);
+            let p_u16 = Arc::clone(&paused_flag);
+            let ph_u16 = Arc::clone(&phase);
 
             let stream_res = match sample_format {
                 SampleFormat::F32 => device.build_input_stream(
@@ -292,7 +260,7 @@ impl AudioManager {
                             .chunks(channels)
                             .map(|frame| frame.iter().sum::<f32>() / channels as f32)
                             .collect();
-                        process_samples(&mono);
+                        process_mono_samples(&mono, &w_f32, &r_f32, &p_f32, &ph_f32, resample_ratio);
                     },
                     err_fn,
                     None,
@@ -307,7 +275,7 @@ impl AudioManager {
                                     / channels as f32
                             })
                             .collect();
-                        process_samples(&mono);
+                        process_mono_samples(&mono, &w_i16, &r_i16, &p_i16, &ph_i16, resample_ratio);
                     },
                     err_fn,
                     None,
@@ -325,7 +293,7 @@ impl AudioManager {
                                     / channels as f32
                             })
                             .collect();
-                        process_samples(&mono);
+                        process_mono_samples(&mono, &w_u16, &r_u16, &p_u16, &ph_u16, resample_ratio);
                     },
                     err_fn,
                     None,
@@ -461,3 +429,53 @@ impl AudioManager {
 }
 
 pub type _UnusedBuf = BufWriter<File>;
+
+fn process_mono_samples(
+    mono: &[f32],
+    writer: &Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>,
+    runtime: &Arc<Mutex<RecordingRuntime>>,
+    paused: &Arc<AtomicBool>,
+    phase: &Arc<Mutex<f64>>,
+    resample_ratio: f64,
+) {
+    if paused.load(Ordering::SeqCst) || mono.is_empty() {
+        return;
+    }
+    let mut sum_sq = 0.0f32;
+    for &s in mono {
+        sum_sq += s * s;
+    }
+    let rms = (sum_sq / mono.len() as f32).sqrt().min(1.0);
+
+    if let Ok(mut guard) = writer.lock() {
+        if let Some(ref mut w) = *guard {
+            let mut p = phase.lock().unwrap();
+            let mut idx = *p;
+            while (idx as usize) < mono.len() {
+                let s = mono[idx as usize].clamp(-1.0, 1.0);
+                let pcm = (s * i16::MAX as f32) as i16;
+                let _ = w.write_sample(pcm);
+                idx += resample_ratio;
+            }
+            *p = idx - mono.len() as f64;
+        }
+    }
+
+    if let Ok(mut rt) = runtime.lock() {
+        rt.level_rms = rms;
+        rt.waveform.remove(0);
+        rt.waveform.push(rms);
+        if rms < 0.002 {
+            if let Some(since) = rt.silent_since {
+                if since.elapsed() >= Duration::from_secs(6) {
+                    rt.is_silent_warning = true;
+                }
+            } else {
+                rt.silent_since = Some(Instant::now());
+            }
+        } else {
+            rt.silent_since = None;
+            rt.is_silent_warning = false;
+        }
+    }
+}
