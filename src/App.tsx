@@ -1,8 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Mic,
+  Home,
+  MessageSquare,
   FileText,
-  History,
+  Upload,
+  BookOpen,
+  Link2,
+  Mic,
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
@@ -53,6 +57,7 @@ import {
   apiStopRecording,
   apiSummarizeNote,
   apiTranscribeRecording,
+  apiTranscribeUploadedAudio,
   isTauriRuntime,
 } from './lib/tauri';
 import { createEmptyNote, formatMs } from './lib/format';
@@ -60,12 +65,25 @@ import { HomeView } from './components/HomeView';
 import { RecordingView } from './components/RecordingView';
 import { NoteEditorView } from './components/NoteEditorView';
 import { HistoryView } from './components/HistoryView';
+import { ChatView } from './components/ChatView';
+import { UploadView } from './components/UploadView';
+import { DictionaryView } from './components/DictionaryView';
+import { IntegrationsView } from './components/IntegrationsView';
 import { SettingsView } from './components/SettingsView';
 
-type NavView = 'home' | 'recording' | 'editor' | 'history' | 'settings';
+type NavView =
+  | 'home'
+  | 'chat'
+  | 'notes'
+  | 'upload'
+  | 'dictionary'
+  | 'integrations'
+  | 'recording'
+  | 'editor'
+  | 'settings';
 
 const FALLBACK_SETTINGS: AppSettings = {
-  plan_tier: 'basic',
+  plan_tier: 'enterprise',
   active_asr_model_id: 'whisper-small-q5',
   active_asr_provider: 'local_whisper',
   language: 'ja',
@@ -99,7 +117,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   slack_webhook_configured: false,
   generic_webhook_url: '',
   mcp_enabled: false,
-  mcp_scope: 'personal_30d',
+  mcp_scope: 'workspace',
   active_template_id: 'standard',
 };
 
@@ -164,7 +182,6 @@ export const App: React.FC = () => {
     void refreshAll();
   }, [refreshAll]);
 
-  // Listen to Tauri events (download progress & global shortcut)
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlistenDl: (() => void) | undefined;
@@ -190,7 +207,6 @@ export const App: React.FC = () => {
     };
   }, [recStatus.state, refreshAll]);
 
-  // Poll recording status when active
   useEffect(() => {
     if (!isTauriRuntime()) return;
     if (recStatus.state !== 'recording' && recStatus.state !== 'paused') return;
@@ -257,6 +273,39 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleUploadAndTranscribe = async (file: File) => {
+    const newNote = createEmptyNote();
+    newNote.title = file.name.replace(/\.[^/.]+$/, '') || 'アップロード録音';
+    newNote.language = snapshot.settings.language;
+    setTranscribeError(null);
+
+    if (!isTauriRuntime()) {
+      setSnapshot((prev) => ({ ...prev, notes: [newNote, ...prev.notes] }));
+      setActiveNoteId(newNote.id);
+      setView('editor');
+      return;
+    }
+
+    const nextSnap = await apiSaveNote(newNote);
+    setSnapshot(nextSnap);
+    setActiveNoteId(newNote.id);
+    setTranscribing(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(buffer));
+      const updated = await apiTranscribeUploadedAudio(file.name, bytes, newNote.id);
+      setSnapshot((prev) => ({
+        ...prev,
+        notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+      }));
+      setView('editor');
+    } catch (err) {
+      setTranscribeError(String(err));
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
   const handleUpdateNote = async (updated: Note) => {
     setSnapshot((prev) => ({
       ...prev,
@@ -284,6 +333,15 @@ export const App: React.FC = () => {
     snapshot.notes.find((n) => n.id === activeNoteId) || snapshot.notes[0] || null;
   const isRecordingActive = recStatus.state === 'recording' || recStatus.state === 'paused';
 
+  const navItems: { id: NavView; label: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number }> }[] = [
+    { id: 'home', label: 'ホーム', icon: Home },
+    { id: 'chat', label: 'チャット', icon: MessageSquare },
+    { id: 'notes', label: 'ノート', icon: FileText },
+    { id: 'upload', label: 'アップロード', icon: Upload },
+    { id: 'dictionary', label: '辞書', icon: BookOpen },
+    { id: 'integrations', label: '連携', icon: Link2 },
+  ];
+
   return (
     <div className="app-shell">
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -307,60 +365,56 @@ export const App: React.FC = () => {
         </div>
 
         <nav className="nav-list" aria-label="メインメニュー">
-          <button
-            type="button"
-            className={`nav-item ${view === 'home' || view === 'recording' ? 'active' : ''}`}
-            onClick={() => setView(isRecordingActive ? 'recording' : 'home')}
-          >
-            <Mic size={16} strokeWidth={1.5} />
-            {!sidebarCollapsed && <span>{isRecordingActive ? '録音中' : '録音'}</span>}
-          </button>
-          <button
-            type="button"
-            className={`nav-item ${view === 'editor' ? 'active' : ''}`}
-            disabled={!activeNote}
-            onClick={() => setView('editor')}
-          >
-            <FileText size={16} strokeWidth={1.5} />
-            {!sidebarCollapsed && <span>ノート確認</span>}
-          </button>
-          <button
-            type="button"
-            className={`nav-item ${view === 'history' ? 'active' : ''}`}
-            onClick={() => setView('history')}
-          >
-            <History size={16} strokeWidth={1.5} />
-            {!sidebarCollapsed && <span>履歴・検索</span>}
-          </button>
-          <button
-            type="button"
-            className={`nav-item ${view === 'settings' ? 'active' : ''}`}
-            onClick={() => setView('settings')}
-          >
-            <Settings size={16} strokeWidth={1.5} />
-            {!sidebarCollapsed && <span>設定</span>}
-          </button>
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive =
+              view === item.id ||
+              (item.id === 'notes' && view === 'editor') ||
+              (item.id === 'home' && view === 'recording');
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`nav-item ${isActive ? 'active' : ''}`}
+                onClick={() => setView(item.id)}
+              >
+                <Icon size={16} strokeWidth={1.5} />
+                {!sidebarCollapsed && <span>{item.label}</span>}
+              </button>
+            );
+          })}
         </nav>
 
-        {!sidebarCollapsed && (
-          <div className="sidebar-footer">
-            <div className="text-muted">
-              プラン設定: <strong>{snapshot.settings.plan_tier}</strong>
-            </div>
-            <div className="text-muted">
-              処理方式: {snapshot.settings.allow_cloud_asr ? 'クラウド許可あり' : 'ローカル優先'}
-            </div>
-          </div>
-        )}
+        <div className="sidebar-footer">
+          <button
+            type="button"
+            aria-label="設定"
+            title="設定"
+            className={`btn-icon-circle ${view === 'settings' ? 'active' : ''}`}
+            onClick={() => setView('settings')}
+          >
+            <Settings size={18} strokeWidth={1.5} />
+          </button>
+
+          {!sidebarCollapsed && (
+            <button
+              type="button"
+              className={`btn-sidebar-record ${isRecordingActive ? 'recording' : ''}`}
+              onClick={isRecordingActive ? handleStopAndFinish : handleStartRecording}
+            >
+              {isRecordingActive ? <Square size={15} strokeWidth={1.5} /> : <Mic size={15} strokeWidth={1.5} />}
+              <span>{isRecordingActive ? '停止' : '録音'}</span>
+            </button>
+          )}
+        </div>
       </aside>
 
       <main className="main-area">
-        {/* Always-visible Recording Status Banner */}
         {isRecordingActive && (
           <div className="recording-dock" role="status" aria-live="polite">
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <span className="recording-live-dot" />
-              <strong style={{ fontSize: '13px', color: 'var(--danger)' }}>
+              <strong style={{ fontSize: '14px', color: 'var(--danger)' }}>
                 {recStatus.state === 'paused' ? '録音一時停止中' : '録音中'}
               </strong>
               <span className="mono-num" style={{ fontWeight: 600 }}>
@@ -391,7 +445,6 @@ export const App: React.FC = () => {
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              fontSize: '13px',
             }}
           >
             <span>{bannerMessage}</span>
@@ -419,6 +472,92 @@ export const App: React.FC = () => {
             }}
             onCreateManualNote={handleCreateManualNote}
             onGoSettings={() => setView('settings')}
+          />
+        )}
+
+        {view === 'chat' && (
+          <ChatView
+            notes={snapshot.notes}
+            settings={snapshot.settings}
+            onChatAcrossNotes={apiChatNotes}
+            onOpenNote={(id) => {
+              setActiveNoteId(id);
+              setView('editor');
+            }}
+            onGoSettings={() => setView('settings')}
+          />
+        )}
+
+        {view === 'notes' && (
+          <HistoryView
+            notes={snapshot.notes}
+            folders={snapshot.folders}
+            onOpenNote={(id) => {
+              setActiveNoteId(id);
+              setView('editor');
+            }}
+            onDeleteNote={async (id) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiDeleteNote(id));
+              } else {
+                setSnapshot((prev) => ({ ...prev, notes: prev.notes.filter((n) => n.id !== id) }));
+              }
+            }}
+          />
+        )}
+
+        {view === 'upload' && (
+          <UploadView
+            settings={snapshot.settings}
+            models={models}
+            busy={transcribing}
+            error={transcribeError}
+            onUploadAndTranscribe={handleUploadAndTranscribe}
+            onGoSettings={() => setView('settings')}
+          />
+        )}
+
+        {view === 'dictionary' && (
+          <DictionaryView
+            dictionary={snapshot.dictionary}
+            onSaveEntry={async (entry: DictionaryEntry) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiSaveDictionaryEntry(entry));
+              } else {
+                setSnapshot((prev) => ({ ...prev, dictionary: [...prev.dictionary, entry] }));
+              }
+            }}
+            onDeleteEntry={async (id: string) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiDeleteDictionaryEntry(id));
+              } else {
+                setSnapshot((prev) => ({ ...prev, dictionary: prev.dictionary.filter((d) => d.id !== id) }));
+              }
+            }}
+          />
+        )}
+
+        {view === 'integrations' && (
+          <IntegrationsView
+            settings={snapshot.settings}
+            adapters={adapters}
+            secretStatus={secretStatus}
+            mcpPreview={mcpPreview}
+            onSaveSettings={async (next) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiSaveSettings(next));
+                await refreshAll();
+              } else {
+                setSnapshot((prev) => ({ ...prev, settings: next }));
+              }
+            }}
+            onSetSecret={async (key, val) => {
+              await apiSetSecret(key, val);
+              await refreshAll();
+            }}
+            onNotionSearchTargets={apiNotionSearchTargets}
+            onNotionOAuthUrl={apiNotionOAuthUrl}
+            onNotionExchangeCode={apiNotionExchangeCode}
           />
         )}
 
@@ -509,27 +648,7 @@ export const App: React.FC = () => {
                 setSnapshot((prev) => ({ ...prev, dictionary: [...prev.dictionary, entry] }));
               }
             }}
-            onGoSettings={() => setView('settings')}
-          />
-        )}
-
-        {view === 'history' && (
-          <HistoryView
-            notes={snapshot.notes}
-            folders={snapshot.folders}
-            settings={snapshot.settings}
-            onOpenNote={(id) => {
-              setActiveNoteId(id);
-              setView('editor');
-            }}
-            onDeleteNote={async (id) => {
-              if (isTauriRuntime()) {
-                setSnapshot(await apiDeleteNote(id));
-              } else {
-                setSnapshot((prev) => ({ ...prev, notes: prev.notes.filter((n) => n.id !== id) }));
-              }
-            }}
-            onChatAcrossNotes={apiChatNotes}
+            onGoSettings={() => setView('integrations')}
           />
         )}
 
@@ -537,13 +656,8 @@ export const App: React.FC = () => {
           <SettingsView
             settings={snapshot.settings}
             models={models}
-            dictionary={snapshot.dictionary}
-            adapters={adapters}
-            auditLogs={snapshot.audit_logs}
-            notes={snapshot.notes}
             secretStatus={secretStatus}
             downloadProgress={downloadProgress}
-            mcpPreview={mcpPreview}
             onSaveSettings={async (next) => {
               if (isTauriRuntime()) {
                 setSnapshot(await apiSaveSettings(next));
@@ -564,23 +678,6 @@ export const App: React.FC = () => {
               await apiSetSecret(key, val);
               await refreshAll();
             }}
-            onSaveDictEntry={async (entry) => {
-              if (isTauriRuntime()) {
-                setSnapshot(await apiSaveDictionaryEntry(entry));
-              } else {
-                setSnapshot((prev) => ({ ...prev, dictionary: [...prev.dictionary, entry] }));
-              }
-            }}
-            onDeleteDictEntry={async (id) => {
-              if (isTauriRuntime()) {
-                setSnapshot(await apiDeleteDictionaryEntry(id));
-              } else {
-                setSnapshot((prev) => ({ ...prev, dictionary: prev.dictionary.filter((d) => d.id !== id) }));
-              }
-            }}
-            onNotionSearchTargets={apiNotionSearchTargets}
-            onNotionOAuthUrl={apiNotionOAuthUrl}
-            onNotionExchangeCode={apiNotionExchangeCode}
             onExportAll={async () => {
               const json = isTauriRuntime()
                 ? await apiExportAllData()

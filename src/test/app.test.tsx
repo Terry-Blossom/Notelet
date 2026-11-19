@@ -7,7 +7,7 @@ import { HistoryView } from '../components/HistoryView';
 import { AppSettings, Note } from '../types';
 
 const baseSettings: AppSettings = {
-  plan_tier: 'basic',
+  plan_tier: 'enterprise',
   active_asr_model_id: 'whisper-small-q5',
   active_asr_provider: 'local_whisper',
   language: 'ja',
@@ -41,7 +41,7 @@ const baseSettings: AppSettings = {
   slack_webhook_configured: false,
   generic_webhook_url: '',
   mcp_enabled: false,
-  mcp_scope: 'personal_30d',
+  mcp_scope: 'workspace',
   active_template_id: 'standard',
 };
 
@@ -70,10 +70,17 @@ describe('format utilities', () => {
 });
 
 describe('App & Views', () => {
-  it('renders home view with record button and empty note creation', () => {
+  it('renders sidebar navigation items and bottom controls', () => {
     render(<App />);
-    expect(screen.getByText('録音と文字起こし')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /録音を開始/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ホーム' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'チャット' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ノート' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'アップロード' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '辞書' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '連携' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '設定' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '録音' })).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: '空のノートを作成' }));
     expect(screen.getByLabelText('ノートタイトル')).toBeInTheDocument();
   });
@@ -101,6 +108,7 @@ describe('App & Views', () => {
           deepgram_api_key: false,
           groq_api_key: false,
           llm_openai_api_key: false,
+          llm_openai_compatible_api_key: false,
           llm_anthropic_api_key: false,
           llm_gemini_api_key: false,
           notion_access_token: true,
@@ -130,7 +138,7 @@ describe('App & Views', () => {
     expect(screen.getByText(/既存ページを更新（重複ページを作成しません）/)).toBeInTheDocument();
   });
 
-  it('hides >30d notes in Basic view without deleting them and supports search', () => {
+  it('shows all notes without artificial 30-day restriction', () => {
     const oldNote: Note = {
       ...createEmptyNote(),
       id: 'old-1',
@@ -147,14 +155,11 @@ describe('App & Views', () => {
       <HistoryView
         notes={[newNote, oldNote]}
         folders={[{ id: 'personal', name: '個人ノート', is_shared: false, permission: 'owner' }]}
-        settings={baseSettings}
         onOpenNote={vi.fn()}
         onDeleteNote={vi.fn()}
-        onChatAcrossNotes={vi.fn()}
       />
     );
     expect(screen.getByText('昨日の会議')).toBeInTheDocument();
-    expect(screen.queryByText('45日前の会議')).not.toBeInTheDocument();
-    expect(screen.getByText(/30日以前の 1 件はローカルに保持されており、削除されません/)).toBeInTheDocument();
+    expect(screen.getByText('45日前の会議')).toBeInTheDocument();
   });
 });

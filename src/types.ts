@@ -209,6 +209,7 @@ export interface SecretStatus {
   deepgram_api_key: boolean;
   groq_api_key: boolean;
   llm_openai_api_key: boolean;
+  llm_openai_compatible_api_key: boolean;
   llm_anthropic_api_key: boolean;
   llm_gemini_api_key: boolean;
   notion_access_token: boolean;

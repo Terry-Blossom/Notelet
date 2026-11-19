@@ -144,40 +144,42 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
         },
         AsrModelInfo {
             id: "parakeet-tdt-ctc-0.6b-ja".to_string(),
-            name: "NVIDIA Parakeet TDT/CTC 0.6B 日本語".to_string(),
+            name: "NVIDIA Parakeet TDT/CTC 0.6B 日本語 (INT8 ONNX)".to_string(),
             provider: AsrProviderKind::LocalParakeet,
             is_local: true,
             languages: vec!["日本語（句読点対応）".into()],
             environment: "ローカル ONNX Runtime / sherpa-onnx (x86_64 / arm64)".into(),
-            memory_mb: 2400,
+            memory_mb: 1600,
             license: "CC-BY-4.0 (NVIDIA) / Apache-2.0 (sherpa-onnx)".into(),
-            size_mb: 640,
-            download_url: "https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja".into(),
+            size_mb: 625,
+            download_url: "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8/resolve/main".into(),
             filename: "parakeet-tdt_ctc-0.6b-ja".into(),
             supports_realtime: false,
             supports_diarization: false,
             is_compatible: parakeet_arch_ok && parakeet_cli_ok,
             compatibility_reason: parakeet_reason.clone(),
-            installed: models_dir.join("parakeet-tdt_ctc-0.6b-ja").exists(),
+            installed: models_dir.join("parakeet-tdt_ctc-0.6b-ja").join("model.int8.onnx").exists()
+                && models_dir.join("parakeet-tdt_ctc-0.6b-ja").join("tokens.txt").exists(),
             data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
         },
         AsrModelInfo {
             id: "parakeet-tdt-0.6b-v3".to_string(),
-            name: "NVIDIA Parakeet TDT 0.6B v3 (英語・欧州)".to_string(),
+            name: "NVIDIA Parakeet TDT 0.6B v3 (英語・欧州 INT8 ONNX)".to_string(),
             provider: AsrProviderKind::LocalParakeet,
             is_local: true,
             languages: vec!["英語".into(), "欧州25言語".into()],
             environment: "ローカル ONNX Runtime / sherpa-onnx (x86_64 / arm64)".into(),
-            memory_mb: 2400,
+            memory_mb: 1800,
             license: "CC-BY-4.0 (NVIDIA) / Apache-2.0 (sherpa-onnx)".into(),
-            size_mb: 640,
-            download_url: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3".into(),
+            size_mb: 650,
+            download_url: "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main".into(),
             filename: "parakeet-tdt-0.6b-v3".into(),
             supports_realtime: false,
             supports_diarization: false,
             is_compatible: parakeet_arch_ok && parakeet_cli_ok,
             compatibility_reason: parakeet_reason,
-            installed: models_dir.join("parakeet-tdt-0.6b-v3").exists(),
+            installed: models_dir.join("parakeet-tdt-0.6b-v3").join("encoder.int8.onnx").exists()
+                && models_dir.join("parakeet-tdt-0.6b-v3").join("tokens.txt").exists(),
             data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
         },
         AsrModelInfo {
@@ -252,35 +254,28 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
     ]
 }
 
-pub async fn download_whisper_model(
+async fn download_single_file(
     app: &tauri::AppHandle,
     model_id: &str,
-    settings: &AppSettings,
-) -> Result<String, String> {
-    let models = list_models(settings);
-    let model = models
-        .into_iter()
-        .find(|m| m.id == model_id)
-        .ok_or_else(|| "指定されたモデルが見つかりません".to_string())?;
-    if model.provider != AsrProviderKind::LocalWhisper {
-        return Err("このモデルの自動ダウンロードは現在 Whisper GGML モデルのみ対応しています。Parakeet ONNX モデルは Hugging Face から変換済みディレクトリを配置してください。".to_string());
-    }
-
-    let dest = storage::models_dir().join(&model.filename);
-    let tmp = storage::models_dir().join(format!("{}.part", &model.filename));
-
+    url: &str,
+    dest: &Path,
+    base_pct: f64,
+    span_pct: f64,
+    fallback_bytes: u64,
+) -> Result<(), String> {
+    let tmp = dest.with_extension("part");
     let client = reqwest::Client::new();
     let mut resp = client
-        .get(&model.download_url)
+        .get(url)
         .send()
         .await
         .map_err(|e| format!("ダウンロード接続に失敗しました: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!("ダウンロードエラー: HTTP {}", resp.status()));
+        return Err(format!("ダウンロードエラー: HTTP {} ({url})", resp.status()));
     }
 
-    let total = resp.content_length().unwrap_or(model.size_mb as u64 * 1024 * 1024);
+    let total = resp.content_length().unwrap_or(fallback_bytes.max(1));
     let mut downloaded: u64 = 0;
     let mut file = fs::File::create(&tmp).map_err(|e| format!("一時ファイル作成失敗: {e}"))?;
     use std::io::Write;
@@ -293,15 +288,96 @@ pub async fn download_whisper_model(
         file.write_all(&chunk)
             .map_err(|e| format!("ファイル書き込み失敗: {e}"))?;
         downloaded += chunk.len() as u64;
-        let pct = ((downloaded as f64 / total.max(1) as f64) * 100.0).min(100.0) as u8;
+        let ratio = (downloaded as f64 / total.max(1) as f64).min(1.0);
+        let pct = (base_pct + ratio * span_pct).min(100.0) as u8;
         let _ = app.emit(
             "asr-download-progress",
             serde_json::json!({ "model_id": model_id, "progress": pct }),
         );
     }
     drop(file);
-    fs::rename(&tmp, &dest).map_err(|e| format!("モデルファイルの配置に失敗: {e}"))?;
-    Ok(dest.to_string_lossy().to_string())
+    fs::rename(&tmp, dest).map_err(|e| format!("モデルファイルの配置に失敗: {e}"))?;
+    Ok(())
+}
+
+pub async fn download_whisper_model(
+    app: &tauri::AppHandle,
+    model_id: &str,
+    settings: &AppSettings,
+) -> Result<String, String> {
+    let models = list_models(settings);
+    let model = models
+        .into_iter()
+        .find(|m| m.id == model_id)
+        .ok_or_else(|| "指定されたモデルが見つかりません".to_string())?;
+
+    if !model.is_local {
+        return Err("クラウドモデルはダウンロード不要です。APIキーを設定して利用してください。".to_string());
+    }
+
+    if model.provider == AsrProviderKind::LocalWhisper {
+        let dest = storage::models_dir().join(&model.filename);
+        download_single_file(
+            app,
+            model_id,
+            &model.download_url,
+            &dest,
+            0.0,
+            100.0,
+            model.size_mb as u64 * 1024 * 1024,
+        )
+        .await?;
+        return Ok(dest.to_string_lossy().to_string());
+    }
+
+    // Parakeet ONNX モデルを直接ダウンロード
+    let dir = storage::models_dir().join(&model.filename);
+    fs::create_dir_all(&dir).map_err(|e| format!("モデルディレクトリ作成失敗: {e}"))?;
+    let base_url = model.download_url.trim_end_matches('/');
+
+    if model.id == "parakeet-tdt-ctc-0.6b-ja" {
+        download_single_file(
+            app,
+            model_id,
+            &format!("{base_url}/tokens.txt"),
+            &dir.join("tokens.txt"),
+            0.0,
+            5.0,
+            1024 * 512,
+        )
+        .await?;
+        download_single_file(
+            app,
+            model_id,
+            &format!("{base_url}/model.int8.onnx"),
+            &dir.join("model.int8.onnx"),
+            5.0,
+            95.0,
+            model.size_mb as u64 * 1024 * 1024,
+        )
+        .await?;
+    } else {
+        let files = [
+            ("tokens.txt", 0.0, 4.0, 512 * 1024),
+            ("decoder.int8.onnx", 4.0, 12.0, 20 * 1024 * 1024),
+            ("joiner.int8.onnx", 16.0, 10.0, 15 * 1024 * 1024),
+            ("encoder.int8.onnx", 26.0, 74.0, 600 * 1024 * 1024),
+        ];
+        for (fname, b, s, est) in files {
+            download_single_file(
+                app,
+                model_id,
+                &format!("{base_url}/{fname}"),
+                &dir.join(fname),
+                b,
+                s,
+                est,
+            )
+            .await?;
+        }
+    }
+
+    Ok(dir.to_string_lossy().to_string())
 }
 
 pub async fn transcribe_wav(
@@ -418,17 +494,25 @@ pub async fn transcribe_wav(
                     model_dir.display()
                 ));
             }
-            let encoder = model_dir.join("encoder.onnx");
-            let decoder = model_dir.join("decoder.onnx");
-            let joiner = model_dir.join("joiner.onnx");
+            let ctc_model = model_dir.join("model.int8.onnx");
             let tokens = model_dir.join("tokens.txt");
-            let output = Command::new(cli)
-                .arg(format!("--encoder={}", encoder.display()))
-                .arg(format!("--decoder={}", decoder.display()))
-                .arg(format!("--joiner={}", joiner.display()))
-                .arg(format!("--tokens={}", tokens.display()))
-                .arg("--model-type=nemo_transducer")
-                .arg(wav_path)
+            let mut cmd = Command::new(cli);
+            if ctc_model.exists() {
+                cmd.arg(format!("--nemo-ctc-model={}", ctc_model.display()))
+                    .arg(format!("--tokens={}", tokens.display()))
+                    .arg(wav_path);
+            } else {
+                let encoder = model_dir.join("encoder.int8.onnx");
+                let decoder = model_dir.join("decoder.int8.onnx");
+                let joiner = model_dir.join("joiner.int8.onnx");
+                cmd.arg(format!("--encoder={}", encoder.display()))
+                    .arg(format!("--decoder={}", decoder.display()))
+                    .arg(format!("--joiner={}", joiner.display()))
+                    .arg(format!("--tokens={}", tokens.display()))
+                    .arg("--model-type=nemo_transducer")
+                    .arg(wav_path);
+            }
+            let output = cmd
                 .output()
                 .map_err(|e| format!("Parakeet ランタイム実行失敗: {e}"))?;
             if !output.status.success() {

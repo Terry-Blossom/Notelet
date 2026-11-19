@@ -71,6 +71,52 @@ pub async fn call_llm(
                 .trim()
                 .to_string())
         }
+        "openai_compatible" => {
+            let base = settings.llm_endpoint.trim().trim_end_matches('/');
+            if base.is_empty() {
+                return Err("OpenAI 互換 API のエンドポイント URL を設定してください（例: http://localhost:1234/v1）。".to_string());
+            }
+            let url = if base.ends_with("/chat/completions") {
+                base.to_string()
+            } else {
+                format!("{base}/chat/completions")
+            };
+            let model = if settings.llm_model.trim().is_empty() {
+                return Err("OpenAI 互換 API で使用するモデル名を設定してください。".to_string());
+            } else {
+                settings.llm_model.trim()
+            };
+            let key = secrets::get_secret("llm_openai_compatible_api_key")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let mut req = client.post(&url).json(&json!({
+                "model": model,
+                "messages": [
+                    { "role": "system", "content": system_prompt },
+                    { "role": "user", "content": user_prompt }
+                ],
+                "temperature": 0.2
+            }));
+            if !key.trim().is_empty() {
+                req = req.bearer_auth(key.trim());
+            }
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| format!("OpenAI 互換 API 通信エラー ({url}): {e}"))?;
+            if !resp.status().is_success() {
+                let s = resp.status();
+                let b = resp.text().await.unwrap_or_default();
+                return Err(format!("OpenAI 互換 API エラー ({s}): {b}"));
+            }
+            let v: Value = resp.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
+            Ok(v["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string())
+        }
         "anthropic" => {
             let key = secrets::get_secret("llm_anthropic_api_key")?
                 .ok_or_else(|| "Anthropic APIキーが未設定です。".to_string())?;

@@ -185,6 +185,22 @@ async fn transcribe_recording(
 }
 
 #[tauri::command]
+async fn transcribe_uploaded_audio(
+    state: State<'_, AppState>,
+    file_name: String,
+    bytes: Vec<u8>,
+    note_id: String,
+) -> Result<Note, String> {
+    let temp_dir = storage::app_data_dir().join("temp_recordings");
+    let _ = std::fs::create_dir_all(&temp_dir);
+    let safe_name = file_name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_', "_");
+    let temp_path = temp_dir.join(format!("upload_{}_{}", uuid::Uuid::new_v4(), safe_name));
+    std::fs::write(&temp_path, &bytes).map_err(|e| format!("アップロードファイルの一時保存に失敗: {e}"))?;
+    let path_str = temp_path.to_string_lossy().to_string();
+    transcribe_recording(state, path_str, note_id).await
+}
+
+#[tauri::command]
 async fn summarize_note_cmd(
     state: State<'_, AppState>,
     note_id: String,
@@ -288,6 +304,7 @@ fn get_secret_status_cmd() -> serde_json::Value {
         "deepgram_api_key": secrets::has_secret("deepgram_api_key"),
         "groq_api_key": secrets::has_secret("groq_api_key"),
         "llm_openai_api_key": secrets::has_secret("llm_openai_api_key"),
+        "llm_openai_compatible_api_key": secrets::has_secret("llm_openai_compatible_api_key"),
         "llm_anthropic_api_key": secrets::has_secret("llm_anthropic_api_key"),
         "llm_gemini_api_key": secrets::has_secret("llm_gemini_api_key"),
         "notion_access_token": notion::is_connected(),
@@ -473,6 +490,7 @@ pub fn run() {
             list_asr_models,
             download_asr_model,
             transcribe_recording,
+            transcribe_uploaded_audio,
             summarize_note_cmd,
             draft_followup_cmd,
             run_recipe_cmd,

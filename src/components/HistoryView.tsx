@@ -1,47 +1,32 @@
 import React, { useMemo, useState } from 'react';
-import { Search, Folder as FolderIcon, Trash2, MessageSquare, Calendar, FileText } from 'lucide-react';
-import { AppSettings, ChatAnswer, Folder, Note } from '../types';
+import { Search, Folder as FolderIcon, Trash2, Calendar, FileText } from 'lucide-react';
+import { Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
 
 interface HistoryViewProps {
   notes: Note[];
   folders: Folder[];
-  settings: AppSettings;
   onOpenNote: (noteId: string) => void;
   onDeleteNote: (noteId: string) => Promise<void>;
-  onChatAcrossNotes: (noteIds: string[], question: string) => Promise<ChatAnswer>;
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
   notes,
   folders,
-  settings,
   onOpenNote,
   onDeleteNote,
-  onChatAcrossNotes,
 }) => {
   const [query, setQuery] = useState('');
   const [selectedFolderId, setSelectedFolderId] = useState<string>('all');
   const [speakerFilter, setSpeakerFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
-  const [auxMode, setAuxMode] = useState<'list' | 'brief' | 'chat'>('list');
-  const [chatQuestion, setChatQuestion] = useState('');
-  const [chatAnswer, setChatAnswer] = useState<ChatAnswer | null>(null);
-  const [chatBusy, setChatBusy] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
+  const [auxMode, setAuxMode] = useState<'list' | 'brief'>('list');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  const isBasicLimited = settings.plan_tier === 'basic';
-  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
 
   const filteredNotes = useMemo(() => {
     const q = query.trim().toLowerCase();
     const sp = speakerFilter.trim().toLowerCase();
     return notes.filter((n) => {
-      if (isBasicLimited) {
-        const ts = new Date(n.created_at).getTime();
-        if (!Number.isNaN(ts) && ts < thirtyDaysAgo) return false;
-      }
       if (selectedFolderId !== 'all' && n.folder_id !== selectedFolderId) return false;
       if (dateFrom && n.created_at.slice(0, 10) < dateFrom) return false;
       if (sp) {
@@ -64,39 +49,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       }
       return true;
     });
-  }, [notes, query, selectedFolderId, speakerFilter, dateFrom, isBasicLimited, thirtyDaysAgo]);
-
-  const hiddenOldCount = isBasicLimited
-    ? notes.filter((n) => new Date(n.created_at).getTime() < thirtyDaysAgo).length
-    : 0;
-
-  const llmConfigured = settings.llm_provider !== 'none' && settings.llm_provider !== '';
-
-  const handleCrossChat = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatQuestion.trim()) return;
-    setChatBusy(true);
-    setChatError(null);
-    try {
-      const res = await onChatAcrossNotes(
-        filteredNotes.map((n) => n.id),
-        chatQuestion
-      );
-      setChatAnswer(res);
-    } catch (err) {
-      setChatError(String(err));
-    } finally {
-      setChatBusy(false);
-    }
-  };
+  }, [notes, query, selectedFolderId, speakerFilter, dateFrom]);
 
   return (
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
         <div>
-          <h1 className="page-title">履歴と検索</h1>
+          <h1 className="page-title">ノート</h1>
           <p className="text-secondary" style={{ margin: '4px 0 0' }}>
-            保存されたノートの検索、フォルダ絞り込み、複数会議を横断した確認ができます
+            保存されたノートの検索、フォルダ絞り込み、編集を行います
           </p>
         </div>
 
@@ -115,21 +76,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           >
             会議前ブリーフ
           </button>
-          <button
-            type="button"
-            className={`tab-btn ${auxMode === 'chat' ? 'active' : ''}`}
-            onClick={() => setAuxMode('chat')}
-          >
-            横断AIチャット
-          </button>
         </div>
       </div>
-
-      {isBasicLimited && hiddenOldCount > 0 && (
-        <div className="surface-subtle" style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-          現在のプラン設定（Basic相当）では直近30日以内のノートを表示しています。30日以前の {hiddenOldCount} 件はローカルに保持されており、削除されません（設定でBusiness以上に切り替えると全期間を表示できます）。
-        </div>
-      )}
 
       {auxMode === 'list' && (
         <>
@@ -270,68 +218,24 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Calendar size={18} strokeWidth={1.5} />
-            <h2 className="section-title">会議前ブリーフ（Business相当機能）</h2>
+            <h2 className="section-title">会議前ブリーフ</h2>
           </div>
           <p className="text-secondary" style={{ margin: 0 }}>
-            Google Calendar / Outlook 連携は現在アダプター枠（未接続）です。過去の関連ノートから直近の決定事項・未完了アクションを一覧できます。
+            過去のノートから直近の決定事項や未完了アクションを一覧できます。
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {notes.slice(0, 5).map((n) => (
               <div key={n.id} className="surface-subtle">
-                <div style={{ fontWeight: 600, fontSize: '14px' }}>{n.title}</div>
+                <div style={{ fontWeight: 600 }}>{n.title}</div>
                 <div className="text-muted">{formatDateTime(n.created_at)}</div>
                 {n.action_items.filter((a) => !a.done).length > 0 && (
-                  <div style={{ fontSize: '14px', marginTop: '4px' }}>
+                  <div style={{ marginTop: '4px' }}>
                     未完了タスク: {n.action_items.filter((a) => !a.done).map((a) => a.text).join(' / ')}
                   </div>
                 )}
               </div>
             ))}
           </div>
-        </section>
-      )}
-
-      {auxMode === 'chat' && (
-        <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <h2 className="section-title">複数会議を横断するAIチャット</h2>
-          {!llmConfigured && (
-            <div className="surface-subtle" style={{ color: 'var(--warning)', fontSize: '14px' }}>
-              LLMが未設定のため利用できません。設定＞AI・LLM設定からモデルとAPIキーを登録してください。
-            </div>
-          )}
-          <form onSubmit={handleCrossChat} style={{ display: 'flex', gap: '8px' }}>
-            <input
-              type="text"
-              className="input"
-              placeholder="過去の会議全体から質問（例：前回のリリース日程は？）"
-              value={chatQuestion}
-              onChange={(e) => setChatQuestion(e.target.value)}
-            />
-            <button type="submit" className="btn btn-primary" disabled={!llmConfigured || chatBusy}>
-              <MessageSquare size={15} strokeWidth={1.5} />
-              質問
-            </button>
-          </form>
-          {chatError && (
-            <div className="surface-subtle" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}>
-              {chatError}
-            </div>
-          )}
-          {chatAnswer && (
-            <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ whiteSpace: 'pre-wrap' }}>{chatAnswer.answer}</div>
-              {chatAnswer.citations.length > 0 && (
-                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '8px' }}>
-                  <div className="text-muted" style={{ marginBottom: '4px' }}>根拠となったノート</div>
-                  {chatAnswer.citations.map((c, idx) => (
-                    <div key={idx} className="text-muted">
-                      <strong>{c.note_title}</strong> <span className="mono-num">[{c.timestamp}]</span> {c.excerpt}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </section>
       )}
     </div>
