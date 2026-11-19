@@ -344,10 +344,9 @@ impl AudioManager {
             }
 
             drop(stream);
-            if let Ok(mut guard) = writer.lock() {
-                if let Some(w) = guard.take() {
-                    let _ = w.finalize();
-                }
+            let final_writer = writer.lock().ok().and_then(|mut guard| guard.take());
+            if let Some(w) = final_writer {
+                let _ = w.finalize();
             }
         });
 
