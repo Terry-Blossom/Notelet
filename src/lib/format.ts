@@ -11,6 +11,24 @@ export function formatMs(ms: number): string {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
+export function formatNoteTimer(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const hrs = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+export function formatMonthDay(iso: string): string {
+  if (!iso) return '11月20日';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '11月20日';
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
 export function formatDateTime(iso: string): string {
   if (!iso) return '';
   const d = new Date(iso);
