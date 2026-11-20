@@ -13,6 +13,7 @@ import {
   Recipe,
   RecordingStatus,
   SecretStatus,
+  UpdateCheckResult,
 } from '../types';
 
 export function isTauriRuntime(): boolean {
@@ -169,4 +170,15 @@ export async function apiExportAllData(): Promise<string> {
 
 export async function apiPurgeAllData(): Promise<AppDataSnapshot> {
   return invoke<AppDataSnapshot>('purge_all_data');
+}
+
+export async function apiCheckAppUpdate(): Promise<UpdateCheckResult> {
+  return invoke<UpdateCheckResult>('check_app_update');
+}
+
+export async function apiInstallAppUpdate(
+  downloadUrl: string,
+  assetName: string
+): Promise<string> {
+  return invoke<string>('install_app_update', { downloadUrl, assetName });
 }

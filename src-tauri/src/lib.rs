@@ -6,6 +6,7 @@ mod models;
 mod notion;
 mod secrets;
 mod storage;
+mod updater;
 
 use audio::AudioManager;
 use models::{
@@ -343,7 +344,22 @@ fn get_secret_status_cmd() -> serde_json::Value {
         "llm_gemini_api_key": secrets::has_secret("llm_gemini_api_key"),
         "notion_access_token": notion::is_connected(),
         "slack_webhook_url": secrets::has_secret("slack_webhook_url"),
+        "github_update_token": secrets::has_secret("github_update_token"),
     })
+}
+
+#[tauri::command]
+async fn check_app_update() -> Result<updater::UpdateCheckResult, String> {
+    updater::check_latest_release().await
+}
+
+#[tauri::command]
+async fn install_app_update(
+    app: tauri::AppHandle,
+    download_url: String,
+    asset_name: String,
+) -> Result<String, String> {
+    updater::download_and_launch_update(&app, &download_url, &asset_name).await
 }
 
 #[tauri::command]
@@ -543,6 +559,8 @@ pub fn run() {
             copy_and_prepare_paste,
             export_all_data,
             purge_all_data,
+            check_app_update,
+            install_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("KoeNote の起動中にエラーが発生しました");

@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
-import { Download, Key, Check, Loader2 } from 'lucide-react';
-import { AppSettings, AsrModelInfo, SecretStatus } from '../types';
+import { Download, Key, Check, Loader2, RefreshCw } from 'lucide-react';
+import { AppSettings, AsrModelInfo, SecretStatus, UpdateCheckResult } from '../types';
 
 interface SettingsViewProps {
   settings: AppSettings;
   models: AsrModelInfo[];
   secretStatus: SecretStatus | null;
   downloadProgress: Record<string, number>;
+  updateProgress: number | null;
   onSaveSettings: (next: AppSettings) => Promise<void>;
   onDownloadModel: (modelId: string) => Promise<void>;
   onInstallRuntime: (kind: 'whisper' | 'parakeet') => Promise<void>;
+  onCheckUpdate: () => Promise<UpdateCheckResult>;
+  onInstallUpdate: (downloadUrl: string, assetName: string) => Promise<string>;
   onSetSecret: (key: string, value: string) => Promise<void>;
   onExportAll: () => Promise<void>;
   onPurgeAll: () => Promise<void>;
@@ -20,17 +23,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   models,
   secretStatus,
   downloadProgress,
+  updateProgress,
   onSaveSettings,
   onDownloadModel,
   onInstallRuntime,
+  onCheckUpdate,
+  onInstallUpdate,
   onSetSecret,
   onExportAll,
   onPurgeAll,
 }) => {
-  const [tab, setTab] = useState<'asr' | 'llm' | 'shortcuts' | 'privacy' | 'credits'>('asr');
+  const [tab, setTab] = useState<'asr' | 'llm' | 'shortcuts' | 'privacy' | 'update' | 'credits'>('asr');
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [confirmPurge, setConfirmPurge] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   const flash = (msg: string) => {
     setStatusMessage(msg);
@@ -71,6 +81,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             { id: 'llm', label: 'AI・LLM' },
             { id: 'shortcuts', label: 'ショートカット' },
             { id: 'privacy', label: 'プライバシー・データ' },
+            { id: 'update', label: 'アップデート' },
             { id: 'credits', label: 'クレジット' },
           ] as const
         ).map((t) => (
@@ -434,7 +445,107 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       )}
 
-      {/* 5. Credits */}
+      {/* 5. App Update */}
+      {tab === 'update' && (
+        <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <div>
+              <h2 className="section-title">アプリ更新（GitHub Releases）</h2>
+              <p className="text-muted" style={{ margin: '4px 0 0' }}>
+                現在のバージョン: <span className="mono-num">v{updateInfo?.current_version ?? '0.1.0'}</span>
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={checkingUpdate || installingUpdate}
+              onClick={async () => {
+                setCheckingUpdate(true);
+                setUpdateError(null);
+                try {
+                  const res = await onCheckUpdate();
+                  setUpdateInfo(res);
+                } catch (e) {
+                  setUpdateError(String(e));
+                } finally {
+                  setCheckingUpdate(false);
+                }
+              }}
+            >
+              {checkingUpdate ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <RefreshCw size={15} strokeWidth={1.5} />}
+              {checkingUpdate ? '確認中' : '最新バージョンを確認'}
+            </button>
+          </div>
+
+          {updateError && (
+            <div className="surface-subtle" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}>
+              {updateError}
+            </div>
+          )}
+
+          {updateInfo && (
+            <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>
+                    {updateInfo.has_update
+                      ? `新しいバージョン v${updateInfo.latest_version} が利用可能です`
+                      : `最新状態です（v${updateInfo.latest_version}）`}
+                  </div>
+                  <div className="text-muted">{updateInfo.release_name}</div>
+                </div>
+                {updateInfo.has_update && updateInfo.download_url && updateInfo.asset_name && (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={installingUpdate}
+                    onClick={async () => {
+                      setInstallingUpdate(true);
+                      setUpdateError(null);
+                      try {
+                        const msg = await onInstallUpdate(updateInfo.download_url!, updateInfo.asset_name!);
+                        flash(msg);
+                      } catch (e) {
+                        setUpdateError(String(e));
+                      } finally {
+                        setInstallingUpdate(false);
+                      }
+                    }}
+                  >
+                    {installingUpdate ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <Download size={15} strokeWidth={1.5} />}
+                    {installingUpdate
+                      ? `更新中 ${updateProgress ?? 0}%`
+                      : `v${updateInfo.latest_version} へアップデート`}
+                  </button>
+                )}
+              </div>
+              {updateInfo.release_notes && (
+                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
+                  {updateInfo.release_notes}
+                </pre>
+              )}
+            </div>
+          )}
+
+          <details className="surface-subtle">
+            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Private リポジトリから更新する場合（任意）</summary>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px' }}>
+              <input
+                type="password"
+                className="input"
+                placeholder={secretStatus?.github_update_token ? '保存済み（更新する場合のみ入力）' : 'GitHub Personal Access Token'}
+                value={secretInputs['github_update_token'] || ''}
+                onChange={(e) => setSecretInputs((p) => ({ ...p, github_update_token: e.target.value }))}
+              />
+              <button type="button" className="btn btn-secondary" onClick={() => saveKey('github_update_token')}>
+                保存
+              </button>
+            </div>
+          </details>
+        </section>
+      )}
+
+      {/* 6. Credits */}
       {tab === 'credits' && (
         <section className="surface-card" style={{ color: 'var(--text-secondary)' }}>
           <h2 className="section-title" style={{ marginBottom: '8px' }}>About / Credits</h2>

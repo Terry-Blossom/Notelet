@@ -214,4 +214,16 @@ export interface SecretStatus {
   llm_gemini_api_key: boolean;
   notion_access_token: boolean;
   slack_webhook_url: boolean;
+  github_update_token?: boolean;
+}
+
+export interface UpdateCheckResult {
+  current_version: string;
+  latest_version: string;
+  has_update: boolean;
+  release_name: string;
+  release_notes: string;
+  release_url: string;
+  asset_name: string | null;
+  download_url: string | null;
 }

@@ -31,6 +31,8 @@ import {
   apiDeleteNote,
   apiDownloadAsrModel,
   apiInstallAsrRuntime,
+  apiCheckAppUpdate,
+  apiInstallAppUpdate,
   apiDraftFollowup,
   apiExportAllData,
   apiGetMcpConfigPreview,
@@ -160,6 +162,7 @@ export const App: React.FC = () => {
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
 
   const refreshAll = useCallback(async () => {
@@ -188,12 +191,16 @@ export const App: React.FC = () => {
     if (!isTauriRuntime()) return;
     let unlistenDl: (() => void) | undefined;
     let unlistenSc: (() => void) | undefined;
+    let unlistenUpd: (() => void) | undefined;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       unlistenDl = await listen<{ model_id: string; progress: number }>('asr-download-progress', (ev) => {
         setDownloadProgress((prev) => ({ ...prev, [ev.payload.model_id]: ev.payload.progress }));
         if (ev.payload.progress >= 100) {
           void refreshAll();
         }
+      });
+      unlistenUpd = await listen<{ progress: number }>('app-update-progress', (ev) => {
+        setUpdateProgress(ev.payload.progress);
       });
       unlistenSc = await listen<string>('global-shortcut-triggered', () => {
         if (recStatus.state === 'recording' || recStatus.state === 'paused') {
@@ -205,6 +212,7 @@ export const App: React.FC = () => {
     });
     return () => {
       unlistenDl?.();
+      unlistenUpd?.();
       unlistenSc?.();
     };
   }, [recStatus.state, refreshAll]);
@@ -694,6 +702,7 @@ export const App: React.FC = () => {
             models={models}
             secretStatus={secretStatus}
             downloadProgress={downloadProgress}
+            updateProgress={updateProgress}
             onSaveSettings={async (next) => {
               if (isTauriRuntime()) {
                 setSnapshot(await apiSaveSettings(next));
@@ -719,6 +728,8 @@ export const App: React.FC = () => {
                 setBannerMessage(String(e));
               }
             }}
+            onCheckUpdate={apiCheckAppUpdate}
+            onInstallUpdate={apiInstallAppUpdate}
             onSetSecret={async (key, val) => {
               await apiSetSecret(key, val);
               await refreshAll();
