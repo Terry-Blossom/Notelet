@@ -13,6 +13,24 @@ mod futures_util_stub {
     // reqwest::Response::chunk() を使うため追加依存不要
 }
 
+fn find_file_recursive(dir: &Path, target_name: &str) -> Option<PathBuf> {
+    if !dir.exists() {
+        return None;
+    }
+    let entries = fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            if let Some(found) = find_file_recursive(&p, target_name) {
+                return Some(found);
+            }
+        } else if p.file_name().and_then(|n| n.to_str()) == Some(target_name) {
+            return Some(p);
+        }
+    }
+    None
+}
+
 pub fn resolve_whisper_cli(custom_path: &str) -> Option<PathBuf> {
     if !custom_path.trim().is_empty() {
         let p = PathBuf::from(custom_path.trim());
@@ -21,9 +39,9 @@ pub fn resolve_whisper_cli(custom_path: &str) -> Option<PathBuf> {
         }
     }
     let bin_name = if cfg!(windows) { "whisper-cli.exe" } else { "whisper-cli" };
-    let local_bin = storage::app_data_dir().join("bin").join(bin_name);
-    if local_bin.exists() {
-        return Some(local_bin);
+    let local_bin_dir = storage::app_data_dir().join("bin");
+    if let Some(found) = find_file_recursive(&local_bin_dir, bin_name) {
+        return Some(found);
     }
     // PATH 検索
     if let Ok(path_var) = std::env::var("PATH") {
@@ -49,9 +67,9 @@ pub fn resolve_parakeet_cli(custom_path: &str) -> Option<PathBuf> {
     } else {
         "sherpa-onnx-offline"
     };
-    let local_bin = storage::app_data_dir().join("bin").join(bin_name);
-    if local_bin.exists() {
-        return Some(local_bin);
+    let local_bin_dir = storage::app_data_dir().join("bin");
+    if let Some(found) = find_file_recursive(&local_bin_dir, bin_name) {
+        return Some(found);
     }
     if let Ok(path_var) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path_var) {
@@ -378,6 +396,136 @@ pub async fn download_whisper_model(
     }
 
     Ok(dir.to_string_lossy().to_string())
+}
+
+pub async fn install_runtime_binary(
+    app: &tauri::AppHandle,
+    kind: &str,
+) -> Result<String, String> {
+    let bin_root = storage::app_data_dir().join("bin");
+    fs::create_dir_all(&bin_root).map_err(|e| format!("binディレクトリ作成失敗: {e}"))?;
+    let client = reqwest::Client::builder()
+        .user_agent("KoeNote-Desktop/0.1")
+        .build()
+        .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
+
+    match kind {
+        "whisper" => {
+            if !cfg!(windows) {
+                return Err("macOS/Linux の whisper-cli は Homebrew (brew install whisper-cpp) などで導入してパスを指定してください。".to_string());
+            }
+            let dest_dir = bin_root.join("whisper");
+            fs::create_dir_all(&dest_dir).map_err(|e| format!("展開先作成失敗: {e}"))?;
+            let resp = client
+                .get("https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=15")
+                .send()
+                .await
+                .map_err(|e| format!("GitHub API 接続失敗: {e}"))?;
+            let releases: Vec<Value> = resp.json().await.map_err(|e| format!("JSON解析失敗: {e}"))?;
+            let asset_url = releases
+                .iter()
+                .filter(|r| !r["prerelease"].as_bool().unwrap_or(false))
+                .find_map(|r| {
+                    r["assets"].as_array()?.iter().find_map(|a| {
+                        let name = a["name"].as_str()?;
+                        if name == "whisper-bin-x64.zip" {
+                            a["browser_download_url"].as_str().map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .unwrap_or_else(|| {
+                    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.3/whisper-bin-x64.zip".to_string()
+                });
+
+            let zip_path = bin_root.join("whisper-bin-x64.zip");
+            download_single_file(app, "runtime:whisper", &asset_url, &zip_path, 0.0, 90.0, 15 * 1024 * 1024).await?;
+
+            let status = Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!(
+                        "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+                        zip_path.display(),
+                        dest_dir.display()
+                    ),
+                ])
+                .status()
+                .map_err(|e| format!("ZIP展開に失敗しました: {e}"))?;
+            let _ = fs::remove_file(&zip_path);
+            if !status.success() {
+                return Err("whisper.cpp アーカイブの展開に失敗しました。".to_string());
+            }
+            let _ = app.emit(
+                "asr-download-progress",
+                serde_json::json!({ "model_id": "runtime:whisper", "progress": 100 }),
+            );
+            let exe = find_file_recursive(&dest_dir, "whisper-cli.exe")
+                .or_else(|| find_file_recursive(&dest_dir, "main.exe"))
+                .ok_or_else(|| "展開後に whisper-cli.exe が見つかりませんでした。".to_string())?;
+            Ok(exe.to_string_lossy().to_string())
+        }
+        "parakeet" => {
+            let dest_dir = bin_root.join("parakeet");
+            fs::create_dir_all(&dest_dir).map_err(|e| format!("展開先作成失敗: {e}"))?;
+            let resp = client
+                .get("https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/latest")
+                .send()
+                .await
+                .map_err(|e| format!("GitHub API 接続失敗: {e}"))?;
+            let release: Value = resp.json().await.map_err(|e| format!("JSON解析失敗: {e}"))?;
+            let target_suffix = if cfg!(windows) {
+                "-win-x64-shared-MT-Release-no-tts.tar.bz2"
+            } else if cfg!(target_os = "macos") {
+                "-osx-universal2-shared-no-tts.tar.bz2"
+            } else {
+                return Err("このOS向けの sherpa-onnx 自動インストールは未対応です。".to_string());
+            };
+            let asset_url = release["assets"]
+                .as_array()
+                .and_then(|arr| {
+                    arr.iter().find_map(|a| {
+                        let name = a["name"].as_str()?;
+                        if name.ends_with(target_suffix) {
+                            a["browser_download_url"].as_str().map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .ok_or_else(|| "sherpa-onnx の配布アーカイブが見つかりませんでした。".to_string())?;
+
+            let archive_path = bin_root.join("sherpa-onnx.tar.bz2");
+            download_single_file(app, "runtime:parakeet", &asset_url, &archive_path, 0.0, 90.0, 45 * 1024 * 1024).await?;
+
+            let status = Command::new("tar")
+                .arg("-xjf")
+                .arg(&archive_path)
+                .arg("-C")
+                .arg(&dest_dir)
+                .status()
+                .map_err(|e| format!("tar.bz2 の展開に失敗しました: {e}"))?;
+            let _ = fs::remove_file(&archive_path);
+            if !status.success() {
+                return Err("sherpa-onnx アーカイブの展開に失敗しました。".to_string());
+            }
+            let _ = app.emit(
+                "asr-download-progress",
+                serde_json::json!({ "model_id": "runtime:parakeet", "progress": 100 }),
+            );
+            let bin_name = if cfg!(windows) {
+                "sherpa-onnx-offline.exe"
+            } else {
+                "sherpa-onnx-offline"
+            };
+            let exe = find_file_recursive(&dest_dir, bin_name)
+                .ok_or_else(|| format!("展開後に {bin_name} が見つかりませんでした。"))?;
+            Ok(exe.to_string_lossy().to_string())
+        }
+        other => Err(format!("未知のランタイム種別です: {other}")),
+    }
 }
 
 pub async fn transcribe_wav(

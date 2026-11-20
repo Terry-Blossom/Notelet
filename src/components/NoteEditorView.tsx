@@ -13,7 +13,6 @@ import {
   Check,
   AlertCircle,
   Loader2,
-  RefreshCw,
 } from 'lucide-react';
 import {
   AppSettings,
@@ -659,8 +658,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     キャンセル
                   </button>
                   <button type="button" className="btn btn-primary" disabled={notionBusy} onClick={handleConfirmNotionSave}>
-                    {notionBusy ? <RefreshCw size={15} strokeWidth={1.5} /> : <UploadCloud size={15} strokeWidth={1.5} />}
-                    {notionBusy ? '送信中' : 'Notion へ保存'}
+                    {notionBusy ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <UploadCloud size={15} strokeWidth={1.5} />}
+                    {notionBusy ? '同期中' : 'Notion へ保存'}
                   </button>
                 </div>
               </>

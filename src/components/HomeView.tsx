@@ -9,6 +9,7 @@ import {
   SecretStatus,
 } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
+import { NotionSyncBadge } from './NotionSyncBadge';
 
 interface HomeViewProps {
   settings: AppSettings;
@@ -213,12 +214,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
                   <span className="mono-num text-muted">{formatMs(note.duration_sec * 1000)}</span>
-                  {note.notion_sync.status === 'synced' && (
-                    <span className="status-chip ok">Notion保存済み</span>
-                  )}
-                  {note.notion_sync.status === 'failed' && (
-                    <span className="status-chip danger">Notion未完了</span>
-                  )}
+                  <NotionSyncBadge status={note.notion_sync.status} />
                 </div>
               </button>
             ))}

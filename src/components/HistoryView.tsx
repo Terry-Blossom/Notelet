@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Search, Folder as FolderIcon, Trash2, Calendar, FileText } from 'lucide-react';
 import { Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
+import { NotionSyncBadge } from './NotionSyncBadge';
 
 interface HistoryViewProps {
   notes: Note[];
@@ -169,10 +170,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       </div>
                     </button>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {note.notion_sync.status === 'synced' && (
-                        <span className="status-chip ok">Notion済み</span>
-                      )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
                       {confirmDeleteId === note.id ? (
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <button
@@ -205,6 +203,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                           <Trash2 size={15} strokeWidth={1.5} />
                         </button>
                       )}
+                      <NotionSyncBadge status={note.notion_sync.status} />
                     </div>
                   </div>
                 );

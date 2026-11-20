@@ -138,22 +138,44 @@ describe('App & Views', () => {
     expect(screen.getByText(/既存ページを更新（重複ページを作成しません）/)).toBeInTheDocument();
   });
 
-  it('shows all notes without artificial 30-day restriction', () => {
-    const oldNote: Note = {
+  it('shows all notes and Notion sync status indicators', () => {
+    const syncedNote: Note = {
       ...createEmptyNote(),
       id: 'old-1',
       title: '45日前の会議',
       created_at: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(),
+      notion_sync: {
+        page_id: 'p1',
+        page_url: null,
+        database_id: null,
+        last_synced_at: null,
+        status: 'synced',
+        last_error: null,
+      },
     };
-    const newNote: Note = {
+    const unsyncedNote: Note = {
       ...createEmptyNote(),
       id: 'new-1',
       title: '昨日の会議',
       created_at: new Date().toISOString(),
     };
+    const syncingNote: Note = {
+      ...createEmptyNote(),
+      id: 'sync-1',
+      title: '同期中の会議',
+      created_at: new Date().toISOString(),
+      notion_sync: {
+        page_id: null,
+        page_url: null,
+        database_id: null,
+        last_synced_at: null,
+        status: 'syncing',
+        last_error: null,
+      },
+    };
     render(
       <HistoryView
-        notes={[newNote, oldNote]}
+        notes={[unsyncedNote, syncedNote, syncingNote]}
         folders={[{ id: 'personal', name: '個人ノート', is_shared: false, permission: 'owner' }]}
         onOpenNote={vi.fn()}
         onDeleteNote={vi.fn()}
@@ -161,5 +183,8 @@ describe('App & Views', () => {
     );
     expect(screen.getByText('昨日の会議')).toBeInTheDocument();
     expect(screen.getByText('45日前の会議')).toBeInTheDocument();
+    expect(screen.getByLabelText('Notion 同期済み')).toBeInTheDocument();
+    expect(screen.getByText('未同期')).toBeInTheDocument();
+    expect(screen.getByText('同期中')).toBeInTheDocument();
   });
 });

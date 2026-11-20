@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, ExternalLink } from 'lucide-react';
+import { Check, ExternalLink, Loader2 } from 'lucide-react';
 import {
   AppSettings,
   IntegrationAdapterInfo,
@@ -43,6 +43,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   const [notionCode, setNotionCode] = useState('');
   const [notionQuery, setNotionQuery] = useState('');
   const [notionTargets, setNotionTargets] = useState<NotionTarget[]>([]);
+  const [notionFetching, setNotionFetching] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const flash = (msg: string) => {
@@ -150,14 +151,28 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
           <button
             type="button"
             className="btn btn-secondary"
+            disabled={notionFetching}
             onClick={async () => {
-              const res = await onNotionSearchTargets(notionQuery);
-              setNotionTargets(res);
+              setNotionFetching(true);
+              try {
+                const res = await onNotionSearchTargets(notionQuery);
+                setNotionTargets(res);
+              } finally {
+                setNotionFetching(false);
+              }
             }}
           >
-            保存先を検索
+            {notionFetching && <Loader2 size={15} strokeWidth={1.5} className="spin" />}
+            {notionFetching ? '取り込み中' : '保存先を検索'}
           </button>
         </div>
+
+        {notionFetching && (
+          <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Loader2 size={16} strokeWidth={1.5} className="spin" />
+            <span>Notion からデータを取り込み中...</span>
+          </div>
+        )}
 
         {notionTargets.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

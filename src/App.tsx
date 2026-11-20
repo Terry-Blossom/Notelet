@@ -30,6 +30,7 @@ import {
   apiDeleteDictionaryEntry,
   apiDeleteNote,
   apiDownloadAsrModel,
+  apiInstallAsrRuntime,
   apiDraftFollowup,
   apiExportAllData,
   apiGetMcpConfigPreview,
@@ -610,11 +611,38 @@ export const App: React.FC = () => {
               }
             }}
             onSaveToNotion={async (noteId) => {
-              const updated = await apiNotionSaveNote(noteId);
               setSnapshot((prev) => ({
                 ...prev,
-                notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+                notes: prev.notes.map((n) =>
+                  n.id === noteId
+                    ? { ...n, notion_sync: { ...n.notion_sync, status: 'syncing' } }
+                    : n
+                ),
               }));
+              try {
+                const updated = await apiNotionSaveNote(noteId);
+                setSnapshot((prev) => ({
+                  ...prev,
+                  notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+                }));
+              } catch (err) {
+                setSnapshot((prev) => ({
+                  ...prev,
+                  notes: prev.notes.map((n) =>
+                    n.id === noteId
+                      ? {
+                          ...n,
+                          notion_sync: {
+                            ...n.notion_sync,
+                            status: 'failed',
+                            last_error: String(err),
+                          },
+                        }
+                      : n
+                  ),
+                }));
+                throw err;
+              }
             }}
             onSummarize={async (noteId) => {
               const updated = await apiSummarizeNote(noteId);
@@ -670,6 +698,15 @@ export const App: React.FC = () => {
               try {
                 await apiDownloadAsrModel(modelId);
                 await refreshAll();
+              } catch (e) {
+                setBannerMessage(String(e));
+              }
+            }}
+            onInstallRuntime={async (kind) => {
+              try {
+                await apiInstallAsrRuntime(kind);
+                await refreshAll();
+                setBannerMessage(`${kind === 'whisper' ? 'whisper.cpp' : 'sherpa-onnx-offline'} をインストールしました`);
               } catch (e) {
                 setBannerMessage(String(e));
               }

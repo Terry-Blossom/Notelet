@@ -143,6 +143,23 @@ async fn download_asr_model(
 }
 
 #[tauri::command]
+async fn install_asr_runtime(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    kind: String,
+) -> Result<String, String> {
+    let installed_path = asr::install_runtime_binary(&app, &kind).await?;
+    let mut data = state.data.lock().unwrap();
+    if kind == "whisper" {
+        data.settings.whisper_cli_path = installed_path.clone();
+    } else if kind == "parakeet" {
+        data.settings.parakeet_cli_path = installed_path.clone();
+    }
+    storage::save_snapshot(&data)?;
+    Ok(installed_path)
+}
+
+#[tauri::command]
 async fn transcribe_recording(
     state: State<'_, AppState>,
     wav_path: String,
@@ -489,6 +506,7 @@ pub fn run() {
             get_recording_status,
             list_asr_models,
             download_asr_model,
+            install_asr_runtime,
             transcribe_recording,
             transcribe_uploaded_audio,
             summarize_note_cmd,

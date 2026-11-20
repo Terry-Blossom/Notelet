@@ -438,6 +438,15 @@ button:disabled {
   50% { opacity: 0.35; }
 }
 
+.spin {
+  animation: koenote-spin 1s linear infinite;
+}
+
+@keyframes koenote-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Modal */
 .modal-backdrop {
   position: fixed;

@@ -82,6 +82,10 @@ export async function apiDownloadAsrModel(modelId: string): Promise<string> {
   return invoke<string>('download_asr_model', { modelId });
 }
 
+export async function apiInstallAsrRuntime(kind: 'whisper' | 'parakeet'): Promise<string> {
+  return invoke<string>('install_asr_runtime', { kind });
+}
+
 export async function apiTranscribeRecording(wavPath: string, noteId: string): Promise<Note> {
   return invoke<Note>('transcribe_recording', { wavPath, noteId });
 }

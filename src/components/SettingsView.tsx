@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Key, Check } from 'lucide-react';
+import { Download, Key, Check, Loader2 } from 'lucide-react';
 import { AppSettings, AsrModelInfo, SecretStatus } from '../types';
 
 interface SettingsViewProps {
@@ -9,6 +9,7 @@ interface SettingsViewProps {
   downloadProgress: Record<string, number>;
   onSaveSettings: (next: AppSettings) => Promise<void>;
   onDownloadModel: (modelId: string) => Promise<void>;
+  onInstallRuntime: (kind: 'whisper' | 'parakeet') => Promise<void>;
   onSetSecret: (key: string, value: string) => Promise<void>;
   onExportAll: () => Promise<void>;
   onPurgeAll: () => Promise<void>;
@@ -21,6 +22,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   downloadProgress,
   onSaveSettings,
   onDownloadModel,
+  onInstallRuntime,
   onSetSecret,
   onExportAll,
   onPurgeAll,
@@ -101,23 +103,59 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
             <div>
               <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>whisper-cli パス（任意）</label>
-              <input
-                type="text"
-                className="input"
-                placeholder="例: C:\tools\whisper-cli.exe"
-                value={settings.whisper_cli_path}
-                onChange={(e) => update({ whisper_cli_path: e.target.value })}
-              />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="例: C:\tools\whisper-cli.exe"
+                  value={settings.whisper_cli_path}
+                  onChange={(e) => update({ whisper_cli_path: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ flexShrink: 0 }}
+                  disabled={downloadProgress['runtime:whisper'] !== undefined && downloadProgress['runtime:whisper'] < 100}
+                  onClick={() => onInstallRuntime('whisper')}
+                >
+                  {downloadProgress['runtime:whisper'] !== undefined && downloadProgress['runtime:whisper'] < 100 ? (
+                    <Loader2 size={14} strokeWidth={1.5} className="spin" />
+                  ) : (
+                    <Download size={14} strokeWidth={1.5} />
+                  )}
+                  {downloadProgress['runtime:whisper'] !== undefined && downloadProgress['runtime:whisper'] < 100
+                    ? `${downloadProgress['runtime:whisper']}%`
+                    : 'whisper.cpp を導入'}
+                </button>
+              </div>
             </div>
             <div>
               <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>sherpa-onnx-offline パス（Parakeet用）</label>
-              <input
-                type="text"
-                className="input"
-                placeholder="例: C:\tools\sherpa-onnx-offline.exe"
-                value={settings.parakeet_cli_path}
-                onChange={(e) => update({ parakeet_cli_path: e.target.value })}
-              />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="例: C:\tools\sherpa-onnx-offline.exe"
+                  value={settings.parakeet_cli_path}
+                  onChange={(e) => update({ parakeet_cli_path: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ flexShrink: 0 }}
+                  disabled={downloadProgress['runtime:parakeet'] !== undefined && downloadProgress['runtime:parakeet'] < 100}
+                  onClick={() => onInstallRuntime('parakeet')}
+                >
+                  {downloadProgress['runtime:parakeet'] !== undefined && downloadProgress['runtime:parakeet'] < 100 ? (
+                    <Loader2 size={14} strokeWidth={1.5} className="spin" />
+                  ) : (
+                    <Download size={14} strokeWidth={1.5} />
+                  )}
+                  {downloadProgress['runtime:parakeet'] !== undefined && downloadProgress['runtime:parakeet'] < 100
+                    ? `${downloadProgress['runtime:parakeet']}%`
+                    : 'sherpa-onnx を導入'}
+                </button>
+              </div>
             </div>
           </section>
 
