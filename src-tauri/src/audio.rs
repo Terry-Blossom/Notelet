@@ -247,6 +247,7 @@ impl AudioManager {
         let runtime = Arc::clone(&self.runtime);
         let stop_flag = Arc::clone(&self.stop_flag);
         let paused_flag = Arc::clone(&self.paused_flag);
+        let chunk_cb = Arc::clone(&self.live_chunk_pcm);
 
         let wav_path_clone = wav_path.clone();
         let handle = thread::spawn(move || {
@@ -270,7 +271,6 @@ impl AudioManager {
             let runtime_cb = Arc::clone(&runtime);
             let resample_ratio = sample_rate as f64 / 16_000.0;
             let phase = Arc::new(Mutex::new(0.0f64));
-            let chunk_cb = Arc::clone(&self.live_chunk_pcm);
 
             let err_runtime = Arc::clone(&runtime);
             let err_fn = move |err: cpal::StreamError| {
