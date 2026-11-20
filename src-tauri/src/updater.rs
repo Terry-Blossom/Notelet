@@ -101,7 +101,10 @@ pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
                 a["browser_download_url"].as_str().unwrap_or("")
             };
             let matches_os = if cfg!(windows) {
-                name.ends_with("-setup.exe") || name.ends_with(".msi") || name == "koenote.exe"
+                name.ends_with("-setup.exe")
+                    || name.ends_with(".msi")
+                    || name.eq_ignore_ascii_case("koenote.exe")
+                    || name.eq_ignore_ascii_case("Notelet.exe")
             } else if cfg!(target_os = "macos") {
                 name.ends_with(".dmg")
             } else {

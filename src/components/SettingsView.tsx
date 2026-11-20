@@ -804,7 +804,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.1'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.2'}</strong>
                 </div>
                 <button
                   type="button"
@@ -858,7 +858,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           try {
                             const msg = await onInstallUpdate(
                               updateInfo.download_url,
-                              updateInfo.asset_name || 'KoeNote-Setup.exe'
+                              updateInfo.asset_name || 'Notelet-Setup.exe'
                             );
                             flash(msg);
                           } catch (e) {
@@ -879,6 +879,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             : '更新中...'
                           : `v${updateInfo.latest_version} に今すぐアップデート`}
                       </button>
+                    )}
+                    {updateInfo.has_update && !updateInfo.download_url && (
+                      <a
+                        href={updateInfo.release_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-primary"
+                        style={{ textDecoration: 'none' }}
+                      >
+                        <Download size={14} strokeWidth={1.5} />
+                        リリースページからダウンロード
+                      </a>
                     )}
                   </div>
                 </div>
