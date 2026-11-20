@@ -2,12 +2,11 @@ import React, { useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
-  FileText,
-  Folder as FolderIcon,
+  Cpu,
   MessageSquare,
   Plus,
   Search,
-  Trash2,
+  Settings,
 } from 'lucide-react';
 import { AppSettings, ChatAnswer, Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
@@ -31,20 +30,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
   folders,
   onOpenNote,
   onCreateManualNote,
-  onSaveFolder,
-  onDeleteFolder,
   onChatSpace,
   onGoSettings,
 }) => {
   const now = new Date();
   const [calYear, setCalYear] = useState(now.getFullYear());
   const [calMonth, setCalMonth] = useState(now.getMonth());
-  const [selectedDateKey, setSelectedDateKey] = useState<string>(
-    now.toISOString().slice(0, 10)
-  );
+  const [selectedDateKey, setSelectedDateKey] = useState<string>('');
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [newSpaceName, setNewSpaceName] = useState('');
 
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatAnswer, setChatAnswer] = useState<ChatAnswer | null>(null);
@@ -91,18 +85,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
     });
   }, [notes, selectedSpaceId, searchQuery, selectedDateKey]);
 
-  const handleAddSpace = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSpaceName.trim()) return;
-    await onSaveFolder({
-      id: crypto.randomUUID(),
-      name: newSpaceName.trim(),
-      is_shared: false,
-      permission: 'owner',
-    });
-    setNewSpaceName('');
-  };
-
   const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatQuestion.trim()) return;
@@ -139,7 +121,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   return (
     <div className="page-container">
       <div className="home-grid">
-        {/* Main Column: Search + Notes + Quick AI Chat */}
+        {/* Main Column: Search + Space Chips + Notes + Quick AI Chat */}
         <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -179,18 +161,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 className={`chip-filter ${selectedSpaceId === 'all' ? 'active' : ''}`}
                 onClick={() => setSelectedSpaceId('all')}
               >
-                すべて
+                すべて ({notes.length})
               </button>
-              {folders.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  className={`chip-filter ${selectedSpaceId === f.id ? 'active' : ''}`}
-                  onClick={() => setSelectedSpaceId(f.id)}
-                >
-                  {f.name}
-                </button>
-              ))}
+              {folders.map((f) => {
+                const count = notes.filter((n) => n.folder_id === f.id).length;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`chip-filter ${selectedSpaceId === f.id ? 'active' : ''}`}
+                    onClick={() => setSelectedSpaceId(f.id)}
+                  >
+                    {f.name} ({count})
+                  </button>
+                );
+              })}
               {selectedDateKey && !searchQuery.trim() && (
                 <button
                   type="button"
@@ -210,15 +195,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 {searchQuery.trim()
                   ? `検索結果 (${filteredNotes.length})`
                   : selectedDateKey
-                  ? `${selectedDateKey} のノート`
-                  : `ノート (${filteredNotes.length})`}
+                  ? `${selectedDateKey} のノート (${filteredNotes.length})`
+                  : `最近のノート (${filteredNotes.length})`}
               </h2>
               <span className="text-muted">{activeSpaceName}</span>
             </div>
 
             {filteredNotes.length === 0 ? (
               <div style={{ padding: '24px 0', borderTop: '1px solid var(--border-subtle)' }}>
-                <p className="text-muted" style={{ margin: 0 }}>
+                <p className="text-muted" style={{ margin: '0px' }}>
                   該当するノートはありません。
                 </p>
               </div>
@@ -267,7 +252,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </div>
               {!llmConfigured && (
                 <button type="button" className="btn btn-secondary" style={{ height: '28px', fontSize: '12px' }} onClick={onGoSettings}>
-                  AIプロバイダを設定
+                  AIを設定
                 </button>
               )}
             </div>
@@ -275,7 +260,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <form onSubmit={handleChatSubmit} style={{ display: 'flex', gap: '8px' }}>
               <input
                 className="input"
-                placeholder={`${activeSpaceName} のノートをもとにAIへ質問...`}
+                placeholder={`${activeSpaceName} のノートをもとに質問...`}
                 value={chatQuestion}
                 onChange={(e) => setChatQuestion(e.target.value)}
                 disabled={chatBusy}
@@ -290,7 +275,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </form>
 
             {chatError && (
-              <p style={{ color: 'var(--danger)', fontSize: '13px', margin: 0 }}>{chatError}</p>
+              <p style={{ color: 'var(--danger)', margin: '0px' }}>{chatError}</p>
             )}
 
             {chatAnswer && (
@@ -305,7 +290,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   gap: '8px',
                 }}
               >
-                <div style={{ whiteSpace: 'pre-wrap', fontSize: '14px', lineHeight: 1.7 }}>
+                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
                   {chatAnswer.answer}
                 </div>
                 {chatAnswer.citations.length > 0 && (
@@ -327,11 +312,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </section>
         </div>
 
-        {/* Right Rail: Calendar + Spaces */}
-        <aside style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        {/* Right Rail: Calendar + Engine Summary */}
+        <aside style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <section className="surface-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <strong className="mono-num" style={{ fontSize: '13px' }}>
+              <strong className="mono-num">
                 {calYear}年 {calMonth + 1}月
               </strong>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -362,7 +347,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   key={w}
                   style={{
                     textAlign: 'center',
-                    fontSize: '11px',
+                    fontSize: '12px',
                     color: 'var(--text-muted)',
                     paddingBottom: '4px',
                   }}
@@ -389,126 +374,45 @@ export const HomeView: React.FC<HomeViewProps> = ({
               })}
             </div>
 
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ height: '28px', fontSize: '12px', alignSelf: 'flex-start', padding: '0 8px' }}
-              onClick={() => setSelectedDateKey('')}
-            >
-              すべての日付を表示
-            </button>
+            {selectedDateKey && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ height: '28px', fontSize: '12px', alignSelf: 'flex-start', padding: '0 8px' }}
+                onClick={() => setSelectedDateKey('')}
+              >
+                すべての日付を表示
+              </button>
+            )}
           </section>
 
-          <section style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <FolderIcon size={15} strokeWidth={1.5} />
-              <h2 className="section-title">スペース（親フォルダ）</h2>
-            </div>
-
-            <form onSubmit={handleAddSpace} style={{ display: 'flex', gap: '8px' }}>
-              <input
-                className="input"
-                style={{ height: '32px' }}
-                placeholder="新しい親フォルダ..."
-                value={newSpaceName}
-                onChange={(e) => setNewSpaceName(e.target.value)}
-              />
+          <section className="surface-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Cpu size={14} strokeWidth={1.5} />
+                <strong style={{ fontSize: '12px' }}>現在のエンジン</strong>
+              </div>
               <button
-                type="submit"
-                className="btn btn-secondary"
-                style={{ height: '32px', padding: '0 12px' }}
-                aria-label="スペースを作成"
+                type="button"
+                className="btn btn-ghost"
+                style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
+                onClick={onGoSettings}
               >
-                <Plus size={14} strokeWidth={1.5} />
+                <Settings size={12} strokeWidth={1.5} />
+                変更
               </button>
-            </form>
-
-            <div className="flat-list">
-              {folders.map((f) => {
-                const childNotes = notes.filter((n) => n.folder_id === f.id);
-                const isActive = selectedSpaceId === f.id;
-                return (
-                  <div key={f.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div
-                      className="flat-row"
-                      style={{
-                        padding: '8px',
-                        borderBottom: 'none',
-                        backgroundColor: isActive ? 'var(--accent-tint)' : 'transparent',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        style={{
-                          flex: 1,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          textAlign: 'left',
-                          fontWeight: isActive ? 600 : 400,
-                          color: isActive ? 'var(--accent)' : 'var(--text-primary)',
-                        }}
-                        onClick={() => {
-                          setSelectedSpaceId(isActive ? 'all' : f.id);
-                          if (!isActive) setSelectedDateKey('');
-                        }}
-                      >
-                        <FolderIcon size={14} strokeWidth={1.5} />
-                        <span>{f.name}</span>
-                      </button>
-                      <span className="text-muted mono-num">{childNotes.length}</span>
-                      <button
-                        type="button"
-                        aria-label={`${f.name}に新規ノート`}
-                        title={`${f.name}に新規ノート`}
-                        className="btn btn-ghost"
-                        style={{ height: '24px', width: '24px', padding: 0 }}
-                        onClick={() => onCreateManualNote(f.id)}
-                      >
-                        <Plus size={13} strokeWidth={1.5} />
-                      </button>
-                      {f.id !== 'personal' && (
-                        <button
-                          type="button"
-                          aria-label={`${f.name}を削除`}
-                          className="btn btn-ghost"
-                          style={{ height: '24px', width: '24px', padding: 0 }}
-                          onClick={() => onDeleteFolder(f.id)}
-                        >
-                          <Trash2 size={13} strokeWidth={1.5} />
-                        </button>
-                      )}
-                    </div>
-
-                    {childNotes.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 8px 8px 24px' }}>
-                        {childNotes.slice(0, 6).map((cn) => (
-                          <button
-                            key={cn.id}
-                            type="button"
-                            onClick={() => onOpenNote(cn.id)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px',
-                              padding: '4px 8px',
-                              borderRadius: '4px',
-                              textAlign: 'left',
-                              fontSize: '12px',
-                              color: 'var(--text-secondary)',
-                            }}
-                          >
-                            <FileText size={12} strokeWidth={1.5} style={{ flexShrink: 0 }} />
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {cn.title.trim() || '無題のノート'}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                <span className="text-muted">音声認識</span>
+                <span className="mono-num" style={{ fontWeight: 500 }}>{settings.active_asr_model_id}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                <span className="text-muted">AI / LLM</span>
+                <span className="mono-num" style={{ fontWeight: 500 }}>
+                  {settings.llm_provider === 'none' ? '未設定' : settings.llm_model || settings.llm_provider}
+                </span>
+              </div>
             </div>
           </section>
         </aside>

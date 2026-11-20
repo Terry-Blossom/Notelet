@@ -42,6 +42,7 @@ import {
   formatNoteTimer,
 } from '../lib/format';
 import { NoteWaveform } from './NoteWaveform';
+import { NotionSyncBadge } from './NotionSyncBadge';
 
 export type NotePhase = 'idle' | 'recording' | 'processing' | 'completed';
 
@@ -64,6 +65,7 @@ interface NoteEditorViewProps {
   onCreateNoteInFolder?: (folderId: string) => void;
   onSaveFolder?: (folder: Folder) => Promise<void>;
   onDeleteFolder?: (folderId: string) => Promise<void>;
+  onDeleteNote?: (noteId: string) => Promise<void>;
   onCopyText: (text: string, label: string) => Promise<void>;
   onPastePrepare: (text: string) => Promise<void>;
   onSaveToNotion: (noteId: string) => Promise<void>;
@@ -97,6 +99,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   onCreateNoteInFolder,
   onSaveFolder,
   onDeleteFolder,
+  onDeleteNote,
   onCopyText,
   onPastePrepare,
   onSaveToNotion,
@@ -538,7 +541,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       textAlign: 'left',
                       fontWeight: 600,
                     }}
-                    title={`${f.name}（親フォルダを開く）`}
+                    title={`${f.name}（スペースを開く）`}
                   >
                     <ChevronDown
                       size={14}
@@ -647,7 +650,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               type="text"
               className="input"
               style={{ height: '32px' }}
-              placeholder="親フォルダ（スペース）を追加"
+              placeholder="スペースを追加"
               value={newSpaceName}
               onChange={(e) => setNewSpaceName(e.target.value)}
             />
@@ -744,7 +747,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 {folderNotes.length === 0 ? (
                   <div style={{ padding: '32px 0', borderTop: '1px solid var(--border-subtle)' }}>
                     <p className="text-secondary" style={{ margin: '0px' }}>
-                      このスペース（親フォルダ）にはまだノート（子ファイル）がありません。
+                      このスペースにはまだノートがありません。
                     </p>
                   </div>
                 ) : (
@@ -752,22 +755,27 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     {folderNotes.map((fn) => {
                       const isFnRecording =
                         recordingNoteId === fn.id || (fn.id === note.id && isRecording);
+                      const fnTitle = fn.title.trim() || '無題のノート';
                       return (
-                        <button
-                          key={fn.id}
-                          type="button"
-                          className="flat-row"
-                          onClick={() => {
-                            setViewingFolderId(null);
-                            onSelectNote?.(fn.id);
-                          }}
-                        >
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                        <div key={fn.id} className="flat-row">
+                          <button
+                            type="button"
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              textAlign: 'left',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '4px',
+                            }}
+                            onClick={() => {
+                              setViewingFolderId(null);
+                              onSelectNote?.(fn.id);
+                            }}
+                          >
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <FileText size={15} strokeWidth={1.75} />
-                              <strong style={{ fontWeight: 600 }}>
-                                {fn.title.trim() || '無題のノート'}
-                              </strong>
+                              <strong style={{ fontWeight: 600 }}>{fnTitle}</strong>
                               {isFnRecording && (
                                 <span className="status-chip danger">録音中</span>
                               )}
@@ -775,8 +783,22 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             <span className="text-muted mono-num">
                               {formatDateTime(fn.created_at)} ・ {fn.segments.length} セグメント
                             </span>
+                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                            {onDeleteNote && (
+                              <button
+                                type="button"
+                                aria-label={`${fnTitle}を削除`}
+                                className="btn btn-ghost"
+                                style={{ width: '28px', height: '28px', padding: 0 }}
+                                onClick={() => onDeleteNote(fn.id)}
+                              >
+                                <Trash2 size={14} strokeWidth={1.5} />
+                              </button>
+                            )}
+                            <NotionSyncBadge status={fn.notion_sync.status} />
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

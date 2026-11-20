@@ -271,14 +271,112 @@ button:disabled {
 
 .settings-modal-panel {
   width: 100%;
-  max-width: 920px;
+  max-width: 880px;
+  height: 600px;
   max-height: 88vh;
-  overflow-y: auto;
+  overflow: hidden;
   background-color: var(--bg-canvas);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   position: relative;
+  display: flex;
+}
+
+.settings-sidebar {
+  width: 204px;
+  flex-shrink: 0;
+  background-color: var(--bg-subtle);
+  border-right: 1px solid var(--border-subtle);
+  padding: var(--sp-5) var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.settings-sidebar-title {
+  padding: 0 var(--sp-2) var(--sp-3);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.settings-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--sp-6) var(--sp-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.category-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-muted);
+  align-self: flex-start;
+}
+
+.category-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 32px;
+  padding: 0 var(--sp-3);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.category-tab:hover {
+  color: var(--text-primary);
+}
+
+.category-tab.active {
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.model-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-canvas);
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+
+.model-card-row:hover {
+  border-color: var(--border-default);
+}
+
+.model-card-row.selected {
+  border-color: var(--accent-border);
+  background-color: var(--accent-tint);
+}
+
+.cmd-search-panel {
+  width: 100%;
+  max-width: 560px;
+  max-height: 76vh;
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Rich Memo Editor */

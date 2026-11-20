@@ -338,7 +338,7 @@ describe('App & Views', () => {
     );
 
     // Clicking another Space (parent folder) opens the folder view with its child files without changing recNote.folder_id
-    fireEvent.click(screen.getByTitle('業務スペース（親フォルダを開く）'));
+    fireEvent.click(screen.getByTitle('業務スペース（スペースを開く）'));
     expect(onUpdateNote).not.toHaveBeenCalled();
     expect(screen.getByText('1 件のノート')).toBeInTheDocument();
 

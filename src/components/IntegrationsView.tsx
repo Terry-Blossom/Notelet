@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, ExternalLink, Loader2 } from 'lucide-react';
+import { Check, ExternalLink, Key, Loader2, Search } from 'lucide-react';
 import {
   AppSettings,
   IntegrationAdapterInfo,
@@ -26,7 +26,6 @@ interface IntegrationsViewProps {
 
 export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   settings,
-  adapters,
   secretStatus,
   mcpPreview,
   onSaveSettings,
@@ -56,20 +55,18 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   };
 
   const saveKey = async (keyName: string) => {
-    await onSetSecret(keyName, secretInputs[keyName] || '');
+    const val = (secretInputs[keyName] || '').trim();
+    if (!val) {
+      flash('設定を保存しました');
+      return;
+    }
+    await onSetSecret(keyName, val);
     setSecretInputs((p) => ({ ...p, [keyName]: '' }));
-    flash('OS資格情報ストアに保存しました');
+    flash('トークンを暗号化して保存しました');
   };
 
   return (
     <div className="page-container">
-      <div>
-        <h1 className="page-title">連携</h1>
-        <p className="text-secondary" style={{ margin: '4px 0 0' }}>
-          Notion、Slack、Webhook、MCP、外部サービスとの接続を管理します
-        </p>
-      </div>
-
       {toast && (
         <div className="status-chip ok" style={{ alignSelf: 'flex-start' }}>
           <Check size={14} strokeWidth={1.5} />
@@ -77,11 +74,17 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
         </div>
       )}
 
-      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 className="section-title">Notion</h2>
-          <span className={`status-chip ${secretStatus?.notion_access_token ? 'ok' : ''}`}>
-            {secretStatus?.notion_access_token ? '接続済み' : '未接続'}
+      {/* Notion Primary Integration Card */}
+      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <div>
+            <h2 className="section-title">Notion 同期</h2>
+            <p className="text-muted" style={{ margin: '4px 0 0' }}>
+              文字起こし・要約・メモを Notion データベースまたはページへ同期します。
+            </p>
+          </div>
+          <span className={`status-chip ${secretStatus?.notion_access_token ? 'ok' : 'warn'}`}>
+            {secretStatus?.notion_access_token ? 'トークン保存済み' : 'トークン未設定'}
           </span>
         </div>
 
@@ -89,150 +92,205 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
           <input
             type="password"
             className="input"
-            placeholder="Notion Integration Token (secret_...)"
+            placeholder={
+              secretStatus?.notion_access_token
+                ? 'Notion Integration Token（保存済み・更新する場合のみ入力）'
+                : 'Notion Integration Token (secret_... / ntn_...)'
+            }
             value={secretInputs['notion_access_token'] || ''}
             onChange={(e) => setSecretInputs((p) => ({ ...p, notion_access_token: e.target.value }))}
+            onBlur={() => {
+              if ((secretInputs['notion_access_token'] || '').trim()) {
+                void saveKey('notion_access_token');
+              }
+            }}
           />
-          <button type="button" className="btn btn-secondary" onClick={() => saveKey('notion_access_token')}>
-            トークン保存
+          <button type="button" className="btn btn-primary" onClick={() => saveKey('notion_access_token')}>
+            <Key size={14} strokeWidth={1.5} />
+            保存
           </button>
         </div>
 
-        <details className="surface-subtle">
-          <summary style={{ cursor: 'pointer', fontWeight: 600 }}>OAuth 2.0 で接続する場合</summary>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-              <input className="input" placeholder="Client ID" value={notionClientId} onChange={(e) => setNotionClientId(e.target.value)} />
-              <input className="input" type="password" placeholder="Client Secret" value={notionClientSecret} onChange={(e) => setNotionClientSecret(e.target.value)} />
-              <input className="input" placeholder="Redirect URI" value={notionRedirectUri} onChange={(e) => setNotionRedirectUri(e.target.value)} />
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={async () => {
-                  const url = await onNotionOAuthUrl(notionClientId, notionRedirectUri);
-                  setNotionAuthUrl(url);
-                }}
-              >
-                認可URLを生成
-              </button>
-              {notionAuthUrl && (
-                <a href={notionAuthUrl} target="_blank" rel="noreferrer" className="btn btn-ghost">
-                  <ExternalLink size={14} strokeWidth={1.5} />
-                  ブラウザで認可を開く
-                </a>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input className="input" placeholder="取得した認可 code" value={notionCode} onChange={(e) => setNotionCode(e.target.value)} />
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={async () => {
-                  const ws = await onNotionExchangeCode(notionClientId, notionClientSecret, notionCode, notionRedirectUri);
-                  flash(`${ws} に接続しました`);
-                }}
-              >
-                コード交換
-              </button>
-            </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label className="text-muted">同期先データベース / ページ</label>
+            {settings.notion_target_name && (
+              <span className="status-chip accent">
+                現在: {settings.notion_target_name} ({settings.notion_target_type})
+              </span>
+            )}
           </div>
-        </details>
-
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <input
-            type="text"
-            className="input"
-            placeholder="保存先のデータベースまたはページ名で検索"
-            value={notionQuery}
-            onChange={(e) => setNotionQuery(e.target.value)}
-          />
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={notionFetching}
-            onClick={async () => {
-              setNotionFetching(true);
-              try {
-                const res = await onNotionSearchTargets(notionQuery);
-                setNotionTargets(res);
-              } finally {
-                setNotionFetching(false);
-              }
-            }}
-          >
-            {notionFetching && <Loader2 size={15} strokeWidth={1.5} className="spin" />}
-            {notionFetching ? '取り込み中' : '保存先を検索'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+              <Search
+                size={15}
+                strokeWidth={1.5}
+                style={{
+                  position: 'absolute',
+                  left: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--text-muted)',
+                }}
+              />
+              <input
+                type="text"
+                className="input"
+                style={{ paddingLeft: '36px' }}
+                placeholder="データベース名またはページ名で検索（空欄で一覧取得）"
+                value={notionQuery}
+                onChange={(e) => setNotionQuery(e.target.value)}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={notionFetching}
+              onClick={async () => {
+                setNotionFetching(true);
+                try {
+                  const res = await onNotionSearchTargets(notionQuery);
+                  setNotionTargets(res);
+                } finally {
+                  setNotionFetching(false);
+                }
+              }}
+            >
+              {notionFetching && <Loader2 size={15} strokeWidth={1.5} className="spin" />}
+              {notionFetching ? '取得中' : '同期先を検索'}
+            </button>
+          </div>
         </div>
 
         {notionFetching && (
           <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Loader2 size={16} strokeWidth={1.5} className="spin" />
-            <span>Notion からデータを取り込み中...</span>
+            <span>Notion から同期先候補を取得中...</span>
           </div>
         )}
 
         {notionTargets.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {notionTargets.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className="surface-subtle"
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left' }}
-                onClick={() => {
-                  update({
-                    notion_target_id: t.id,
-                    notion_target_type: t.object_type,
-                    notion_target_name: t.title,
-                  });
-                  flash(`保存先を「${t.title}」に設定しました`);
-                }}
-              >
-                <span>{t.title}（{t.object_type}）</span>
-                <span className="text-muted mono-num">{t.id.slice(0, 8)}</span>
-              </button>
-            ))}
+          <div className="flat-list">
+            {notionTargets.map((t) => {
+              const isSelected = settings.notion_target_id === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className="flat-row"
+                  style={{
+                    backgroundColor: isSelected ? 'var(--accent-tint)' : 'transparent',
+                  }}
+                  onClick={() => {
+                    update({
+                      notion_target_id: t.id,
+                      notion_target_type: t.object_type,
+                      notion_target_name: t.title,
+                    });
+                    flash(`保存先を「${t.title}」に設定しました`);
+                  }}
+                >
+                  <span style={{ fontWeight: isSelected ? 600 : 400 }}>
+                    {t.title}（{t.object_type}）
+                  </span>
+                  <span className="text-muted mono-num">{isSelected ? '選択中' : t.id.slice(0, 8)}</span>
+                </button>
+              );
+            })}
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '8px' }}>
-          <div>
-            <label className="text-muted">タイトルプロパティ</label>
-            <input
-              className="input"
-              value={settings.notion_mapping.title_prop}
-              onChange={(e) => update({ notion_mapping: { ...settings.notion_mapping, title_prop: e.target.value } })}
-            />
+        <details style={{ fontSize: '12px' }}>
+          <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 500 }}>
+            プロパティ名のマッピング設定・OAuth 2.0 接続
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '8px' }}>
+              <div>
+                <label className="text-muted">タイトルプロパティ</label>
+                <input
+                  className="input"
+                  value={settings.notion_mapping.title_prop}
+                  onChange={(e) =>
+                    update({ notion_mapping: { ...settings.notion_mapping, title_prop: e.target.value } })
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-muted">要約プロパティ</label>
+                <input
+                  className="input"
+                  value={settings.notion_mapping.summary_prop}
+                  onChange={(e) =>
+                    update({ notion_mapping: { ...settings.notion_mapping, summary_prop: e.target.value } })
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-muted">日時プロパティ</label>
+                <input
+                  className="input"
+                  value={settings.notion_mapping.date_prop}
+                  onChange={(e) =>
+                    update({ notion_mapping: { ...settings.notion_mapping, date_prop: e.target.value } })
+                  }
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)' }}>
+              <div className="text-muted">OAuth 2.0 で接続する場合</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                <input className="input" placeholder="Client ID" value={notionClientId} onChange={(e) => setNotionClientId(e.target.value)} />
+                <input className="input" type="password" placeholder="Client Secret" value={notionClientSecret} onChange={(e) => setNotionClientSecret(e.target.value)} />
+                <input className="input" placeholder="Redirect URI" value={notionRedirectUri} onChange={(e) => setNotionRedirectUri(e.target.value)} />
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={async () => {
+                    const url = await onNotionOAuthUrl(notionClientId, notionRedirectUri);
+                    setNotionAuthUrl(url);
+                  }}
+                >
+                  認可URLを生成
+                </button>
+                {notionAuthUrl && (
+                  <a href={notionAuthUrl} target="_blank" rel="noreferrer" className="btn btn-ghost">
+                    <ExternalLink size={14} strokeWidth={1.5} />
+                    ブラウザで開く
+                  </a>
+                )}
+                <input className="input" placeholder="取得した認可 code" value={notionCode} onChange={(e) => setNotionCode(e.target.value)} />
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const ws = await onNotionExchangeCode(notionClientId, notionClientSecret, notionCode, notionRedirectUri);
+                    flash(`${ws} に接続しました`);
+                  }}
+                >
+                  交換
+                </button>
+              </div>
+            </div>
           </div>
-          <div>
-            <label className="text-muted">要約プロパティ</label>
-            <input
-              className="input"
-              value={settings.notion_mapping.summary_prop}
-              onChange={(e) => update({ notion_mapping: { ...settings.notion_mapping, summary_prop: e.target.value } })}
-            />
-          </div>
-          <div>
-            <label className="text-muted">日時プロパティ</label>
-            <input
-              className="input"
-              value={settings.notion_mapping.date_prop}
-              onChange={(e) => update({ notion_mapping: { ...settings.notion_mapping, date_prop: e.target.value } })}
-            />
-          </div>
-        </div>
+        </details>
       </section>
 
+      {/* Secondary: Webhook & MCP */}
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <h2 className="section-title">Slack / Webhook / MCP</h2>
+        <h2 className="section-title">Webhook / MCP 連携</h2>
         <div style={{ display: 'flex', gap: '8px' }}>
           <input
             type="password"
             className="input"
-            placeholder="Slack Incoming Webhook URL"
+            placeholder={
+              secretStatus?.slack_webhook_url
+                ? 'Slack Incoming Webhook URL（保存済み）'
+                : 'Slack Incoming Webhook URL'
+            }
             value={secretInputs['slack_webhook_url'] || ''}
             onChange={(e) => setSecretInputs((p) => ({ ...p, slack_webhook_url: e.target.value }))}
           />
@@ -243,42 +301,20 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
         <input
           type="url"
           className="input"
-          placeholder="汎用 Webhook / Zapier URL"
+          placeholder="汎用 Webhook URL（任意）"
           value={settings.generic_webhook_url}
           onChange={(e) => update({ generic_webhook_url: e.target.value })}
         />
-        <div>
-          <div className="text-muted" style={{ marginBottom: '4px' }}>MCP サーバー設定例（Claude / Cursor 等）</div>
-          <pre className="surface-subtle mono-num" style={{ margin: 0, fontSize: '12px', overflowX: 'auto' }}>
-            {mcpPreview}
-          </pre>
-        </div>
-      </section>
-
-      <section className="surface-card">
-        <h2 className="section-title" style={{ marginBottom: '12px' }}>外部サービス連携状況</h2>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>サービス</th>
-              <th>状態</th>
-              <th>説明</th>
-            </tr>
-          </thead>
-          <tbody>
-            {adapters.map((a) => (
-              <tr key={a.id}>
-                <td style={{ fontWeight: 600 }}>{a.name}</td>
-                <td>
-                  <span className={`status-chip ${a.status === 'implemented' ? 'ok' : a.status === 'adapter_ready' ? 'accent' : ''}`}>
-                    {a.status === 'implemented' ? '実装済み' : a.status === 'adapter_ready' ? '設定生成対応' : '未実装'}
-                  </span>
-                </td>
-                <td>{a.description}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {mcpPreview && (
+          <details style={{ fontSize: '12px' }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>
+              MCP サーバー設定（Claude Desktop / Cursor 用）を表示
+            </summary>
+            <pre className="surface-subtle mono-num" style={{ margin: '8px 0 0', fontSize: '12px', overflowX: 'auto' }}>
+              {mcpPreview}
+            </pre>
+          </details>
+        )}
       </section>
     </div>
   );

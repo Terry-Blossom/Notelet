@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import { DictionaryEntry } from '../types';
 
 interface DictionaryViewProps {
@@ -15,7 +15,7 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
 }) => {
   const [term, setTerm] = useState('');
   const [reading, setReading] = useState('');
-  const [scope, setScope] = useState<'personal' | 'workspace'>('personal');
+  const [filterQuery, setFilterQuery] = useState('');
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,81 +25,105 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
       term: term.trim(),
       reading: reading.trim(),
       note: '',
-      scope,
+      scope: 'personal',
     });
     setTerm('');
     setReading('');
   };
 
+  const filtered = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return dictionary;
+    return dictionary.filter(
+      (d) => d.term.toLowerCase().includes(q) || d.reading.toLowerCase().includes(q)
+    );
+  }, [dictionary, filterQuery]);
+
   return (
     <div className="page-container">
-      <div>
-        <h1 className="page-title">辞書</h1>
-        <p className="text-secondary" style={{ margin: '4px 0 0' }}>
-          固有名詞や社内用語を登録すると、文字起こし時の認識ヒントとして利用されます
-        </p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+        <div>
+          <h2 className="section-title">カスタム辞書 ({dictionary.length})</h2>
+          <p className="text-muted" style={{ margin: '4px 0 0' }}>
+            固有名詞や専門用語を登録すると、文字起こし時の認識精度が向上します。
+          </p>
+        </div>
+
+        {dictionary.length > 0 && (
+          <div style={{ position: 'relative', width: '240px' }}>
+            <Search
+              size={14}
+              strokeWidth={1.5}
+              style={{
+                position: 'absolute',
+                left: '12px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--text-muted)',
+              }}
+            />
+            <input
+              type="text"
+              className="input"
+              style={{ height: '32px', paddingLeft: '32px', borderRadius: '999px', backgroundColor: 'var(--bg-subtle)' }}
+              placeholder="登録語を検索..."
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+            />
+          </div>
+        )}
       </div>
 
-      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <form onSubmit={handleAdd} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr auto', gap: '8px' }}>
-          <input
-            type="text"
-            className="input"
-            placeholder="表記（例: KoeNote / Tauri）"
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-          />
-          <input
-            type="text"
-            className="input"
-            placeholder="読み・補足（任意）"
-            value={reading}
-            onChange={(e) => setReading(e.target.value)}
-          />
-          <select
-            className="select"
-            value={scope}
-            onChange={(e) => setScope(e.target.value as 'personal' | 'workspace')}
-          >
-            <option value="personal">個人辞書</option>
-            <option value="workspace">共有辞書</option>
-          </select>
-          <button type="submit" className="btn btn-primary" disabled={!term.trim()}>
-            追加
-          </button>
-        </form>
+      <form onSubmit={handleAdd} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <input
+          type="text"
+          className="input"
+          style={{ flex: '2 1 220px' }}
+          placeholder="表記（例: KoeNote / 製品名 / 人名）"
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+        />
+        <input
+          type="text"
+          className="input"
+          style={{ flex: '2 1 220px' }}
+          placeholder="読み・補足（任意）"
+          value={reading}
+          onChange={(e) => setReading(e.target.value)}
+        />
+        <button type="submit" className="btn btn-primary" disabled={!term.trim()}>
+          <Plus size={14} strokeWidth={1.5} />
+          追加
+        </button>
+      </form>
 
-        {dictionary.length === 0 ? (
-          <p className="text-muted" style={{ margin: 0 }}>
-            登録された単語はまだありません。
+      {filtered.length === 0 ? (
+        <div style={{ padding: '24px 0', borderTop: '1px solid var(--border-subtle)' }}>
+          <p className="text-muted" style={{ margin: '0px' }}>
+            登録された単語はありません。
           </p>
-        ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>表記</th>
-                <th>読み・補足</th>
-                <th>区分</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {dictionary.map((d) => (
-                <tr key={d.id}>
-                  <td style={{ fontWeight: 600 }}>{d.term}</td>
-                  <td>{d.reading || '-'}</td>
-                  <td>{d.scope === 'workspace' ? '共有辞書' : '個人辞書'}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <button type="button" aria-label="削除" className="btn btn-ghost" onClick={() => onDeleteEntry(d.id)}>
-                      <Trash2 size={14} strokeWidth={1.5} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+        </div>
+      ) : (
+        <div className="flat-list">
+          {filtered.map((d) => (
+            <div key={d.id} className="flat-row">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                <strong style={{ fontWeight: 600 }}>{d.term}</strong>
+                {d.reading && <span className="text-muted">{d.reading}</span>}
+              </div>
+              <button
+                type="button"
+                aria-label={`${d.term}を削除`}
+                className="btn btn-ghost"
+                style={{ width: '28px', height: '28px', padding: 0 }}
+                onClick={() => onDeleteEntry(d.id)}
+              >
+                <Trash2 size={14} strokeWidth={1.5} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

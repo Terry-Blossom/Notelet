@@ -75,7 +75,6 @@ import { createEmptyNote, formatMs } from './lib/format';
 import { HomeView } from './components/HomeView';
 import { RecordingView } from './components/RecordingView';
 import { NoteEditorView } from './components/NoteEditorView';
-import { HistoryView } from './components/HistoryView';
 import { ChatView } from './components/ChatView';
 import { UploadView } from './components/UploadView';
 import { DictionaryView } from './components/DictionaryView';
@@ -148,6 +147,8 @@ const INITIAL_RECORDING_STATUS: RecordingStatus = {
 export const App: React.FC = () => {
   const [view, setView] = useState<NavView>('home');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [commandSearchOpen, setCommandSearchOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [recordingSpaceId, setRecordingSpaceId] = useState('personal');
   const [snapshot, setSnapshot] = useState<AppDataSnapshot>({
@@ -412,6 +413,8 @@ export const App: React.FC = () => {
 
   const activeNote =
     snapshot.notes.find((n) => n.id === activeNoteId) || snapshot.notes[0] || null;
+  const fallbackEditorNote = React.useMemo(() => createEmptyNote(recordingSpaceId), [recordingSpaceId]);
+  const editorNote = activeNote || fallbackEditorNote;
   const isRecordingActive = recStatus.state === 'recording' || recStatus.state === 'paused';
 
   const navItems: { id: NavView; label: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number }> }[] = [
@@ -466,7 +469,7 @@ export const App: React.FC = () => {
           aria-label="設定を閉じる"
           className="btn btn-ghost"
           onClick={() => setSettingsOpen(false)}
-          style={{ position: 'sticky', top: '12px', float: 'right', marginRight: '16px', marginTop: '12px', zIndex: 10 }}
+          style={{ position: 'absolute', top: '12px', right: '16px', zIndex: 20, width: '32px', height: '32px', padding: 0 }}
         >
           <X size={18} strokeWidth={1.75} />
         </button>
@@ -627,7 +630,10 @@ export const App: React.FC = () => {
             <button
               type="button"
               className="topbar-search"
-              onClick={() => setView('notes')}
+              onClick={() => {
+                setCommandQuery('');
+                setCommandSearchOpen(true);
+              }}
             >
               <Search size={14} strokeWidth={1.5} />
               <span>ノートや会話を検索...</span>
@@ -759,28 +765,6 @@ export const App: React.FC = () => {
           />
         )}
 
-        {view === 'notes' && (
-          <HistoryView
-            notes={snapshot.notes}
-            folders={snapshot.folders}
-            recordingNoteId={isRecordingActive ? recordingNoteId : null}
-            onOpenNote={(id) => {
-              setActiveNoteId(id);
-              setView('editor');
-            }}
-            onCreateManualNote={handleCreateManualNote}
-            onSaveFolder={handleSaveFolder}
-            onDeleteFolder={handleDeleteFolder}
-            onDeleteNote={async (id) => {
-              if (isTauriRuntime()) {
-                setSnapshot(await apiDeleteNote(id));
-              } else {
-                setSnapshot((prev) => ({ ...prev, notes: prev.notes.filter((n) => n.id !== id) }));
-              }
-            }}
-          />
-        )}
-
         {view === 'upload' && (
           <UploadView
             settings={snapshot.settings}
@@ -863,24 +847,24 @@ export const App: React.FC = () => {
           />
         )}
 
-        {view === 'editor' && activeNote && (
+        {(view === 'editor' || view === 'notes') && (
           <NoteEditorView
-            note={activeNote}
+            note={editorNote}
             allNotes={snapshot.notes}
             folders={snapshot.folders}
             recordingNoteId={isRecordingActive ? recordingNoteId : null}
             settings={snapshot.settings}
             recipes={snapshot.recipes}
             secretStatus={secretStatus}
-            transcribing={transcribing && (!recordingNoteId || activeNote.id === recordingNoteId)}
+            transcribing={transcribing && (!recordingNoteId || editorNote.id === recordingNoteId)}
             transcribeError={transcribeError}
             recordingStatus={
-              isRecordingActive && (!recordingNoteId || activeNote.id === recordingNoteId)
+              isRecordingActive && (!recordingNoteId || editorNote.id === recordingNoteId)
                 ? recStatus
                 : INITIAL_RECORDING_STATUS
             }
             liveSegments={
-              isRecordingActive && (!recordingNoteId || activeNote.id === recordingNoteId)
+              isRecordingActive && (!recordingNoteId || editorNote.id === recordingNoteId)
                 ? liveSegments
                 : []
             }
@@ -891,6 +875,13 @@ export const App: React.FC = () => {
             onCreateNoteInFolder={(folderId) => handleCreateManualNote(folderId)}
             onSaveFolder={handleSaveFolder}
             onDeleteFolder={handleDeleteFolder}
+            onDeleteNote={async (id) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiDeleteNote(id));
+              } else {
+                setSnapshot((prev) => ({ ...prev, notes: prev.notes.filter((n) => n.id !== id) }));
+              }
+            }}
             onCopyText={async (text) => {
               if (isTauriRuntime()) {
                 await apiCopyAndPreparePaste(text);
@@ -989,6 +980,74 @@ export const App: React.FC = () => {
         </div>
       </main>
       {settingsModal}
+      {commandSearchOpen && (
+        <div
+          className="settings-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="クイック検索"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setCommandSearchOpen(false);
+          }}
+        >
+          <div className="cmd-search-panel">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)' }}>
+              <Search size={16} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                className="input"
+                style={{ border: 'none', height: '32px', padding: 0 }}
+                placeholder="ノート名、本文、文字起こしを検索..."
+                value={commandQuery}
+                onChange={(e) => setCommandQuery(e.target.value)}
+                autoFocus
+              />
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ height: '28px', padding: '0 8px', fontSize: '12px' }}
+                onClick={() => setCommandSearchOpen(false)}
+              >
+                閉じる
+              </button>
+            </div>
+            <div style={{ overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '360px' }}>
+              {snapshot.notes
+                .filter((n) => {
+                  const q = commandQuery.trim().toLowerCase();
+                  if (!q) return true;
+                  return [n.title, n.summary, n.manual_notes, ...n.segments.map((s) => s.text)]
+                    .join(' ')
+                    .toLowerCase()
+                    .includes(q);
+                })
+                .slice(0, 12)
+                .map((n) => {
+                  const sp = snapshot.folders.find((f) => f.id === n.folder_id)?.name ?? '個人';
+                  return (
+                    <button
+                      key={n.id}
+                      type="button"
+                      className="flat-row"
+                      style={{ borderBottom: 'none', padding: '8px 12px' }}
+                      onClick={() => {
+                        setActiveNoteId(n.id);
+                        setView('notes');
+                        setCommandSearchOpen(false);
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                        <FileText size={14} strokeWidth={1.5} />
+                        <span style={{ fontWeight: 500 }}>{n.title.trim() || '無題のノート'}</span>
+                      </div>
+                      <span className="status-chip">{sp}</span>
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

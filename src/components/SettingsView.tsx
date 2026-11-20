@@ -1,5 +1,18 @@
 import React, { useState } from 'react';
-import { Download, Key, Check, Loader2, RefreshCw } from 'lucide-react';
+import {
+  Check,
+  Cloud,
+  Cpu,
+  Download,
+  Key,
+  Keyboard,
+  Loader2,
+  Mic,
+  RefreshCw,
+  Shield,
+  Sparkles,
+  Zap,
+} from 'lucide-react';
 import { AppSettings, AsrModelInfo, SecretStatus, UpdateCheckResult } from '../types';
 
 interface SettingsViewProps {
@@ -18,6 +31,9 @@ interface SettingsViewProps {
   onPurgeAll: () => Promise<void>;
 }
 
+type SettingsTab = 'asr' | 'llm' | 'shortcuts' | 'privacy' | 'update';
+type AsrCategory = 'whisper' | 'parakeet' | 'cloud';
+
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   models,
@@ -33,7 +49,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onExportAll,
   onPurgeAll,
 }) => {
-  const [tab, setTab] = useState<'asr' | 'llm' | 'shortcuts' | 'privacy' | 'update' | 'credits'>('asr');
+  const [tab, setTab] = useState<SettingsTab>('asr');
+  const [asrCategory, setAsrCategory] = useState<AsrCategory>(() => {
+    if (settings.active_asr_provider === 'local_parakeet') return 'parakeet';
+    if (settings.active_asr_provider.startsWith('cloud_')) return 'cloud';
+    return 'whisper';
+  });
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [confirmPurge, setConfirmPurge] = useState(false);
@@ -44,7 +65,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const flash = (msg: string) => {
     setStatusMessage(msg);
-    setTimeout(() => setStatusMessage(null), 3500);
+    setTimeout(() => setStatusMessage(null), 3200);
   };
 
   const update = (patch: Partial<AppSettings>) => {
@@ -62,537 +83,738 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     flash('APIキーを暗号化して保存しました');
   };
 
-  return (
-    <div className="page-container">
-      <div>
-        <h1 className="page-title">設定</h1>
-        <p className="text-secondary" style={{ margin: '4px 0 0' }}>
-          ASRモデル、AI・LLM、ショートカット、プライバシー設定を行います
-        </p>
-      </div>
+  const whisperModels = models.filter((m) => m.provider === 'local_whisper');
+  const parakeetModels = models.filter((m) => m.provider === 'local_parakeet');
+  const cloudModels = models.filter((m) => !m.is_local);
 
-      {statusMessage && (
-        <div className="status-chip ok" style={{ alignSelf: 'flex-start' }}>
-          <Check size={14} strokeWidth={1.5} />
-          {statusMessage}
-        </div>
-      )}
+  const renderModelRow = (m: AsrModelInfo) => {
+    const selected = settings.active_asr_model_id === m.id;
+    const progress = downloadProgress[m.id];
+    const cloudKeyMeta =
+      m.provider === 'cloud_openai'
+        ? { key: 'openai_api_key', label: 'OpenAI API Key', saved: secretStatus?.openai_api_key }
+        : m.provider === 'cloud_deepgram'
+        ? { key: 'deepgram_api_key', label: 'Deepgram API Key', saved: secretStatus?.deepgram_api_key }
+        : m.provider === 'cloud_groq'
+        ? { key: 'groq_api_key', label: 'Groq API Key', saved: secretStatus?.groq_api_key }
+        : null;
 
-      <div className="tabs-row">
-        {(
-          [
-            { id: 'asr', label: 'ASRモデル' },
-            { id: 'llm', label: 'AI・LLM' },
-            { id: 'shortcuts', label: 'ショートカット' },
-            { id: 'privacy', label: 'プライバシー・データ' },
-            { id: 'update', label: 'アップデート' },
-            { id: 'credits', label: 'クレジット' },
-          ] as const
-        ).map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className={`tab-btn ${tab === t.id ? 'active' : ''}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* 1. ASR Models */}
-      {tab === 'asr' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <section className="surface-card" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-            <div>
-              <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>文字起こし言語</label>
-              <select
-                className="select"
-                value={settings.language}
-                onChange={(e) => update({ language: e.target.value })}
-              >
-                <option value="ja">日本語 (ja)</option>
-                <option value="en">英語 (en)</option>
-                <option value="auto">自動判定 (auto)</option>
-              </select>
+    return (
+      <div
+        key={m.id}
+        className={`model-card-row ${selected ? 'selected' : ''}`}
+        style={{ flexDirection: 'column', alignItems: 'stretch', gap: '12px' }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  backgroundColor: selected
+                    ? 'var(--accent)'
+                    : m.installed
+                    ? 'var(--success)'
+                    : 'var(--border-strong)',
+                }}
+              />
+              <strong style={{ fontWeight: 600 }}>{m.name}</strong>
+              {m.is_local && (
+                <span className="status-chip mono-num">{m.size_mb} MB</span>
+              )}
+              {m.supports_realtime && (
+                <span className="status-chip accent">リアルタイム対応</span>
+              )}
+              {m.id === 'whisper-large-v3-turbo-q5' && (
+                <span className="status-chip ok">高精度・推奨</span>
+              )}
+              {m.id === 'whisper-small-q5' && (
+                <span className="status-chip">軽量・標準</span>
+              )}
             </div>
-            <div>
-              <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>whisper-cli パス（任意）</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="例: C:\tools\whisper-cli.exe"
-                  value={settings.whisper_cli_path}
-                  onChange={(e) => update({ whisper_cli_path: e.target.value })}
-                />
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  style={{ flexShrink: 0 }}
-                  disabled={downloadProgress['runtime:whisper'] !== undefined && downloadProgress['runtime:whisper'] < 100}
-                  onClick={() => onInstallRuntime('whisper')}
-                >
-                  {downloadProgress['runtime:whisper'] !== undefined && downloadProgress['runtime:whisper'] < 100 ? (
-                    <Loader2 size={14} strokeWidth={1.5} className="spin" />
-                  ) : (
-                    <Download size={14} strokeWidth={1.5} />
-                  )}
-                  {downloadProgress['runtime:whisper'] !== undefined && downloadProgress['runtime:whisper'] < 100
-                    ? `${downloadProgress['runtime:whisper']}%`
-                    : 'whisper.cpp を導入'}
-                </button>
-              </div>
+            <div className="text-muted">
+              {m.environment} ・ 言語: {m.languages.join(', ')}
+              {m.is_local ? ` ・ メモリ目安 ${m.memory_mb} MB` : ' ・ クラウドAPI'}
             </div>
-            <div>
-              <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>sherpa-onnx-offline パス（Parakeet用）</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="例: C:\tools\sherpa-onnx-offline.exe"
-                  value={settings.parakeet_cli_path}
-                  onChange={(e) => update({ parakeet_cli_path: e.target.value })}
-                />
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  style={{ flexShrink: 0 }}
-                  disabled={downloadProgress['runtime:parakeet'] !== undefined && downloadProgress['runtime:parakeet'] < 100}
-                  onClick={() => onInstallRuntime('parakeet')}
-                >
-                  {downloadProgress['runtime:parakeet'] !== undefined && downloadProgress['runtime:parakeet'] < 100 ? (
-                    <Loader2 size={14} strokeWidth={1.5} className="spin" />
-                  ) : (
-                    <Download size={14} strokeWidth={1.5} />
-                  )}
-                  {downloadProgress['runtime:parakeet'] !== undefined && downloadProgress['runtime:parakeet'] < 100
-                    ? `${downloadProgress['runtime:parakeet']}%`
-                    : 'sherpa-onnx を導入'}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontWeight: 600 }}>クラウドASRへの音声送信を許可</div>
-              <div className="text-muted">既定はオフ（ローカル処理のみ）です。ローカル失敗時にクラウドへ自動フォールバックしません。</div>
-            </div>
-            <input
-              type="checkbox"
-              aria-label="クラウドASRへの送信を許可"
-              checked={settings.allow_cloud_asr}
-              onChange={(e) => update({ allow_cloud_asr: e.target.checked })}
-            />
-          </section>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {models.map((m) => {
-              const selected = settings.active_asr_model_id === m.id;
-              const progress = downloadProgress[m.id];
-              return (
-                <div key={m.id} className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 600, fontSize: '15px' }}>{m.name}</span>
-                        <span className={`status-chip ${m.is_local ? 'ok' : 'accent'}`}>
-                          {m.is_local ? 'ローカル' : 'クラウド (BYOK)'}
-                        </span>
-                        {m.installed && m.is_local && <span className="status-chip ok">取得済み</span>}
-                        {selected && <span className="status-chip ok">使用中</span>}
-                      </div>
-                      <div className="text-muted" style={{ marginTop: '4px' }}>
-                        言語: {m.languages.join(' / ')} · 環境: {m.environment} · ライセンス: {m.license}
-                      </div>
-                      <div className="text-muted">
-                        必要メモリ: {m.memory_mb > 0 ? `${m.memory_mb} MB` : 'なし（API）'} · サイズ: {m.size_mb > 0 ? `${m.size_mb} MB` : '-'} ·
-                        リアルタイム: {m.supports_realtime ? '対応' : '録音後処理'} ·
-                        自動話者識別: {m.supports_diarization ? '対応' : '未対応（手動割り当て）'}
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      {m.is_local && !m.installed && (
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          disabled={progress !== undefined && progress < 100}
-                          onClick={() => onDownloadModel(m.id)}
-                        >
-                          <Download size={15} strokeWidth={1.5} />
-                          {progress !== undefined && progress < 100 ? `取得中 ${progress}%` : 'モデルを取得'}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className={`btn ${selected ? 'btn-primary' : 'btn-secondary'}`}
-                        disabled={!m.is_local && !settings.allow_cloud_asr}
-                        onClick={() =>
-                          update({ active_asr_model_id: m.id, active_asr_provider: m.provider })
-                        }
-                      >
-                        {selected ? '選択中' : 'このモデルを使う'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    データの扱い: {m.data_handling}
-                  </div>
-
-                  {m.compatibility_reason && (
-                    <div className="status-chip warn" style={{ alignSelf: 'flex-start' }}>
-                      {m.compatibility_reason}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </div>
 
-          <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <h2 className="section-title">クラウドASR APIキー（OS資格情報ストア保存）</h2>
-            {(
-              [
-                { key: 'openai_api_key', label: 'OpenAI API Key', saved: secretStatus?.openai_api_key },
-                { key: 'deepgram_api_key', label: 'Deepgram API Key', saved: secretStatus?.deepgram_api_key },
-                { key: 'groq_api_key', label: 'Groq API Key', saved: secretStatus?.groq_api_key },
-              ] as const
-            ).map((item) => (
-              <div key={item.key} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <span style={{ width: '160px', fontWeight: 600 }}>{item.label}</span>
-                <input
-                  type="password"
-                  className="input"
-                  placeholder={item.saved ? '保存済み（更新する場合のみ入力）' : 'APIキーを入力'}
-                  value={secretInputs[item.key] || ''}
-                  onChange={(e) => setSecretInputs((p) => ({ ...p, [item.key]: e.target.value }))}
-                />
-                <button type="button" className="btn btn-secondary" onClick={() => saveKey(item.key)}>
-                  <Key size={14} strokeWidth={1.5} />
-                  保存
-                </button>
-              </div>
-            ))}
-          </section>
-        </div>
-      )}
-
-      {/* 2. LLM Settings */}
-      {tab === 'llm' && (
-        <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h2 className="section-title">要約・AIチャット用 LLM 設定</h2>
-          <p className="text-secondary" style={{ margin: 0 }}>
-            送信されるデータ: <strong>文字起こしテキストと手入力メモのみ</strong>（録音音声ファイルはLLMへ送信しません）。
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-            <div>
-              <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>LLMプロバイダー</label>
-              <select
-                className="select"
-                value={settings.llm_provider}
-                onChange={(e) => update({ llm_provider: e.target.value })}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            {m.is_local && !m.installed && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ height: '32px' }}
+                disabled={progress !== undefined && progress < 100}
+                onClick={() => onDownloadModel(m.id)}
               >
-                <option value="none">未設定（AI機能を使用しない）</option>
-                <option value="openai">OpenAI</option>
-                <option value="openai_compatible">OpenAI 互換 API（エンドポイント指定）</option>
-                <option value="anthropic">Anthropic Claude</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="ollama">ローカル Ollama</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>モデル名</label>
-              <input
-                type="text"
-                className="input"
-                value={settings.llm_model}
-                onChange={(e) => update({ llm_model: e.target.value })}
-                placeholder="例: gpt-4o-mini / qwen2.5:7b / llama-3.3-70b-versatile"
-              />
-            </div>
-            {(settings.llm_provider === 'ollama' || settings.llm_provider === 'openai_compatible') && (
+                <Download size={14} strokeWidth={1.5} />
+                {progress !== undefined && progress < 100
+                  ? `${progress}%`
+                  : 'ダウンロード'}
+              </button>
+            )}
+
+            <button
+              type="button"
+              className={`btn ${selected ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ height: '32px' }}
+              disabled={!m.is_compatible || (!m.is_local && !settings.allow_cloud_asr)}
+              onClick={() =>
+                update({
+                  active_asr_model_id: m.id,
+                  active_asr_provider: m.provider,
+                })
+              }
+            >
+              {selected ? '使用中' : '選択する'}
+            </button>
+          </div>
+        </div>
+
+        {cloudKeyMeta && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              paddingTop: '8px',
+              borderTop: '1px solid var(--border-subtle)',
+            }}
+          >
+            <span className={`status-chip ${cloudKeyMeta.saved ? 'ok' : 'warn'}`} style={{ flexShrink: 0 }}>
+              {cloudKeyMeta.saved ? 'キー保存済み' : 'キー未設定'}
+            </span>
+            <input
+              type="password"
+              className="input"
+              style={{ height: '32px' }}
+              placeholder={
+                cloudKeyMeta.saved
+                  ? `${cloudKeyMeta.label}（更新する場合のみ入力）`
+                  : `${cloudKeyMeta.label} を入力`
+              }
+              value={secretInputs[cloudKeyMeta.key] || ''}
+              onChange={(e) =>
+                setSecretInputs((p) => ({ ...p, [cloudKeyMeta.key]: e.target.value }))
+              }
+              onBlur={() => {
+                if ((secretInputs[cloudKeyMeta.key] || '').trim()) {
+                  void saveKey(cloudKeyMeta.key);
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ height: '32px' }}
+              onClick={() => saveKey(cloudKeyMeta.key)}
+            >
+              <Key size={13} strokeWidth={1.5} />
+              保存
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const navItems: {
+    id: SettingsTab;
+    label: string;
+    icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  }[] = [
+    { id: 'asr', label: '音声認識 (ASR)', icon: Mic },
+    { id: 'llm', label: 'AI・要約 (LLM)', icon: Sparkles },
+    { id: 'shortcuts', label: 'ショートカット', icon: Keyboard },
+    { id: 'privacy', label: 'データ管理', icon: Shield },
+    { id: 'update', label: 'アップデート', icon: RefreshCw },
+  ];
+
+  const activeLlmSecretMeta =
+    settings.llm_provider === 'openai'
+      ? { key: 'llm_openai_api_key', label: 'OpenAI API Key', saved: secretStatus?.llm_openai_api_key }
+      : settings.llm_provider === 'openai_compatible'
+      ? {
+          key: 'llm_openai_compatible_api_key',
+          label: 'OpenAI互換 API Key',
+          saved: secretStatus?.llm_openai_compatible_api_key || secretStatus?.llm_openai_api_key,
+        }
+      : settings.llm_provider === 'anthropic'
+      ? { key: 'llm_anthropic_api_key', label: 'Anthropic API Key', saved: secretStatus?.llm_anthropic_api_key }
+      : settings.llm_provider === 'gemini'
+      ? { key: 'llm_gemini_api_key', label: 'Gemini API Key', saved: secretStatus?.llm_gemini_api_key }
+      : null;
+
+  return (
+    <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+      {/* Left Sidebar Navigation */}
+      <aside className="settings-sidebar" aria-label="設定メニュー">
+        <div className="settings-sidebar-title">設定</div>
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = tab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`nav-item ${isActive ? 'active' : ''}`}
+              onClick={() => setTab(item.id)}
+            >
+              <Icon size={15} strokeWidth={1.5} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </aside>
+
+      {/* Right Content Body */}
+      <div className="settings-body">
+        {statusMessage && (
+          <div className="status-chip ok" style={{ alignSelf: 'flex-start' }}>
+            <Check size={14} strokeWidth={1.5} />
+            {statusMessage}
+          </div>
+        )}
+
+        {/* 1. ASR Settings — Categorized */}
+        {tab === 'asr' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
               <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>
-                  {settings.llm_provider === 'ollama' ? 'Ollama エンドポイント' : 'OpenAI 互換ベースURL'}
+                <h2 className="section-title">音声認識モデル</h2>
+                <p className="text-muted" style={{ margin: '4px 0 0' }}>
+                  エンジン別にカテゴリ分けされています。用途に合わせて選択してください。
+                </p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="text-muted">認識言語</span>
+                <select
+                  className="select"
+                  style={{ width: '128px', height: '32px' }}
+                  value={settings.language}
+                  onChange={(e) => update({ language: e.target.value })}
+                >
+                  <option value="ja">日本語 (ja)</option>
+                  <option value="en">英語 (en)</option>
+                  <option value="auto">自動判定</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Category Tabs */}
+            <div className="category-tabs" role="tablist" aria-label="音声認識エンジンカテゴリ">
+              <button
+                type="button"
+                className={`category-tab ${asrCategory === 'whisper' ? 'active' : ''}`}
+                onClick={() => setAsrCategory('whisper')}
+              >
+                <Cpu size={14} strokeWidth={1.5} />
+                ローカル Whisper ({whisperModels.length})
+              </button>
+              <button
+                type="button"
+                className={`category-tab ${asrCategory === 'parakeet' ? 'active' : ''}`}
+                onClick={() => setAsrCategory('parakeet')}
+              >
+                <Zap size={14} strokeWidth={1.5} />
+                ローカル Parakeet ({parakeetModels.length})
+              </button>
+              <button
+                type="button"
+                className={`category-tab ${asrCategory === 'cloud' ? 'active' : ''}`}
+                onClick={() => setAsrCategory('cloud')}
+              >
+                <Cloud size={14} strokeWidth={1.5} />
+                クラウド API ({cloudModels.length})
+              </button>
+            </div>
+
+            {/* Category 1: Local Whisper */}
+            {asrCategory === 'whisper' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <strong style={{ fontSize: '12px' }}>whisper.cpp 実行エンジン</strong>
+                    <span className={`status-chip ${settings.whisper_cli_path ? 'ok' : ''}`}>
+                      {settings.whisper_cli_path ? '導入済み' : '自動検出 / 未設定'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ height: '28px', fontSize: '12px' }}
+                      disabled={downloadProgress['runtime:whisper'] !== undefined}
+                      onClick={() => onInstallRuntime('whisper')}
+                    >
+                      <Download size={13} strokeWidth={1.5} />
+                      {downloadProgress['runtime:whisper'] !== undefined
+                        ? `導入中 (${downloadProgress['runtime:whisper']}%)`
+                        : 'ワンクリック導入'}
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {whisperModels.map(renderModelRow)}
+                </div>
+
+                <details style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  <summary style={{ cursor: 'pointer' }}>実行バイナリのパスを手動で指定する</summary>
+                  <div style={{ marginTop: '8px' }}>
+                    <input
+                      type="text"
+                      className="input mono-num"
+                      placeholder="例: C:\tools\whisper-cli.exe"
+                      value={settings.whisper_cli_path}
+                      onChange={(e) => update({ whisper_cli_path: e.target.value })}
+                    />
+                  </div>
+                </details>
+              </div>
+            )}
+
+            {/* Category 2: Local Parakeet */}
+            {asrCategory === 'parakeet' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <strong style={{ fontSize: '12px' }}>sherpa-onnx 実行エンジン</strong>
+                    <span className={`status-chip ${settings.parakeet_cli_path ? 'ok' : ''}`}>
+                      {settings.parakeet_cli_path ? '導入済み' : '自動検出 / 未設定'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ height: '28px', fontSize: '12px' }}
+                    disabled={downloadProgress['runtime:parakeet'] !== undefined}
+                    onClick={() => onInstallRuntime('parakeet')}
+                  >
+                    <Download size={13} strokeWidth={1.5} />
+                    {downloadProgress['runtime:parakeet'] !== undefined
+                      ? `導入中 (${downloadProgress['runtime:parakeet']}%)`
+                      : 'ワンクリック導入'}
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {parakeetModels.map(renderModelRow)}
+                </div>
+
+                <details style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  <summary style={{ cursor: 'pointer' }}>実行バイナリのパスを手動で指定する</summary>
+                  <div style={{ marginTop: '8px' }}>
+                    <input
+                      type="text"
+                      className="input mono-num"
+                      placeholder="例: C:\tools\sherpa-onnx-offline.exe"
+                      value={settings.parakeet_cli_path}
+                      onChange={(e) => update({ parakeet_cli_path: e.target.value })}
+                    />
+                  </div>
+                </details>
+              </div>
+            )}
+
+            {/* Category 3: Cloud ASR */}
+            {asrCategory === 'cloud' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <label className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                  <div>
+                    <strong style={{ fontSize: '12px' }}>クラウド音声認識を有効にする</strong>
+                    <div className="text-muted">有効時のみ、選択したクラウドAPIへ音声を送信します</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.allow_cloud_asr}
+                    onChange={(e) => update({ allow_cloud_asr: e.target.checked })}
+                  />
                 </label>
-                <input
-                  type="url"
-                  className="input"
-                  placeholder={settings.llm_provider === 'ollama' ? 'http://localhost:11434' : 'https://api.example.com/v1'}
-                  value={settings.llm_endpoint}
-                  onChange={(e) => update({ llm_endpoint: e.target.value })}
-                />
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {cloudModels.map(renderModelRow)}
+                </div>
               </div>
             )}
           </div>
+        )}
 
-          {(
-            [
-              { key: 'llm_openai_api_key', label: 'OpenAI API Key', saved: secretStatus?.llm_openai_api_key, provider: 'openai' },
-              { key: 'llm_openai_compatible_api_key', label: 'OpenAI互換 API Key', saved: secretStatus?.llm_openai_compatible_api_key, provider: 'openai_compatible' },
-              { key: 'llm_anthropic_api_key', label: 'Anthropic API Key', saved: secretStatus?.llm_anthropic_api_key, provider: 'anthropic' },
-              { key: 'llm_gemini_api_key', label: 'Gemini API Key', saved: secretStatus?.llm_gemini_api_key, provider: 'gemini' },
-            ] as const
-          ).map((item) => {
-            const isCurrentProvider = settings.llm_provider === item.provider;
-            return (
-              <div
-                key={item.key}
-                style={{
-                  display: 'flex',
-                  gap: '8px',
-                  alignItems: 'center',
-                  padding: isCurrentProvider ? '8px' : '0px',
-                  borderRadius: '8px',
-                  backgroundColor: isCurrentProvider ? 'var(--accent-tint)' : 'transparent',
-                }}
-              >
-                <span style={{ width: '176px', fontWeight: 600 }}>{item.label}</span>
-                <span className={`status-chip ${item.saved ? 'ok' : 'warn'}`} style={{ flexShrink: 0 }}>
-                  {item.saved ? '保存済み' : '未設定'}
-                </span>
-                <input
-                  type="password"
-                  className="input"
-                  placeholder={item.saved ? '保存済み（更新する場合のみ入力）' : 'APIキーを入力（入力後に保存）'}
-                  value={secretInputs[item.key] || ''}
-                  onChange={(e) => setSecretInputs((p) => ({ ...p, [item.key]: e.target.value }))}
-                  onBlur={() => {
-                    if ((secretInputs[item.key] || '').trim()) {
-                      void saveKey(item.key);
-                    }
-                  }}
-                />
-                <button type="button" className="btn btn-secondary" onClick={() => saveKey(item.key)}>
-                  保存
+        {/* 2. LLM Settings — Categorized by Provider */}
+        {tab === 'llm' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div>
+              <h2 className="section-title">AI・要約 (LLM) 設定</h2>
+              <p className="text-muted" style={{ margin: '4px 0 0' }}>
+                要約やAIチャットで使用するプロバイダーを選択してください（音声ファイルは送信されません）。
+              </p>
+            </div>
+
+            <div className="category-tabs" role="tablist" aria-label="LLMプロバイダー選択">
+              {(
+                [
+                  { id: 'openai_compatible', label: 'OpenAI互換 (OpenRouter等)' },
+                  { id: 'openai', label: 'OpenAI' },
+                  { id: 'gemini', label: 'Google Gemini' },
+                  { id: 'anthropic', label: 'Anthropic' },
+                  { id: 'ollama', label: 'ローカル Ollama' },
+                  { id: 'none', label: 'オフ' },
+                ] as const
+              ).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`category-tab ${settings.llm_provider === p.id ? 'active' : ''}`}
+                  onClick={() => update({ llm_provider: p.id })}
+                >
+                  {p.label}
                 </button>
+              ))}
+            </div>
+
+            {settings.llm_provider === 'none' ? (
+              <div className="surface-subtle">
+                <p className="text-secondary" style={{ margin: '0px' }}>
+                  AI機能はオフになっています。チャット画面ではノート内のキーワード検索結果が表示されます。
+                </p>
               </div>
-            );
-          })}
-        </section>
-      )}
+            ) : (
+              <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {settings.llm_provider === 'openai_compatible' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <label className="text-muted">ベース URL</label>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className="chip-filter"
+                          onClick={() => update({ llm_endpoint: 'https://openrouter.ai/api/v1' })}
+                        >
+                          OpenRouter
+                        </button>
+                        <button
+                          type="button"
+                          className="chip-filter"
+                          onClick={() => update({ llm_endpoint: 'https://api.groq.com/openai/v1' })}
+                        >
+                          Groq
+                        </button>
+                        <button
+                          type="button"
+                          className="chip-filter"
+                          onClick={() => update({ llm_endpoint: 'http://localhost:1234/v1' })}
+                        >
+                          LM Studio (ローカル)
+                        </button>
+                      </div>
+                    </div>
+                    <input
+                      type="url"
+                      className="input"
+                      placeholder="https://openrouter.ai/api/v1"
+                      value={settings.llm_endpoint}
+                      onChange={(e) => update({ llm_endpoint: e.target.value })}
+                    />
+                  </div>
+                )}
 
-      {/* 3. Shortcuts */}
-      {tab === 'shortcuts' && (
-        <section className="surface-card" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
-          <div>
-            <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>録音開始/停止ショートカット</label>
-            <input
-              type="text"
-              className="input mono-num"
-              value={settings.record_shortcut}
-              onChange={(e) => update({ record_shortcut: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>Voice typing ショートカット</label>
-            <input
-              type="text"
-              className="input mono-num"
-              value={settings.voice_typing_shortcut}
-              onChange={(e) => update({ voice_typing_shortcut: e.target.value })}
-            />
-          </div>
-        </section>
-      )}
+                {settings.llm_provider === 'ollama' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="text-muted">Ollama エンドポイント URL</label>
+                    <input
+                      type="url"
+                      className="input"
+                      placeholder="http://localhost:11434"
+                      value={settings.llm_endpoint}
+                      onChange={(e) => update({ llm_endpoint: e.target.value })}
+                    />
+                  </div>
+                )}
 
-      {/* 4. Privacy & Data */}
-      {tab === 'privacy' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <h2 className="section-title">音声・データのプライバシー管理</h2>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <input
-                type="checkbox"
-                checked={settings.delete_audio_after_transcribe}
-                onChange={(e) => update({ delete_audio_after_transcribe: e.target.checked })}
-              />
-              文字起こし完了後に録音音声ファイルを削除する（既定・推奨）
-            </label>
-            {!settings.delete_audio_after_transcribe && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: '24px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <label className="text-muted">モデル名</label>
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      {settings.llm_provider === 'openai' &&
+                        ['gpt-4o-mini', 'gpt-4o'].map((preset) => (
+                          <button key={preset} type="button" className="chip-filter" onClick={() => update({ llm_model: preset })}>
+                            {preset}
+                          </button>
+                        ))}
+                      {settings.llm_provider === 'gemini' &&
+                        ['gemini-2.5-flash', 'gemini-2.5-pro'].map((preset) => (
+                          <button key={preset} type="button" className="chip-filter" onClick={() => update({ llm_model: preset })}>
+                            {preset}
+                          </button>
+                        ))}
+                      {settings.llm_provider === 'anthropic' &&
+                        ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest'].map((preset) => (
+                          <button key={preset} type="button" className="chip-filter" onClick={() => update({ llm_model: preset })}>
+                            {preset}
+                          </button>
+                        ))}
+                      {settings.llm_provider === 'ollama' &&
+                        ['qwen2.5:7b', 'llama3.2'].map((preset) => (
+                          <button key={preset} type="button" className="chip-filter" onClick={() => update({ llm_model: preset })}>
+                            {preset}
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    className="input"
+                    value={settings.llm_model}
+                    onChange={(e) => update({ llm_model: e.target.value })}
+                    placeholder={
+                      settings.llm_provider === 'openai_compatible'
+                        ? '例: openai/gpt-4o-mini / google/gemini-2.5-flash'
+                        : 'モデル名を入力'
+                    }
+                  />
+                </div>
+
+                {activeLlmSecretMeta && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="text-muted">{activeLlmSecretMeta.label}</label>
+                      <span className={`status-chip ${activeLlmSecretMeta.saved ? 'ok' : 'warn'}`}>
+                        {activeLlmSecretMeta.saved ? '保存済み' : '未設定'}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="password"
+                        className="input"
+                        placeholder={
+                          activeLlmSecretMeta.saved
+                            ? '保存済み（更新する場合のみ新しいキーを入力）'
+                            : 'APIキーを入力（入力後に保存を押してください）'
+                        }
+                        value={secretInputs[activeLlmSecretMeta.key] || ''}
+                        onChange={(e) =>
+                          setSecretInputs((p) => ({
+                            ...p,
+                            [activeLlmSecretMeta.key]: e.target.value,
+                          }))
+                        }
+                        onBlur={() => {
+                          if ((secretInputs[activeLlmSecretMeta.key] || '').trim()) {
+                            void saveKey(activeLlmSecretMeta.key);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => saveKey(activeLlmSecretMeta.key)}
+                      >
+                        <Key size={14} strokeWidth={1.5} />
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 3. Shortcuts */}
+        {tab === 'shortcuts' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div>
+              <h2 className="section-title">ショートカットキー</h2>
+              <p className="text-muted" style={{ margin: '4px 0 0' }}>
+                どのアプリを開いていても録音や音声入力を呼び出せます。
+              </p>
+            </div>
+            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                  録音開始 / 停止
+                </label>
+                <input
+                  type="text"
+                  className="input mono-num"
+                  value={settings.record_shortcut}
+                  onChange={(e) => update({ record_shortcut: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                  音声入力 (Voice Typing)
+                </label>
+                <input
+                  type="text"
+                  className="input mono-num"
+                  value={settings.voice_typing_shortcut}
+                  onChange={(e) => update({ voice_typing_shortcut: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 4. Data & Privacy */}
+        {tab === 'privacy' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div>
+              <h2 className="section-title">データ管理・セキュリティ</h2>
+              <p className="text-muted" style={{ margin: '4px 0 0' }}>
+                録音ファイルやノートデータの暗号化・バックアップを管理します。
+              </p>
+            </div>
+
+            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={settings.delete_audio_after_transcribe}
+                  onChange={(e) => update({ delete_audio_after_transcribe: e.target.checked })}
+                />
+                <span>文字起こし完了後に一時音声ファイル（WAV）を自動削除する</span>
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
                   checked={settings.encrypt_retained_audio}
                   onChange={(e) => update({ encrypt_retained_audio: e.target.checked })}
                 />
-                保持する音声ファイルを AES-256-GCM で暗号化して保存する
+                <span>保持する音声ファイルを AES-256-GCM で暗号化する</span>
               </label>
-            )}
-            <label style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <input
-                type="checkbox"
-                checked={settings.opt_out_model_training}
-                onChange={(e) => update({ opt_out_model_training: e.target.checked })}
-              />
-              モデル学習へのデータ利用をオプトアウトする
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <input
-                type="checkbox"
-                checked={settings.participant_notice_enabled}
-                onChange={(e) => update({ participant_notice_enabled: e.target.checked })}
-              />
-              録音時に参加者への案内文を表示する
-            </label>
-          </section>
+            </div>
 
-          <section className="surface-card" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-            <button type="button" className="btn btn-secondary" onClick={onExportAll}>
-              全データをJSONエクスポート
-            </button>
-            {confirmPurge ? (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  onClick={async () => {
-                    await onPurgeAll();
-                    setConfirmPurge(false);
-                    flash('ローカルのノートを削除しました');
-                  }}
-                >
-                  本当にすべて削除する
-                </button>
-                <button type="button" className="btn btn-secondary" onClick={() => setConfirmPurge(false)}>
-                  キャンセル
-                </button>
-              </>
-            ) : (
-              <button type="button" className="btn btn-secondary" onClick={() => setConfirmPurge(true)}>
-                全ノートデータを削除
+            <div className="surface-card" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button type="button" className="btn btn-secondary" onClick={onExportAll}>
+                全データをJSONエクスポート
               </button>
-            )}
-          </section>
-        </div>
-      )}
 
-      {/* 5. App Update */}
-      {tab === 'update' && (
-        <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <div>
-              <h2 className="section-title">アプリ更新（GitHub Releases）</h2>
-              <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                現在のバージョン: <span className="mono-num">v{updateInfo?.current_version ?? '0.5.0'}</span>
-              </p>
-            </div>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={checkingUpdate || installingUpdate}
-              onClick={async () => {
-                setCheckingUpdate(true);
-                setUpdateError(null);
-                try {
-                  const res = await onCheckUpdate();
-                  setUpdateInfo(res);
-                } catch (e) {
-                  setUpdateError(String(e));
-                } finally {
-                  setCheckingUpdate(false);
-                }
-              }}
-            >
-              {checkingUpdate ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <RefreshCw size={15} strokeWidth={1.5} />}
-              {checkingUpdate ? '確認中' : '最新バージョンを確認'}
-            </button>
-          </div>
-
-          {updateError && (
-            <div className="surface-subtle" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}>
-              {updateError}
-            </div>
-          )}
-
-          {updateInfo && (
-            <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>
-                    {updateInfo.has_update
-                      ? `新しいバージョン v${updateInfo.latest_version} が利用可能です`
-                      : `最新状態です（v${updateInfo.latest_version}）`}
-                  </div>
-                  <div className="text-muted">{updateInfo.release_name}</div>
+              {!confirmPurge ? (
+                <button type="button" className="btn btn-danger" onClick={() => setConfirmPurge(true)}>
+                  全ノートを初期化
+                </button>
+              ) : (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={async () => {
+                      await onPurgeAll();
+                      setConfirmPurge(false);
+                      flash('全ノートを消去しました');
+                    }}
+                  >
+                    消去を確定
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setConfirmPurge(false)}>
+                    キャンセル
+                  </button>
                 </div>
-                {updateInfo.has_update && (
-                  updateInfo.download_url && updateInfo.asset_name ? (
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      disabled={installingUpdate}
-                      onClick={async () => {
-                        setInstallingUpdate(true);
-                        setUpdateError(null);
-                        try {
-                          const msg = await onInstallUpdate(updateInfo.download_url!, updateInfo.asset_name!);
-                          flash(msg);
-                        } catch (e) {
-                          setUpdateError(String(e));
-                        } finally {
-                          setInstallingUpdate(false);
-                        }
-                      }}
-                    >
-                      {installingUpdate ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <Download size={15} strokeWidth={1.5} />}
-                      {installingUpdate
-                        ? `更新中 ${updateProgress ?? 0}%`
-                        : `v${updateInfo.latest_version} へそのままアップデート`}
-                    </button>
-                  ) : (
-                    <a
-                      href={updateInfo.release_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="btn btn-secondary"
-                    >
-                      このOS向けのビルド準備中（リリースページを開く）
-                    </a>
-                  )
-                )}
-              </div>
-              {updateInfo.release_notes && (
-                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
-                  {updateInfo.release_notes}
-                </pre>
               )}
             </div>
-          )}
+          </div>
+        )}
 
-          <details className="surface-subtle">
-            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Private リポジトリから更新する場合（任意）</summary>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px' }}>
-              <input
-                type="password"
-                className="input"
-                placeholder={secretStatus?.github_update_token ? '保存済み（更新する場合のみ入力）' : 'GitHub Personal Access Token'}
-                value={secretInputs['github_update_token'] || ''}
-                onChange={(e) => setSecretInputs((p) => ({ ...p, github_update_token: e.target.value }))}
-              />
-              <button type="button" className="btn btn-secondary" onClick={() => saveKey('github_update_token')}>
-                保存
-              </button>
+        {/* 5. App Update */}
+        {tab === 'update' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div>
+              <h2 className="section-title">アプリ更新</h2>
+              <p className="text-muted" style={{ margin: '4px 0 0' }}>
+                GitHub Releases から最新バージョンを確認してワンクリックで更新できます。
+              </p>
             </div>
-          </details>
-        </section>
-      )}
 
-      {/* 6. Credits */}
-      {tab === 'credits' && (
-        <section className="surface-card" style={{ color: 'var(--text-secondary)' }}>
-          <h2 className="section-title" style={{ marginBottom: '8px' }}>About / Credits</h2>
-          <p style={{ margin: '0 0 8px' }}>
-            UIデザインの構成とトークン設計は Uber Design による Figma コミュニティファイル「Base Gallery」（CC BY 4.0）および Base Design System を参照しています。
-          </p>
-          <p style={{ margin: 0 }}>
-            ローカルASRランタイム・モデル: whisper.cpp / OpenAI Whisper (MIT)、NVIDIA Parakeet TDT/CTC (CC-BY-4.0)、sherpa-onnx (Apache-2.0)。
-          </p>
-        </section>
-      )}
+            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.6.0'}</strong>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={checkingUpdate || installingUpdate}
+                  onClick={async () => {
+                    setCheckingUpdate(true);
+                    setUpdateError(null);
+                    try {
+                      const res = await onCheckUpdate();
+                      setUpdateInfo(res);
+                    } catch (e) {
+                      setUpdateError(e instanceof Error ? e.message : String(e));
+                    } finally {
+                      setCheckingUpdate(false);
+                    }
+                  }}
+                >
+                  {checkingUpdate ? (
+                    <Loader2 size={14} strokeWidth={1.5} className="spin" />
+                  ) : (
+                    <RefreshCw size={14} strokeWidth={1.5} />
+                  )}
+                  {checkingUpdate ? '確認中...' : '最新リリースを確認'}
+                </button>
+              </div>
+
+              {updateError && (
+                <div className="surface-subtle" style={{ color: 'var(--danger)' }}>
+                  {updateError}
+                </div>
+              )}
+
+              {updateInfo && (
+                <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <span className={`status-chip ${updateInfo.has_update ? 'accent' : 'ok'}`}>
+                      {updateInfo.has_update
+                        ? `新しいバージョン v${updateInfo.latest_version} が利用可能です`
+                        : `最新の状態です (v${updateInfo.current_version})`}
+                    </span>
+                    {updateInfo.download_url && (
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={installingUpdate}
+                        onClick={async () => {
+                          if (!updateInfo.download_url) return;
+                          setInstallingUpdate(true);
+                          setUpdateError(null);
+                          try {
+                            const msg = await onInstallUpdate(
+                              updateInfo.download_url,
+                              updateInfo.asset_name || 'KoeNote-Setup.exe'
+                            );
+                            flash(msg);
+                          } catch (e) {
+                            setUpdateError(e instanceof Error ? e.message : String(e));
+                          } finally {
+                            setInstallingUpdate(false);
+                          }
+                        }}
+                      >
+                        {installingUpdate ? (
+                          <Loader2 size={14} strokeWidth={1.5} className="spin" />
+                        ) : (
+                          <Download size={14} strokeWidth={1.5} />
+                        )}
+                        {installingUpdate
+                          ? updateProgress !== null
+                            ? `ダウンロード中 (${updateProgress}%)`
+                            : '更新中...'
+                          : `v${updateInfo.latest_version} に今すぐアップデート`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
