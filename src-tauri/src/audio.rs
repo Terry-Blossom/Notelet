@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 pub struct AudioManager {
     runtime: Arc<Mutex<RecordingRuntime>>,
+    live_chunk_pcm: Arc<Mutex<Vec<i16>>>,
     stop_flag: Arc<AtomicBool>,
     paused_flag: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
@@ -55,10 +56,48 @@ impl AudioManager {
     pub fn new() -> Self {
         Self {
             runtime: Arc::new(Mutex::new(RecordingRuntime::default())),
+            live_chunk_pcm: Arc::new(Mutex::new(Vec::new())),
             stop_flag: Arc::new(AtomicBool::new(false)),
             paused_flag: Arc::new(AtomicBool::new(false)),
             worker: None,
         }
+    }
+
+    pub fn take_live_chunk(&self, min_samples: usize) -> Option<(PathBuf, u64)> {
+        let samples = {
+            let mut buf = self.live_chunk_pcm.lock().ok()?;
+            if buf.len() < min_samples {
+                return None;
+            }
+            std::mem::take(&mut *buf)
+        };
+        let mut sum_sq = 0.0f64;
+        for &s in &samples {
+            let f = s as f64 / i16::MAX as f64;
+            sum_sq += f * f;
+        }
+        let rms = (sum_sq / samples.len().max(1) as f64).sqrt();
+        if rms < 0.004 {
+            return None;
+        }
+        let elapsed_ms = self.runtime.lock().ok().map(|r| r.elapsed_ms).unwrap_or(0);
+        let dir = storage::app_data_dir().join("temp_recordings");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("live_{}.wav", Uuid::new_v4()));
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: WavSampleFormat::Int,
+        };
+        if let Ok(mut w) = WavWriter::create(&path, spec) {
+            for s in samples {
+                let _ = w.write_sample(s);
+            }
+            let _ = w.finalize();
+            return Some((path, elapsed_ms));
+        }
+        None
     }
 
     pub fn list_devices() -> Vec<AudioDeviceInfo> {
@@ -184,6 +223,9 @@ impl AudioManager {
 
         self.stop_flag.store(false, Ordering::SeqCst);
         self.paused_flag.store(false, Ordering::SeqCst);
+        if let Ok(mut buf) = self.live_chunk_pcm.lock() {
+            buf.clear();
+        }
 
         {
             let mut rt = self.runtime.lock().unwrap();
@@ -228,6 +270,7 @@ impl AudioManager {
             let runtime_cb = Arc::clone(&runtime);
             let resample_ratio = sample_rate as f64 / 16_000.0;
             let phase = Arc::new(Mutex::new(0.0f64));
+            let chunk_cb = Arc::clone(&self.live_chunk_pcm);
 
             let err_runtime = Arc::clone(&runtime);
             let err_fn = move |err: cpal::StreamError| {
@@ -241,16 +284,19 @@ impl AudioManager {
             let r_f32 = Arc::clone(&runtime_cb);
             let p_f32 = Arc::clone(&paused_flag);
             let ph_f32 = Arc::clone(&phase);
+            let c_f32 = Arc::clone(&chunk_cb);
 
             let w_i16 = Arc::clone(&writer);
             let r_i16 = Arc::clone(&runtime_cb);
             let p_i16 = Arc::clone(&paused_flag);
             let ph_i16 = Arc::clone(&phase);
+            let c_i16 = Arc::clone(&chunk_cb);
 
             let w_u16 = Arc::clone(&writer);
             let r_u16 = Arc::clone(&runtime_cb);
             let p_u16 = Arc::clone(&paused_flag);
             let ph_u16 = Arc::clone(&phase);
+            let c_u16 = Arc::clone(&chunk_cb);
 
             let stream_res = match sample_format {
                 SampleFormat::F32 => device.build_input_stream(
@@ -260,7 +306,7 @@ impl AudioManager {
                             .chunks(channels)
                             .map(|frame| frame.iter().sum::<f32>() / channels as f32)
                             .collect();
-                        process_mono_samples(&mono, &w_f32, &r_f32, &p_f32, &ph_f32, resample_ratio);
+                        process_mono_samples(&mono, &w_f32, &c_f32, &r_f32, &p_f32, &ph_f32, resample_ratio);
                     },
                     err_fn,
                     None,
@@ -275,7 +321,7 @@ impl AudioManager {
                                     / channels as f32
                             })
                             .collect();
-                        process_mono_samples(&mono, &w_i16, &r_i16, &p_i16, &ph_i16, resample_ratio);
+                        process_mono_samples(&mono, &w_i16, &c_i16, &r_i16, &p_i16, &ph_i16, resample_ratio);
                     },
                     err_fn,
                     None,
@@ -293,7 +339,7 @@ impl AudioManager {
                                     / channels as f32
                             })
                             .collect();
-                        process_mono_samples(&mono, &w_u16, &r_u16, &p_u16, &ph_u16, resample_ratio);
+                        process_mono_samples(&mono, &w_u16, &c_u16, &r_u16, &p_u16, &ph_u16, resample_ratio);
                     },
                     err_fn,
                     None,
@@ -432,6 +478,7 @@ pub type _UnusedBuf = BufWriter<File>;
 fn process_mono_samples(
     mono: &[f32],
     writer: &Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>,
+    chunk_pcm: &Arc<Mutex<Vec<i16>>>,
     runtime: &Arc<Mutex<RecordingRuntime>>,
     paused: &Arc<AtomicBool>,
     phase: &Arc<Mutex<f64>>,
@@ -450,10 +497,14 @@ fn process_mono_samples(
         if let Some(ref mut w) = *guard {
             let mut p = phase.lock().unwrap();
             let mut idx = *p;
+            let mut chunk_guard = chunk_pcm.lock().ok();
             while (idx as usize) < mono.len() {
                 let s = mono[idx as usize].clamp(-1.0, 1.0);
                 let pcm = (s * i16::MAX as f32) as i16;
                 let _ = w.write_sample(pcm);
+                if let Some(ref mut c) = chunk_guard {
+                    c.push(pcm);
+                }
                 idx += resample_ratio;
             }
             *p = idx - mono.len() as f64;

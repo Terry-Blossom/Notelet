@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pause, Play, Square, AlertTriangle, Copy, Check } from 'lucide-react';
-import { AppSettings, RecordingStatus } from '../types';
+import { AppSettings, RecordingStatus, TranscriptSegment } from '../types';
 import { formatMs } from '../lib/format';
 import { WaveformMeter } from './WaveformMeter';
 
@@ -8,6 +8,8 @@ interface RecordingViewProps {
   status: RecordingStatus;
   settings: AppSettings;
   manualNotes: string;
+  liveSegments: TranscriptSegment[];
+  realtimeSupported: boolean;
   onChangeManualNotes: (val: string) => void;
   onPause: () => void;
   onResume: () => void;
@@ -19,6 +21,8 @@ export const RecordingView: React.FC<RecordingViewProps> = ({
   status,
   settings,
   manualNotes,
+  liveSegments,
+  realtimeSupported,
   onChangeManualNotes,
   onPause,
   onResume,
@@ -140,6 +144,34 @@ export const RecordingView: React.FC<RecordingViewProps> = ({
           </button>
         </section>
       )}
+
+      {/* Live Transcript */}
+      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 className="section-title">リアルタイム文字起こし</h2>
+          <span className={`status-chip ${realtimeSupported ? 'ok' : ''}`}>
+            {realtimeSupported ? 'リアルタイム対応' : '録音後に文字起こし'}
+          </span>
+        </div>
+        {liveSegments.length === 0 ? (
+          !realtimeSupported ? (
+            <p className="text-muted" style={{ margin: 0 }}>
+              選択中のモデルは録音停止後に文字起こしを実行します
+            </p>
+          ) : null
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto' }}>
+            {liveSegments.map((seg) => (
+              <div key={seg.id} style={{ display: 'flex', gap: '12px', alignItems: 'baseline' }}>
+                <span className="mono-num text-muted" style={{ flexShrink: 0 }}>
+                  {formatMs(seg.start_ms)}
+                </span>
+                <span>{seg.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Manual Notes while Recording */}
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

@@ -116,12 +116,65 @@ fn list_audio_devices() -> Vec<AudioDeviceInfo> {
 
 #[tauri::command]
 fn start_recording(
+    app: tauri::AppHandle,
     state: State<AppState>,
     source_mode: AudioSourceMode,
     device_id: Option<String>,
 ) -> Result<RecordingStatus, String> {
-    let mut audio = state.audio.lock().unwrap();
-    audio.start(source_mode, device_id)
+    let status = {
+        let mut audio = state.audio.lock().unwrap();
+        audio.start(source_mode, device_id)?
+    };
+
+    let app_handle = app.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            let st_ref = app_handle.state::<AppState>();
+            let rec_state = {
+                let audio = st_ref.audio.lock().unwrap();
+                audio.status().state
+            };
+            if rec_state == "idle" || rec_state == "error" {
+                break;
+            }
+            if rec_state != "recording" {
+                continue;
+            }
+            let chunk_opt = {
+                let audio = st_ref.audio.lock().unwrap();
+                audio.take_live_chunk(48_000)
+            };
+            if let Some((chunk_path, elapsed_ms)) = chunk_opt {
+                let (settings, dictionary) = {
+                    let data = st_ref.data.lock().unwrap();
+                    (data.settings.clone(), data.dictionary.clone())
+                };
+                let chunk_clone = chunk_path.clone();
+                let res = tokio::task::spawn_blocking(move || {
+                    let out = asr::transcribe_chunk_sync(&chunk_clone, &settings, &dictionary);
+                    let _ = std::fs::remove_file(&chunk_clone);
+                    out
+                })
+                .await;
+                if let Ok(Ok(text)) = res {
+                    if !text.is_empty() {
+                        let start_ms = elapsed_ms.saturating_sub(3000);
+                        let seg = models::TranscriptSegment {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            start_ms,
+                            end_ms: elapsed_ms,
+                            speaker: "話者1".to_string(),
+                            text,
+                        };
+                        let _ = app_handle.emit("live-transcript-segment", seg);
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(status)
 }
 
 #[tauri::command]

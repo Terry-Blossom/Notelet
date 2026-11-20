@@ -23,6 +23,7 @@ import {
   Note,
   RecordingStatus,
   SecretStatus,
+  TranscriptSegment,
 } from './types';
 import {
   apiChatNotes,
@@ -158,6 +159,7 @@ export const App: React.FC = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [recStatus, setRecStatus] = useState<RecordingStatus>(INITIAL_RECORDING_STATUS);
   const [liveManualNotes, setLiveManualNotes] = useState('');
+  const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
@@ -192,6 +194,7 @@ export const App: React.FC = () => {
     let unlistenDl: (() => void) | undefined;
     let unlistenSc: (() => void) | undefined;
     let unlistenUpd: (() => void) | undefined;
+    let unlistenLive: (() => void) | undefined;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       unlistenDl = await listen<{ model_id: string; progress: number }>('asr-download-progress', (ev) => {
         setDownloadProgress((prev) => ({ ...prev, [ev.payload.model_id]: ev.payload.progress }));
@@ -201,6 +204,9 @@ export const App: React.FC = () => {
       });
       unlistenUpd = await listen<{ progress: number }>('app-update-progress', (ev) => {
         setUpdateProgress(ev.payload.progress);
+      });
+      unlistenLive = await listen<TranscriptSegment>('live-transcript-segment', (ev) => {
+        setLiveSegments((prev) => [...prev, ev.payload]);
       });
       unlistenSc = await listen<string>('global-shortcut-triggered', () => {
         if (recStatus.state === 'recording' || recStatus.state === 'paused') {
@@ -213,6 +219,7 @@ export const App: React.FC = () => {
     return () => {
       unlistenDl?.();
       unlistenUpd?.();
+      unlistenLive?.();
       unlistenSc?.();
     };
   }, [recStatus.state, refreshAll]);
@@ -234,6 +241,7 @@ export const App: React.FC = () => {
   const handleStartRecording = async () => {
     setTranscribeError(null);
     setLiveManualNotes('');
+    setLiveSegments([]);
     if (!isTauriRuntime()) {
       setBannerMessage('ブラウザ単体プレビューのため、ネイティブ録音は Tauri デスクトップ実行時に有効になります。');
       return;
@@ -253,6 +261,7 @@ export const App: React.FC = () => {
     const newNote = createEmptyNote();
     newNote.duration_sec = Math.round(finalStatus.elapsed_ms / 1000);
     newNote.manual_notes = liveManualNotes;
+    newNote.segments = liveSegments;
     newNote.language = snapshot.settings.language;
 
     if (isTauriRuntime()) {
@@ -576,6 +585,10 @@ export const App: React.FC = () => {
             status={recStatus}
             settings={snapshot.settings}
             manualNotes={liveManualNotes}
+            liveSegments={liveSegments}
+            realtimeSupported={Boolean(
+              models.find((m) => m.id === snapshot.settings.active_asr_model_id)?.supports_realtime
+            )}
             onChangeManualNotes={setLiveManualNotes}
             onPause={async () => {
               if (isTauriRuntime()) setRecStatus(await apiPauseRecording());

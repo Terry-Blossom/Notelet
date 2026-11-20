@@ -115,7 +115,7 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             size_mb: 142,
             download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin".into(),
             filename: "ggml-base.bin".into(),
-            supports_realtime: false,
+            supports_realtime: true,
             supports_diarization: false,
             is_compatible: whisper_cli_ok,
             compatibility_reason: whisper_reason.clone(),
@@ -134,7 +134,7 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             size_mb: 181,
             download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin".into(),
             filename: "ggml-small-q5_1.bin".into(),
-            supports_realtime: false,
+            supports_realtime: true,
             supports_diarization: false,
             is_compatible: whisper_cli_ok,
             compatibility_reason: whisper_reason.clone(),
@@ -158,6 +158,26 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             is_compatible: whisper_cli_ok,
             compatibility_reason: whisper_reason,
             installed: models_dir.join("ggml-large-v3-turbo-q5_0.bin").exists(),
+            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
+        },
+        AsrModelInfo {
+            id: "sense-voice-int8-ja".to_string(),
+            name: "SenseVoice INT8 (日本語・超高速リアルタイム)".to_string(),
+            provider: AsrProviderKind::LocalParakeet,
+            is_local: true,
+            languages: vec!["日本語".into(), "英語".into(), "中国語".into(), "韓国語".into()],
+            environment: "ローカル ONNX Runtime / sherpa-onnx (x86_64 / arm64)".into(),
+            memory_mb: 600,
+            license: "FunAudioLLM / Apache-2.0 (sherpa-onnx)".into(),
+            size_mb: 228,
+            download_url: "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main".into(),
+            filename: "sense-voice-zh-en-ja-ko-yue-int8".into(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: parakeet_arch_ok && parakeet_cli_ok,
+            compatibility_reason: parakeet_reason.clone(),
+            installed: models_dir.join("sense-voice-zh-en-ja-ko-yue-int8").join("model.int8.onnx").exists()
+                && models_dir.join("sense-voice-zh-en-ja-ko-yue-int8").join("tokens.txt").exists(),
             data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
         },
         AsrModelInfo {
@@ -353,7 +373,7 @@ pub async fn download_whisper_model(
     fs::create_dir_all(&dir).map_err(|e| format!("モデルディレクトリ作成失敗: {e}"))?;
     let base_url = model.download_url.trim_end_matches('/');
 
-    if model.id == "parakeet-tdt-ctc-0.6b-ja" {
+    if model.id == "parakeet-tdt-ctc-0.6b-ja" || model.id == "sense-voice-int8-ja" {
         download_single_file(
             app,
             model_id,
@@ -694,7 +714,12 @@ pub async fn transcribe_wav(
             let ctc_model = model_dir.join("model.int8.onnx");
             let tokens = model_dir.join("tokens.txt");
             let mut cmd = Command::new(cli);
-            if ctc_model.exists() {
+            if model.id == "sense-voice-int8-ja" {
+                cmd.arg(format!("--sense-voice-model={}", ctc_model.display()))
+                    .arg("--sense-voice-use-itn=1")
+                    .arg(format!("--tokens={}", tokens.display()))
+                    .arg(&local_wav);
+            } else if ctc_model.exists() {
                 cmd.arg(format!("--nemo-ctc-model={}", ctc_model.display()))
                     .arg(format!("--tokens={}", tokens.display()))
                     .arg(&local_wav);
@@ -719,7 +744,8 @@ pub async fn transcribe_wav(
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(format!("Parakeet 文字起こしエラー: {stderr}"));
             }
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let raw_out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stdout = strip_sense_voice_tags(&raw_out);
             let seg = TranscriptSegment {
                 id: Uuid::new_v4().to_string(),
                 start_ms: 0,
@@ -860,5 +886,119 @@ pub async fn transcribe_wav(
             }
             Ok((segs, true, model.name))
         }
+    }
+}
+
+fn strip_sense_voice_tags(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut in_tag = false;
+    let chars: Vec<char> = raw.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if i + 1 < chars.len() && chars[i] == '<' && chars[i + 1] == '|' {
+            in_tag = true;
+            i += 2;
+            continue;
+        }
+        if in_tag && i + 1 < chars.len() && chars[i] == '|' && chars[i + 1] == '>' {
+            in_tag = false;
+            i += 2;
+            continue;
+        }
+        if !in_tag {
+            out.push(chars[i]);
+        }
+        i += 1;
+    }
+    out.trim().to_string()
+}
+
+pub fn transcribe_chunk_sync(
+    chunk_wav: &Path,
+    settings: &AppSettings,
+    dictionary: &[DictionaryEntry],
+) -> Result<String, String> {
+    let models = list_models(settings);
+    let model = models
+        .into_iter()
+        .find(|m| m.id == settings.active_asr_model_id)
+        .ok_or_else(|| "ASRモデルが見つかりません".to_string())?;
+    if !model.is_local || !model.supports_realtime {
+        return Ok(String::new());
+    }
+
+    let prompt_terms: Vec<String> = dictionary.iter().map(|d| d.term.clone()).collect();
+    let prompt_hint = prompt_terms.join("、");
+
+    match model.provider {
+        AsrProviderKind::LocalWhisper => {
+            let cli = resolve_whisper_cli(&settings.whisper_cli_path)
+                .ok_or_else(|| "whisper-cli 未設定".to_string())?;
+            let model_path = storage::models_dir().join(&model.filename);
+            if !model_path.exists() {
+                return Ok(String::new());
+            }
+            let out_base = chunk_wav.with_extension("chunk_out");
+            let mut cmd = Command::new(cli);
+            cmd.arg("-m")
+                .arg(&model_path)
+                .arg("-f")
+                .arg(chunk_wav)
+                .arg("-nt")
+                .arg("-np")
+                .arg("-l")
+                .arg(if settings.language.is_empty() {
+                    "auto"
+                } else {
+                    &settings.language
+                })
+                .arg("-of")
+                .arg(&out_base)
+                .arg("-otxt");
+            if !prompt_hint.is_empty() {
+                cmd.arg("--prompt").arg(&prompt_hint);
+            }
+            let output = cmd
+                .output()
+                .map_err(|e| format!("チャンク文字起こし失敗: {e}"))?;
+            let txt_path = PathBuf::from(format!("{}.txt", out_base.to_string_lossy()));
+            let text = if txt_path.exists() {
+                let s = fs::read_to_string(&txt_path).unwrap_or_default();
+                let _ = fs::remove_file(&txt_path);
+                s
+            } else {
+                String::from_utf8_lossy(&output.stdout).to_string()
+            };
+            Ok(text.trim().to_string())
+        }
+        AsrProviderKind::LocalParakeet => {
+            let cli = resolve_parakeet_cli(&settings.parakeet_cli_path)
+                .ok_or_else(|| "sherpa-onnx-offline 未設定".to_string())?;
+            let model_dir = storage::models_dir().join(&model.filename);
+            if !model_dir.exists() {
+                return Ok(String::new());
+            }
+            let ctc_model = model_dir.join("model.int8.onnx");
+            let tokens = model_dir.join("tokens.txt");
+            let mut cmd = Command::new(cli);
+            if model.id == "sense-voice-int8-ja" {
+                cmd.arg(format!("--sense-voice-model={}", ctc_model.display()))
+                    .arg("--sense-voice-use-itn=1")
+                    .arg(format!("--tokens={}", tokens.display()))
+                    .arg(chunk_wav);
+            } else if ctc_model.exists() {
+                cmd.arg(format!("--nemo-ctc-model={}", ctc_model.display()))
+                    .arg(format!("--tokens={}", tokens.display()))
+                    .arg(chunk_wav);
+            } else {
+                return Ok(String::new());
+            }
+            let output = cmd
+                .output()
+                .map_err(|e| format!("チャンク推論失敗: {e}"))?;
+            let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            Ok(strip_sense_voice_tags(&raw))
+        }
+        _ => Ok(String::new()),
     }
 }
