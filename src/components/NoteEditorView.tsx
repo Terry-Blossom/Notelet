@@ -10,15 +10,16 @@ import {
   Copy,
   FileText,
   Folder as FolderIcon,
+  GitMerge,
   Link2,
   List,
   Menu,
-  MessageSquare,
   Mic,
   Pause,
   Pencil,
   Play,
   Plus,
+  Search,
   Send,
   Shield,
   Sparkles,
@@ -123,6 +124,36 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [spaceChatQuestion, setSpaceChatQuestion] = useState('');
   const [spaceChatAnswer, setSpaceChatAnswer] = useState<ChatAnswer | null>(null);
   const [spaceChatBusy, setSpaceChatBusy] = useState(false);
+  const [spaceSearchQuery, setSpaceSearchQuery] = useState('');
+  const [spaceSortOrder, setSpaceSortOrder] = useState<'newest' | 'oldest' | 'title'>('newest');
+  const [spaceSelectMode, setSpaceSelectMode] = useState(false);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
+  const [bulkMoveTargetId, setBulkMoveTargetId] = useState('');
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeTargetId, setMergeTargetId] = useState('');
+  const [noteContextMenu, setNoteContextMenu] = useState<{ noteId: string; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!noteContextMenu) return;
+    const close = () => setNoteContextMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNoteContextMenu(null);
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [noteContextMenu]);
+
+  useEffect(() => {
+    setSpaceSelectMode(false);
+    setSelectedNoteIds([]);
+    setSpaceSearchQuery('');
+    setMergeOpen(false);
+    setSpaceChatAnswer(null);
+  }, [viewingFolderId]);
 
   const notesList = useMemo(
     () => (allNotes && allNotes.length > 0 ? allNotes : [note]),
@@ -738,6 +769,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                               onSelectNote?.(cn.id);
                               setDrawerOpen(false);
                             }}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setNoteContextMenu({ noteId: cn.id, x: e.clientX, y: e.clientY });
+                            }}
                             title={cn.title.trim() || '無題のノート'}
                           >
                             <FileText size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
@@ -838,209 +873,457 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           (() => {
             const targetFolder =
               folders.find((f) => f.id === viewingFolderId) || activeFolder;
-            const folderNotes = notesList.filter((n) => n.folder_id === targetFolder.id);
+            const folderNotesRaw = notesList.filter((n) => n.folder_id === targetFolder.id);
+            const q = spaceSearchQuery.trim().toLowerCase();
+            const folderNotes = folderNotesRaw
+              .filter((fn) => {
+                if (!q) return true;
+                const hay = [
+                  fn.title,
+                  fn.summary,
+                  fn.manual_notes,
+                  ...fn.segments.map((s) => s.text),
+                ]
+                  .join(' ')
+                  .toLowerCase();
+                return hay.includes(q);
+              })
+              .sort((a, b) => {
+                if (spaceSortOrder === 'oldest') {
+                  return a.created_at.localeCompare(b.created_at);
+                }
+                if (spaceSortOrder === 'title') {
+                  return (a.title.trim() || '無題のノート').localeCompare(
+                    b.title.trim() || '無題のノート',
+                    'ja'
+                  );
+                }
+                return b.created_at.localeCompare(a.created_at);
+              });
+            const otherFolders = folders.filter((f) => f.id !== targetFolder.id);
+            const effectiveMoveTargetId =
+              bulkMoveTargetId && otherFolders.some((f) => f.id === bulkMoveTargetId)
+                ? bulkMoveTargetId
+                : otherFolders[0]?.id || '';
+            const effectiveMergeTargetId =
+              mergeTargetId && otherFolders.some((f) => f.id === mergeTargetId)
+                ? mergeTargetId
+                : otherFolders[0]?.id || '';
+            const allSelected =
+              folderNotes.length > 0 && folderNotes.every((fn) => selectedNoteIds.includes(fn.id));
+
+            const handleSpaceAsk = async () => {
+              const prompt = spaceChatQuestion.trim();
+              if (!prompt || spaceChatBusy) return;
+              setSpaceChatBusy(true);
+              try {
+                const targetIds = folderNotesRaw.map((n) => n.id);
+                const res = await (
+                  onChatNote as (
+                    noteIds: string[],
+                    question: string,
+                    spaceId?: string | null
+                  ) => Promise<ChatAnswer>
+                )(targetIds, prompt, targetFolder.id);
+                setSpaceChatAnswer(res);
+                setSpaceChatQuestion('');
+              } finally {
+                setSpaceChatBusy(false);
+              }
+            };
+
             return (
-              <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto', flex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <FolderIcon size={20} strokeWidth={1.75} />
-                    {editingSpaceName && onSaveFolder ? (
-                      <form
-                        onSubmit={async (e) => {
-                          e.preventDefault();
-                          if (!spaceNameDraft.trim()) return;
-                          await onSaveFolder({ ...targetFolder, name: spaceNameDraft.trim() });
-                          setEditingSpaceName(false);
-                          notify('スペース名を変更しました');
-                        }}
-                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                      >
-                        <input
-                          type="text"
+              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <FolderIcon size={20} strokeWidth={1.75} />
+                      {editingSpaceName && onSaveFolder ? (
+                        <form
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            if (!spaceNameDraft.trim()) return;
+                            await onSaveFolder({ ...targetFolder, name: spaceNameDraft.trim() });
+                            setEditingSpaceName(false);
+                            notify('スペース名を変更しました');
+                          }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                        >
+                          <input
+                            type="text"
+                            className="input"
+                            style={{ height: '32px', width: '200px' }}
+                            value={spaceNameDraft}
+                            onChange={(e) => setSpaceNameDraft(e.target.value)}
+                            autoFocus
+                          />
+                          <button type="submit" className="btn btn-primary" style={{ height: '32px' }}>
+                            保存
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            style={{ height: '32px' }}
+                            onClick={() => setEditingSpaceName(false)}
+                          >
+                            キャンセル
+                          </button>
+                        </form>
+                      ) : (
+                        <>
+                          <h2 className="page-title">{targetFolder.name}</h2>
+                          {onSaveFolder && (
+                            <button
+                              type="button"
+                              aria-label="スペース名を変更"
+                              title="スペース名を変更"
+                              className="btn btn-ghost"
+                              style={{ width: '28px', height: '28px', padding: 0 }}
+                              onClick={() => {
+                                setSpaceNameDraft(targetFolder.name);
+                                setEditingSpaceName(true);
+                              }}
+                            >
+                              <Pencil size={14} strokeWidth={1.5} />
+                            </button>
+                          )}
+                        </>
+                      )}
+                      <span className="status-chip">{folderNotesRaw.length} 件のノート</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      {otherFolders.length > 0 && onDeleteFolder && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => setMergeOpen((v) => !v)}
+                        >
+                          <GitMerge size={14} strokeWidth={1.75} />
+                          スペースを結合
+                        </button>
+                      )}
+                      {onCreateNoteInFolder && (
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={() => {
+                            setViewingFolderId(null);
+                            onCreateNoteInFolder(targetFolder.id);
+                          }}
+                        >
+                          <Plus size={14} strokeWidth={1.75} />
+                          新規ノート
+                        </button>
+                      )}
+                      {onDeleteFolder && targetFolder.id !== 'personal' && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={async () => {
+                            await onDeleteFolder(targetFolder.id);
+                            setViewingFolderId(null);
+                          }}
+                        >
+                          <Trash2 size={14} strokeWidth={1.75} />
+                          スペースを削除
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {mergeOpen && otherFolders.length > 0 && onDeleteFolder && (
+                    <div
+                      className="surface-subtle"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 500 }}>
+                          {targetFolder.id === 'personal'
+                            ? 'このスペースに取り込むスペース:'
+                            : '結合先のスペース:'}
+                        </span>
+                        <select
+                          aria-label="結合先スペース"
                           className="input"
-                          style={{ height: '32px', width: '200px' }}
-                          value={spaceNameDraft}
-                          onChange={(e) => setSpaceNameDraft(e.target.value)}
-                          autoFocus
-                        />
-                        <button type="submit" className="btn btn-primary" style={{ height: '32px' }}>
-                          保存
+                          style={{ width: '180px', height: '32px', lineHeight: '1.2' }}
+                          value={effectiveMergeTargetId}
+                          onChange={(e) => setMergeTargetId(e.target.value)}
+                        >
+                          {otherFolders.map((f) => (
+                            <option key={f.id} value={f.id}>
+                              {f.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          style={{ height: '32px' }}
+                          onClick={async () => {
+                            if (!effectiveMergeTargetId) return;
+                            const keepId =
+                              targetFolder.id === 'personal' ? targetFolder.id : effectiveMergeTargetId;
+                            const dropId =
+                              targetFolder.id === 'personal' ? effectiveMergeTargetId : targetFolder.id;
+                            const movingNotes = notesList.filter((n) => n.folder_id === dropId);
+                            for (const mn of movingNotes) {
+                              await onUpdateNote({
+                                ...mn,
+                                folder_id: keepId,
+                                updated_at: new Date().toISOString(),
+                              });
+                            }
+                            await onDeleteFolder(dropId);
+                            setMergeOpen(false);
+                            setViewingFolderId(keepId);
+                            notify('スペースを結合しました');
+                          }}
+                        >
+                          結合を実行
                         </button>
                         <button
                           type="button"
                           className="btn btn-ghost"
                           style={{ height: '32px' }}
-                          onClick={() => setEditingSpaceName(false)}
+                          onClick={() => setMergeOpen(false)}
                         >
                           キャンセル
                         </button>
-                      </form>
-                    ) : (
-                      <>
-                        <h2 className="page-title">{targetFolder.name}</h2>
-                        {onSaveFolder && (
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Search, Sort & Bulk Select Toolbar */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ position: 'relative', flex: 1, minWidth: '180px' }}>
+                      <Search
+                        size={14}
+                        strokeWidth={1.5}
+                        style={{
+                          position: 'absolute',
+                          left: '12px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: 'var(--text-muted)',
+                        }}
+                      />
+                      <input
+                        type="text"
+                        className="input"
+                        style={{ height: '36px', paddingLeft: '36px' }}
+                        placeholder="このスペース内を検索..."
+                        value={spaceSearchQuery}
+                        onChange={(e) => setSpaceSearchQuery(e.target.value)}
+                      />
+                    </div>
+                    <select
+                      aria-label="並び替え"
+                      className="input"
+                      style={{ width: '132px', height: '36px', lineHeight: '1.2' }}
+                      value={spaceSortOrder}
+                      onChange={(e) =>
+                        setSpaceSortOrder(e.target.value as 'newest' | 'oldest' | 'title')
+                      }
+                    >
+                      <option value="newest">新しい順</option>
+                      <option value="oldest">古い順</option>
+                      <option value="title">タイトル順</option>
+                    </select>
+                    <button
+                      type="button"
+                      className={`btn ${spaceSelectMode ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ height: '36px' }}
+                      onClick={() => {
+                        setSpaceSelectMode((v) => !v);
+                        setSelectedNoteIds([]);
+                      }}
+                    >
+                      {spaceSelectMode ? '選択終了' : '複数選択'}
+                    </button>
+                  </div>
+
+                  {spaceSelectMode && (
+                    <div
+                      className="surface-subtle"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ height: '32px' }}
+                          onClick={() => {
+                            if (allSelected) {
+                              setSelectedNoteIds([]);
+                            } else {
+                              setSelectedNoteIds(folderNotes.map((fn) => fn.id));
+                            }
+                          }}
+                        >
+                          {allSelected ? 'すべて解除' : 'すべて選択'}
+                        </button>
+                        <span className="text-muted" style={{ fontSize: '12px' }}>
+                          {selectedNoteIds.length} 件選択中
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        {otherFolders.length > 0 && (
+                          <>
+                            <select
+                              aria-label="一括移動先のスペース"
+                              className="input"
+                              style={{ width: '150px', height: '32px', lineHeight: '1.2' }}
+                              value={effectiveMoveTargetId}
+                              onChange={(e) => setBulkMoveTargetId(e.target.value)}
+                            >
+                              {otherFolders.map((f) => (
+                                <option key={f.id} value={f.id}>
+                                  {f.name}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              style={{ height: '32px' }}
+                              disabled={selectedNoteIds.length === 0 || !effectiveMoveTargetId}
+                              onClick={async () => {
+                                const targets = notesList.filter((n) => selectedNoteIds.includes(n.id));
+                                for (const t of targets) {
+                                  await onUpdateNote({
+                                    ...t,
+                                    folder_id: effectiveMoveTargetId,
+                                    updated_at: new Date().toISOString(),
+                                  });
+                                }
+                                setSelectedNoteIds([]);
+                                setSpaceSelectMode(false);
+                                notify(`${targets.length} 件を移動しました`);
+                              }}
+                            >
+                              スペース移動
+                            </button>
+                          </>
+                        )}
+                        {onDeleteNote && (
                           <button
                             type="button"
-                            aria-label="スペース名を変更"
-                            title="スペース名を変更"
-                            className="btn btn-ghost"
-                            style={{ width: '28px', height: '28px', padding: 0 }}
-                            onClick={() => {
-                              setSpaceNameDraft(targetFolder.name);
-                              setEditingSpaceName(true);
+                            className="btn btn-danger"
+                            style={{ height: '32px' }}
+                            disabled={selectedNoteIds.length === 0}
+                            onClick={async () => {
+                              const ids = [...selectedNoteIds];
+                              for (const id of ids) {
+                                await onDeleteNote(id);
+                              }
+                              setSelectedNoteIds([]);
+                              setSpaceSelectMode(false);
+                              notify(`${ids.length} 件を削除しました`);
                             }}
                           >
-                            <Pencil size={14} strokeWidth={1.5} />
+                            <Trash2 size={14} strokeWidth={1.5} />
+                            一括削除
                           </button>
                         )}
-                      </>
-                    )}
-                    <span className="status-chip">{folderNotes.length} 件のノート</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {onCreateNoteInFolder && (
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={() => {
-                          setViewingFolderId(null);
-                          onCreateNoteInFolder(targetFolder.id);
-                        }}
-                      >
-                        <Plus size={14} strokeWidth={1.75} />
-                        新規ノート
-                      </button>
-                    )}
-                    {onDeleteFolder && targetFolder.id !== 'personal' && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={async () => {
-                          await onDeleteFolder(targetFolder.id);
-                          setViewingFolderId(null);
-                        }}
-                      >
-                        <Trash2 size={14} strokeWidth={1.75} />
-                        スペースを削除
-                      </button>
-                    )}
-                  </div>
-                </div>
+                      </div>
+                    </div>
+                  )}
 
-                {folderNotes.length === 0 ? (
-                  <div style={{ padding: '24px 0', borderTop: '1px solid var(--border-subtle)' }}>
-                    <p className="text-secondary" style={{ margin: '0px' }}>
-                      このスペースにはまだノートがありません。
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flat-list">
-                    {folderNotes.map((fn) => {
-                      const isFnRecording =
-                        recordingNoteId === fn.id || (fn.id === note.id && isRecording);
-                      const fnTitle = fn.title.trim() || '無題のノート';
-                      return (
-                        <div key={fn.id} className="flat-row">
-                          <button
-                            type="button"
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              textAlign: 'left',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '4px',
-                            }}
-                            onClick={() => {
-                              setViewingFolderId(null);
-                              onSelectNote?.(fn.id);
+                  {folderNotes.length === 0 ? (
+                    <div style={{ padding: '24px 0', borderTop: '1px solid var(--border-subtle)' }}>
+                      <p className="text-secondary" style={{ margin: '0px' }}>
+                        {spaceSearchQuery.trim()
+                          ? '検索条件に一致するノートがありません。'
+                          : 'このスペースにはまだノートがありません。'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flat-list">
+                      {folderNotes.map((fn) => {
+                        const isFnRecording =
+                          recordingNoteId === fn.id || (fn.id === note.id && isRecording);
+                        const fnTitle = fn.title.trim() || '無題のノート';
+                        const isChecked = selectedNoteIds.includes(fn.id);
+                        return (
+                          <div
+                            key={fn.id}
+                            className="flat-row"
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setNoteContextMenu({ noteId: fn.id, x: e.clientX, y: e.clientY });
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <FileText size={15} strokeWidth={1.75} />
-                              <strong style={{ fontWeight: 600 }}>{fnTitle}</strong>
-                              {isFnRecording && (
-                                <span className="status-chip danger">録音中</span>
-                              )}
-                            </div>
-                            <span className="text-muted mono-num">
-                              {formatDateTime(fn.created_at)} ・ {fn.segments.length} セグメント
-                            </span>
-                          </button>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                            {onDeleteNote && (
-                              <button
-                                type="button"
-                                aria-label={`${fnTitle}を削除`}
-                                className="btn btn-ghost"
-                                style={{ width: '28px', height: '28px', padding: 0 }}
-                                onClick={() => onDeleteNote(fn.id)}
-                              >
-                                <Trash2 size={14} strokeWidth={1.5} />
-                              </button>
+                            {spaceSelectMode && (
+                              <input
+                                type="checkbox"
+                                aria-label={`${fnTitle}を選択`}
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedNoteIds((prev) => [...prev, fn.id]);
+                                  } else {
+                                    setSelectedNoteIds((prev) => prev.filter((id) => id !== fn.id));
+                                  }
+                                }}
+                                style={{ width: '16px', height: '16px', flexShrink: 0, cursor: 'pointer' }}
+                              />
                             )}
-                            <NotionSyncBadge status={fn.notion_sync.status} />
+                            <button
+                              type="button"
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
+                                textAlign: 'left',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '4px',
+                              }}
+                              onClick={() => {
+                                if (spaceSelectMode) {
+                                  setSelectedNoteIds((prev) =>
+                                    prev.includes(fn.id)
+                                      ? prev.filter((id) => id !== fn.id)
+                                      : [...prev, fn.id]
+                                  );
+                                } else {
+                                  setViewingFolderId(null);
+                                  onSelectNote?.(fn.id);
+                                }
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <FileText size={15} strokeWidth={1.75} />
+                                <strong style={{ fontWeight: 600 }}>{fnTitle}</strong>
+                                {isFnRecording && (
+                                  <span className="status-chip danger">録音中</span>
+                                )}
+                              </div>
+                              <span className="text-muted mono-num">
+                                {formatDateTime(fn.created_at)} ・ {fn.segments.length} セグメント
+                              </span>
+                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                              <NotionSyncBadge status={fn.notion_sync.status} />
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Space-scoped AI Chat */}
-                <section
-                  style={{
-                    paddingTop: '20px',
-                    borderTop: '1px solid var(--border-subtle)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '12px',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <MessageSquare size={15} strokeWidth={1.5} />
-                    <h3 className="section-title">{targetFolder.name} のチャット</h3>
-                  </div>
-
-                  <form
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      if (!spaceChatQuestion.trim() || spaceChatBusy) return;
-                      setSpaceChatBusy(true);
-                      try {
-                        const targetIds = folderNotes.map((n) => n.id);
-                        const res = await (
-                          onChatNote as (
-                            noteIds: string[],
-                            question: string,
-                            spaceId?: string | null
-                          ) => Promise<ChatAnswer>
-                        )(targetIds, spaceChatQuestion.trim(), targetFolder.id);
-                        setSpaceChatAnswer(res);
-                        setSpaceChatQuestion('');
-                      } finally {
-                        setSpaceChatBusy(false);
-                      }
-                    }}
-                    style={{ display: 'flex', gap: '8px' }}
-                  >
-                    <input
-                      type="text"
-                      className="input"
-                      placeholder={`${targetFolder.name} 内のノートをもとに質問...`}
-                      value={spaceChatQuestion}
-                      onChange={(e) => setSpaceChatQuestion(e.target.value)}
-                      disabled={spaceChatBusy}
-                    />
-                    <button
-                      type="submit"
-                      className="btn btn-primary"
-                      disabled={spaceChatBusy || !spaceChatQuestion.trim()}
-                    >
-                      <Send size={14} strokeWidth={1.5} />
-                      {spaceChatBusy ? '送信中' : '質問する'}
-                    </button>
-                  </form>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   {(spaceChatBusy || spaceChatAnswer) && (
                     <div
@@ -1060,7 +1343,36 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       />
                     </div>
                   )}
-                </section>
+                </div>
+
+                {/* Space Bottom Question Bar (matching Note page composer design) */}
+                <div className="note-composer-wrap">
+                  <div className="note-composer-box">
+                    <textarea
+                      aria-label={`${targetFolder.name}について何でも質問`}
+                      className="note-composer-input"
+                      rows={1}
+                      placeholder={`${targetFolder.name}について何でも質問`}
+                      value={spaceChatQuestion}
+                      onChange={(e) => setSpaceChatQuestion(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          void handleSpaceAsk();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="note-send-btn"
+                      aria-label="質問を送信"
+                      disabled={!spaceChatQuestion.trim() || spaceChatBusy}
+                      onClick={() => void handleSpaceAsk()}
+                    >
+                      <ArrowUp size={18} strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
               </div>
             );
           })()
@@ -1794,6 +2106,44 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {noteContextMenu && (
+        <div
+          className="context-menu"
+          role="menu"
+          style={{ left: `${noteContextMenu.x}px`, top: `${noteContextMenu.y}px` }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="context-menu-item"
+            role="menuitem"
+            onClick={() => {
+              const id = noteContextMenu.noteId;
+              setNoteContextMenu(null);
+              setViewingFolderId(null);
+              onSelectNote?.(id);
+            }}
+          >
+            <FileText size={14} strokeWidth={1.5} />
+            <span>開く</span>
+          </button>
+          {onDeleteNote && (
+            <button
+              type="button"
+              className="context-menu-item danger"
+              role="menuitem"
+              onClick={async () => {
+                const id = noteContextMenu.noteId;
+                setNoteContextMenu(null);
+                await onDeleteNote(id);
+              }}
+            >
+              <Trash2 size={14} strokeWidth={1.5} />
+              <span>削除</span>
+            </button>
+          )}
         </div>
       )}
     </div>

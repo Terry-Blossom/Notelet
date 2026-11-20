@@ -167,19 +167,33 @@ fn start_recording(
         audio.start(source_mode, device_id)?
     };
 
+    if let Some(notify_win) = app.get_webview_window("meeting-notify") {
+        let _ = notify_win.close();
+    }
+
     if app.get_webview_window("recording-overlay").is_none() {
-        let _ = tauri::WebviewWindowBuilder::new(
+        let mut builder = tauri::WebviewWindowBuilder::new(
             &app,
             "recording-overlay",
-            tauri::WebviewUrl::App("index.html?overlay=recording".into()),
+            tauri::WebviewUrl::App("index.html".into()),
         )
+        .initialization_script("window.__NOTELET_WINDOW_MODE__ = 'recording-overlay';")
         .title("Notelet 録音中")
-        .inner_size(220.0, 48.0)
+        .inner_size(276.0, 52.0)
         .always_on_top(true)
         .decorations(false)
+        .transparent(true)
         .resizable(false)
         .skip_taskbar(true)
-        .build();
+        .focused(false);
+
+        if let Ok(Some(monitor)) = app.primary_monitor() {
+            let scale = monitor.scale_factor();
+            let sw = monitor.size().width as f64 / scale;
+            let sh = monitor.size().height as f64 / scale;
+            builder = builder.position(((sw - 276.0) / 2.0).max(16.0), (sh - 96.0).max(16.0));
+        }
+        let _ = builder.build();
     }
 
     let app_handle = app.clone();
@@ -755,6 +769,61 @@ fn purge_all_data(state: State<AppState>) -> Result<AppDataSnapshot, String> {
     Ok(data.clone())
 }
 
+fn detect_active_meeting() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let script = r#"
+$procs = Get-Process | Where-Object { $_.MainWindowTitle -ne '' } | Select-Object ProcessName, MainWindowTitle
+foreach ($p in $procs) {
+  $n = $p.ProcessName
+  $t = $p.MainWindowTitle
+  if ($n -match '^(Zoom|CptHost)$' -and $t -match 'Zoom') { Write-Output 'Zoom'; break }
+  if ($n -match '^(ms-teams|Teams)$' -and $t -match '(Teams|会議|Meeting)') { Write-Output 'Microsoft Teams'; break }
+  if ($n -match '^(webex|CiscoCollabHost)$') { Write-Output 'Webex'; break }
+  if ($t -match 'Meet - |Google Meet') { Write-Output 'Google Meet'; break }
+  if ($t -match 'Huddle|ハドル') { Write-Output 'Slack Huddle'; break }
+}
+"#;
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !text.is_empty() {
+            return Some(text);
+        }
+        return None;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let script = r#"tell application "System Events" to get name of every process whose visible is true"#;
+        let out = std::process::Command::new("osascript")
+            .args(["-e", script])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        for (needle, label) in [
+            ("zoom.us", "Zoom"),
+            ("Microsoft Teams", "Microsoft Teams"),
+            ("Webex", "Webex"),
+        ] {
+            if text.contains(needle) {
+                return Some(label.to_string());
+            }
+        }
+        return None;
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        None
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let snapshot = storage::load_snapshot();
@@ -784,6 +853,67 @@ pub fn run() {
             if !shortcut_str.is_empty() {
                 let _ = app.global_shortcut().register(shortcut_str.as_str());
             }
+
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut last_notified: Option<String> = None;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                    let is_rec = {
+                        let st = app_handle.state::<AppState>();
+                        let audio = st.audio.lock().unwrap();
+                        let s = audio.status().state;
+                        s == "recording" || s == "paused"
+                    };
+                    if is_rec {
+                        continue;
+                    }
+                    let detected = tokio::task::spawn_blocking(detect_active_meeting)
+                        .await
+                        .ok()
+                        .flatten();
+                    match detected {
+                        Some(meeting_label) => {
+                            if last_notified.as_deref() != Some(meeting_label.as_str())
+                                && app_handle.get_webview_window("meeting-notify").is_none()
+                            {
+                                last_notified = Some(meeting_label.clone());
+                                let title_json = serde_json::to_string(&meeting_label)
+                                    .unwrap_or_else(|_| "\"会議\"".to_string());
+                                let init_script = format!(
+                                    "window.__NOTELET_WINDOW_MODE__ = 'meeting-notify'; window.__NOTELET_MEETING_TITLE__ = {};",
+                                    title_json
+                                );
+                                let mut builder = tauri::WebviewWindowBuilder::new(
+                                    &app_handle,
+                                    "meeting-notify",
+                                    tauri::WebviewUrl::App("index.html".into()),
+                                )
+                                .initialization_script(&init_script)
+                                .title("Notelet 会議を検出")
+                                .inner_size(340.0, 84.0)
+                                .always_on_top(true)
+                                .decorations(false)
+                                .transparent(true)
+                                .resizable(false)
+                                .skip_taskbar(true)
+                                .focused(false);
+
+                                if let Ok(Some(monitor)) = app_handle.primary_monitor() {
+                                    let scale = monitor.scale_factor();
+                                    let sw = monitor.size().width as f64 / scale;
+                                    builder = builder.position((sw - 360.0).max(16.0), 24.0);
+                                }
+                                let _ = builder.build();
+                            }
+                        }
+                        None => {
+                            last_notified = None;
+                        }
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -7,12 +7,16 @@ import {
   BookOpen,
   Link2,
   Mic,
+  Pause,
+  Play,
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Search,
   Square,
+  Video,
+  GripVertical,
   X,
 } from 'lucide-react';
 import {
@@ -146,7 +150,39 @@ const INITIAL_RECORDING_STATUS: RecordingStatus = {
   temp_wav_path: null,
 };
 
+declare global {
+  interface Window {
+    __NOTELET_WINDOW_MODE__?: string;
+    __NOTELET_MEETING_TITLE__?: string;
+  }
+}
+
+const useTransparentWindowBackground = () => {
+  useEffect(() => {
+    const prevHtmlBg = document.documentElement.style.background;
+    const prevBodyBg = document.body.style.background;
+    document.documentElement.style.background = 'transparent';
+    document.body.style.background = 'transparent';
+    return () => {
+      document.documentElement.style.background = prevHtmlBg;
+      document.body.style.background = prevBodyBg;
+    };
+  }, []);
+};
+
+const startWindowDragIfNotInteractive = (e: React.MouseEvent) => {
+  if (e.button !== 0) return;
+  const target = e.target as HTMLElement | null;
+  if (target?.closest('button, a, input, select, textarea')) return;
+  if (isTauriRuntime()) {
+    void import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
+      getCurrentWindow().startDragging()
+    );
+  }
+};
+
 const RecordingOverlay: React.FC = () => {
+  useTransparentWindowBackground();
   const [status, setStatus] = useState<RecordingStatus>(INITIAL_RECORDING_STATUS);
 
   useEffect(() => {
@@ -161,16 +197,20 @@ const RecordingOverlay: React.FC = () => {
       }
     };
     void poll();
-    const timer = setInterval(() => void poll(), 250);
+    const timer = setInterval(() => void poll(), 200);
     return () => {
       active = false;
       clearInterval(timer);
     };
   }, []);
 
+  const isPaused = status.state === 'paused';
+  const bars = (status.waveform.length > 0 ? status.waveform.slice(-10) : new Array(10).fill(0.15));
+
   return (
     <div
       data-tauri-drag-region
+      onMouseDown={startWindowDragIfNotInteractive}
       style={{
         width: '100vw',
         height: '100vh',
@@ -179,65 +219,236 @@ const RecordingOverlay: React.FC = () => {
         justifyContent: 'space-between',
         gap: '8px',
         padding: '0 12px',
-        backgroundColor: '#141414',
+        borderRadius: '999px',
+        backgroundColor: '#18181B',
+        border: '1px solid rgba(255, 255, 255, 0.14)',
+        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.32)',
         color: '#FFFFFF',
         fontSize: '12px',
         fontWeight: 500,
         userSelect: 'none',
+        cursor: 'grab',
         boxSizing: 'border-box',
       }}
     >
       <div data-tauri-drag-region style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+        <GripVertical size={14} strokeWidth={1.75} style={{ color: '#71717A', flexShrink: 0 }} />
         <span
           style={{
             width: '8px',
             height: '8px',
             borderRadius: '50%',
-            backgroundColor: '#EF4444',
+            backgroundColor: isPaused ? '#F59E0B' : '#EF4444',
             flexShrink: 0,
           }}
         />
-        <span data-tauri-drag-region style={{ whiteSpace: 'nowrap' }}>録音中</span>
-        <span data-tauri-drag-region style={{ fontVariantNumeric: 'tabular-nums', color: '#D4D4D4' }}>
+        <div
+          data-tauri-drag-region
+          style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '20px' }}
+          aria-hidden="true"
+        >
+          {bars.map((v, idx) => {
+            const h = Math.max(4, Math.min(18, Math.round(4 + (Number.isFinite(v) ? v : 0.1) * 14)));
+            return (
+              <span
+                key={idx}
+                style={{
+                  width: '2px',
+                  height: `${h}px`,
+                  borderRadius: '2px',
+                  backgroundColor: isPaused ? '#A1A1AA' : '#F4F4F5',
+                  transition: 'height 120ms ease-out',
+                }}
+              />
+            );
+          })}
+        </div>
+        <span
+          data-tauri-drag-region
+          style={{ fontVariantNumeric: 'tabular-nums', color: '#E4E4E7', fontSize: '12px', marginLeft: '4px' }}
+        >
           {formatMs(status.elapsed_ms)}
         </span>
       </div>
-      <button
-        type="button"
-        onClick={async () => {
-          if (isTauriRuntime()) {
-            const { emit } = await import('@tauri-apps/api/event');
-            await emit('overlay-stop-recording');
-          }
-        }}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '4px',
-          height: '28px',
-          padding: '0 8px',
-          borderRadius: '8px',
-          border: 'none',
-          backgroundColor: '#DC2626',
-          color: '#FFFFFF',
-          fontSize: '12px',
-          fontWeight: 600,
-          cursor: 'pointer',
-          flexShrink: 0,
-        }}
-      >
-        <Square size={12} strokeWidth={2} />
-        <span>停止</span>
-      </button>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+        <button
+          type="button"
+          aria-label={isPaused ? '再開' : '一時停止'}
+          title={isPaused ? '再開' : '一時停止'}
+          onClick={async () => {
+            if (!isTauriRuntime()) return;
+            const st = isPaused ? await apiResumeRecording() : await apiPauseRecording();
+            setStatus(st);
+          }}
+          style={{
+            width: '28px',
+            height: '28px',
+            borderRadius: '50%',
+            border: 'none',
+            backgroundColor: 'rgba(255, 255, 255, 0.12)',
+            color: '#FFFFFF',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          {isPaused ? <Play size={12} strokeWidth={2} /> : <Pause size={12} strokeWidth={2} />}
+        </button>
+        <button
+          type="button"
+          aria-label="録音を停止"
+          title="録音を停止"
+          onClick={async () => {
+            if (isTauriRuntime()) {
+              const { emit } = await import('@tauri-apps/api/event');
+              await emit('overlay-stop-recording');
+            }
+          }}
+          style={{
+            width: '28px',
+            height: '28px',
+            borderRadius: '50%',
+            border: 'none',
+            backgroundColor: '#DC2626',
+            color: '#FFFFFF',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          <Square size={11} strokeWidth={2.2} fill="#FFFFFF" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const MeetingNotifyOverlay: React.FC = () => {
+  useTransparentWindowBackground();
+  const meetingTitle =
+    (typeof window !== 'undefined' && window.__NOTELET_MEETING_TITLE__) || 'オンライン会議';
+
+  const closeSelf = async () => {
+    if (isTauriRuntime()) {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      await getCurrentWindow().close();
+    }
+  };
+
+  return (
+    <div
+      data-tauri-drag-region
+      onMouseDown={startWindowDragIfNotInteractive}
+      style={{
+        width: '100vw',
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '12px',
+        padding: '0 16px',
+        borderRadius: '16px',
+        backgroundColor: '#18181B',
+        border: '1px solid rgba(255, 255, 255, 0.14)',
+        boxShadow: '0 12px 28px rgba(0, 0, 0, 0.35)',
+        color: '#FFFFFF',
+        userSelect: 'none',
+        boxSizing: 'border-box',
+      }}
+    >
+      <div data-tauri-drag-region style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            backgroundColor: 'rgba(255, 255, 255, 0.1)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <Video size={16} strokeWidth={1.75} />
+        </div>
+        <div data-tauri-drag-region style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {meetingTitle} を検出
+          </span>
+          <span style={{ fontSize: '11px', color: '#A1A1AA' }}>
+            Notelet で録音・文字起こし
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={async () => {
+            if (isTauriRuntime()) {
+              const { emit } = await import('@tauri-apps/api/event');
+              await emit('overlay-start-recording');
+              await closeSelf();
+            }
+          }}
+          style={{
+            height: '32px',
+            padding: '0 12px',
+            borderRadius: '999px',
+            border: 'none',
+            backgroundColor: '#FFFFFF',
+            color: '#18181B',
+            fontSize: '12px',
+            fontWeight: 600,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            cursor: 'pointer',
+          }}
+        >
+          <Mic size={12} strokeWidth={2} />
+          <span>録音開始</span>
+        </button>
+        <button
+          type="button"
+          aria-label="閉じる"
+          onClick={() => void closeSelf()}
+          style={{
+            width: '24px',
+            height: '24px',
+            borderRadius: '50%',
+            border: 'none',
+            backgroundColor: 'transparent',
+            color: '#A1A1AA',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          <X size={14} strokeWidth={1.75} />
+        </button>
+      </div>
     </div>
   );
 };
 
 export const App: React.FC = () => {
-  const isOverlay =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('overlay') === 'recording';
-  return isOverlay ? <RecordingOverlay /> : <MainApp />;
+  const mode =
+    typeof window !== 'undefined'
+      ? window.__NOTELET_WINDOW_MODE__ ||
+        new URLSearchParams(window.location.search).get('overlay')
+      : null;
+  if (mode === 'recording-overlay' || mode === 'recording') {
+    return <RecordingOverlay />;
+  }
+  if (mode === 'meeting-notify') {
+    return <MeetingNotifyOverlay />;
+  }
+  return <MainApp />;
 };
 
 const MainApp: React.FC = () => {
@@ -392,6 +603,7 @@ const MainApp: React.FC = () => {
     let unlistenUpd: (() => void) | undefined;
     let unlistenLive: (() => void) | undefined;
     let unlistenOverlayStop: (() => void) | undefined;
+    let unlistenOverlayStart: (() => void) | undefined;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       unlistenDl = await listen<{ model_id: string; progress: number }>('asr-download-progress', (ev) => {
         setDownloadProgress((prev) => ({ ...prev, [ev.payload.model_id]: ev.payload.progress }));
@@ -415,6 +627,9 @@ const MainApp: React.FC = () => {
       unlistenOverlayStop = await listen('overlay-stop-recording', () => {
         void handleStopAndFinish();
       });
+      unlistenOverlayStart = await listen('overlay-start-recording', () => {
+        void handleStartRecording();
+      });
     });
     return () => {
       unlistenDl?.();
@@ -422,6 +637,7 @@ const MainApp: React.FC = () => {
       unlistenLive?.();
       unlistenSc?.();
       unlistenOverlayStop?.();
+      unlistenOverlayStart?.();
     };
   }, [recStatus.state, refreshAll]);
 
@@ -788,53 +1004,6 @@ const MainApp: React.FC = () => {
           })}
         </nav>
 
-        {!sidebarCollapsed && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '0 4px', marginBottom: '8px' }}>
-            <select
-              aria-label="使用中のASRモデル"
-              title="使用中のASRモデル"
-              className="input"
-              style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
-              value={snapshot.settings.active_asr_model_id}
-              onChange={async (e) => {
-                const chosen = models.find((m) => m.id === e.target.value);
-                if (!chosen) return;
-                const nextSettings: AppSettings = {
-                  ...snapshot.settings,
-                  active_asr_model_id: chosen.id,
-                  active_asr_provider: chosen.provider,
-                };
-                if (isTauriRuntime()) {
-                  setSnapshot(await apiSaveSettings(nextSettings));
-                  await refreshAll();
-                } else {
-                  setSnapshot((prev) => ({ ...prev, settings: nextSettings }));
-                }
-              }}
-            >
-              {models.map((m) => (
-                <option key={m.id} value={m.id} disabled={m.is_local && !m.installed}>
-                  {m.name}{m.is_local && !m.installed ? ' (未導入)' : ''}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="録音先のスペース"
-              title="録音先のスペース"
-              className="input"
-              style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
-              value={recordingSpaceId}
-              onChange={(e) => setRecordingSpaceId(e.target.value)}
-            >
-              {snapshot.folders.map((f) => (
-                <option key={f.id} value={f.id}>
-                  スペース: {f.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
         <div className="sidebar-footer">
           <button
             type="button"
@@ -847,16 +1016,14 @@ const MainApp: React.FC = () => {
           </button>
 
           {!sidebarCollapsed && (
-            <div className={`record-split-group ${isRecordingActive ? 'recording' : ''}`}>
-              <button
-                type="button"
-                className="record-split-btn"
-                onClick={isRecordingActive ? handleStopAndFinish : handleStartRecording}
-              >
-                {isRecordingActive ? <Square size={14} strokeWidth={1.5} /> : <Mic size={14} strokeWidth={1.5} />}
-                <span>{isRecordingActive ? '停止' : '録音'}</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              className={`btn-sidebar-record ${isRecordingActive ? 'recording' : ''}`}
+              onClick={isRecordingActive ? handleStopAndFinish : handleStartRecording}
+            >
+              {isRecordingActive ? <Square size={14} strokeWidth={1.5} /> : <Mic size={14} strokeWidth={1.5} />}
+              <span>{isRecordingActive ? '停止' : '録音'}</span>
+            </button>
           )}
         </div>
       </aside>
@@ -969,6 +1136,13 @@ const MainApp: React.FC = () => {
             onOpenNote={(id) => {
               setActiveNoteId(id);
               setView('editor');
+            }}
+            onDeleteNote={async (id) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiDeleteNote(id));
+              } else {
+                setSnapshot((prev) => ({ ...prev, notes: prev.notes.filter((n) => n.id !== id) }));
+              }
             }}
             onCreateManualNote={handleCreateManualNote}
             onSaveFolder={handleSaveFolder}

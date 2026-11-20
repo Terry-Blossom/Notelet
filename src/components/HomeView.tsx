@@ -3,9 +3,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Cpu,
+  FileText,
   Plus,
   Search,
   Settings,
+  Trash2,
 } from 'lucide-react';
 import { AppSettings, ChatAnswer, Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
@@ -16,6 +18,7 @@ interface HomeViewProps {
   notes: Note[];
   folders: Folder[];
   onOpenNote: (noteId: string) => void;
+  onDeleteNote?: (noteId: string) => Promise<void> | void;
   onCreateManualNote: (folderId?: string) => void;
   onSaveFolder: (folder: Folder) => Promise<void>;
   onDeleteFolder: (folderId: string) => Promise<void>;
@@ -28,6 +31,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   notes,
   folders,
   onOpenNote,
+  onDeleteNote,
   onCreateManualNote,
   onGoSettings,
 }) => {
@@ -37,6 +41,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [selectedDateKey, setSelectedDateKey] = useState<string>('');
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ noteId: string; x: number; y: number } | null>(null);
+
+  React.useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [contextMenu]);
 
   const noteDates = useMemo(() => {
     const map = new Set<string>();
@@ -186,6 +205,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       type="button"
                       className="flat-row"
                       onClick={() => onOpenNote(note.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setContextMenu({ noteId: note.id, x: e.clientX, y: e.clientY });
+                      }}
                     >
                       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         <strong style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
@@ -297,20 +320,91 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                <span className="text-muted">ASR</span>
-                <span className="mono-num" style={{ fontWeight: 500 }}>{settings.active_asr_model_id}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                <span className="text-muted">LLM</span>
-                <span className="mono-num" style={{ fontWeight: 500 }}>
-                  {settings.llm_provider === 'none' ? '未設定' : settings.llm_model || settings.llm_provider}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                <span className="text-muted" style={{ flexShrink: 0 }}>ASR</span>
+                <span
+                  className="mono-num"
+                  title={settings.active_asr_model_id}
+                  style={{
+                    fontWeight: 500,
+                    maxWidth: '160px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    textAlign: 'right',
+                  }}
+                >
+                  {settings.active_asr_model_id}
                 </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                <span className="text-muted" style={{ flexShrink: 0 }}>LLM</span>
+                {(() => {
+                  const rawLlm =
+                    settings.llm_provider === 'none'
+                      ? '未設定'
+                      : settings.llm_model || settings.llm_provider;
+                  const shortLlm = rawLlm.includes('/') ? rawLlm.split('/').pop() || rawLlm : rawLlm;
+                  return (
+                    <span
+                      className="mono-num"
+                      title={rawLlm}
+                      style={{
+                        fontWeight: 500,
+                        maxWidth: '160px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {shortLlm}
+                    </span>
+                  );
+                })()}
               </div>
             </div>
           </section>
         </aside>
       </div>
+
+      {contextMenu && (
+        <div
+          className="context-menu"
+          role="menu"
+          style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="context-menu-item"
+            role="menuitem"
+            onClick={() => {
+              const id = contextMenu.noteId;
+              setContextMenu(null);
+              onOpenNote(id);
+            }}
+          >
+            <FileText size={14} strokeWidth={1.5} />
+            <span>開く</span>
+          </button>
+          {onDeleteNote && (
+            <button
+              type="button"
+              className="context-menu-item danger"
+              role="menuitem"
+              onClick={async () => {
+                const id = contextMenu.noteId;
+                setContextMenu(null);
+                await onDeleteNote(id);
+              }}
+            >
+              <Trash2 size={14} strokeWidth={1.5} />
+              <span>削除</span>
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };
