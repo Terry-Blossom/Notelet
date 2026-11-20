@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ClipboardPaste,
   Copy,
+  FileText,
   Folder as FolderIcon,
   Link2,
   List,
@@ -19,6 +20,7 @@ import {
   Send,
   Shield,
   Sparkles,
+  Trash2,
   Upload,
   UploadCloud,
   Users,
@@ -45,7 +47,9 @@ export type NotePhase = 'idle' | 'recording' | 'processing' | 'completed';
 
 interface NoteEditorViewProps {
   note: Note;
+  allNotes?: Note[];
   folders?: Folder[];
+  recordingNoteId?: string | null;
   settings: AppSettings;
   recipes: Recipe[];
   secretStatus: SecretStatus | null;
@@ -56,7 +60,10 @@ interface NoteEditorViewProps {
   onStartRecording?: () => Promise<void> | void;
   onStopRecording?: () => Promise<void> | void;
   onUpdateNote: (note: Note) => void;
+  onSelectNote?: (noteId: string) => void;
+  onCreateNoteInFolder?: (folderId: string) => void;
   onSaveFolder?: (folder: Folder) => Promise<void>;
+  onDeleteFolder?: (folderId: string) => Promise<void>;
   onCopyText: (text: string, label: string) => Promise<void>;
   onPastePrepare: (text: string) => Promise<void>;
   onSaveToNotion: (noteId: string) => Promise<void>;
@@ -74,7 +81,9 @@ interface NoteEditorViewProps {
 
 export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   note,
+  allNotes,
   folders = [{ id: 'personal', name: '一般', is_shared: false, permission: 'owner' }],
+  recordingNoteId = null,
   settings,
   secretStatus,
   transcribing,
@@ -84,7 +93,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   onStartRecording,
   onStopRecording,
   onUpdateNote,
+  onSelectNote,
+  onCreateNoteInFolder,
   onSaveFolder,
+  onDeleteFolder,
   onCopyText,
   onPastePrepare,
   onSaveToNotion,
@@ -99,6 +111,13 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [newSpaceName, setNewSpaceName] = useState('');
   const [chatScope, setChatScope] = useState<'note' | 'space'>('note');
+  const [viewingFolderId, setViewingFolderId] = useState<string | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+
+  const notesList = useMemo(
+    () => (allNotes && allNotes.length > 0 ? allNotes : [note]),
+    [allNotes, note]
+  );
 
   // Inline title editing with Enter confirm / Esc cancel
   const [titleDraft, setTitleDraft] = useState(note.title);
@@ -108,6 +127,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   useEffect(() => {
     setTitleDraft(note.title);
     titleSnapshotRef.current = note.title;
+    setViewingFolderId(null);
   }, [note.id, note.title]);
 
   // Tabs: 3 stages (文字起こし / 要約 / メモ)
@@ -479,36 +499,130 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         aria-hidden="true"
       />
 
-      {/* Sidebar (272px): Spaces */}
+      {/* Sidebar (272px): Parent Folder (Space) -> Child File (Note) Tree */}
       <aside
         className={`note-sidebar ${drawerOpen ? 'drawer-open' : ''}`}
         aria-label="スペース"
       >
         <div className="note-sidebar-heading">
           <FolderIcon size={16} strokeWidth={1.75} aria-hidden="true" />
-          <span className="note-sidebar-heading-text">スペース</span>
+          <span className="note-sidebar-heading-text">スペースとノート</span>
         </div>
 
         <nav className="note-sidebar-list" aria-label="スペース一覧">
-          {folders.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              className={`note-sidebar-item ${note.folder_id === f.id ? 'selected' : ''}`}
-              onClick={() => {
-                onUpdateNote({
-                  ...note,
-                  folder_id: f.id,
-                  updated_at: new Date().toISOString(),
-                });
-                setDrawerOpen(false);
-              }}
-              title={f.name}
-            >
-              <FolderIcon size={18} strokeWidth={1.75} aria-hidden="true" />
-              <span className="note-sidebar-item-label">{f.name}</span>
-            </button>
-          ))}
+          {folders.map((f) => {
+            const childNotes = notesList.filter((n) => n.folder_id === f.id);
+            const isExpanded = expandedFolders[f.id] ?? true;
+            const isFolderActive = viewingFolderId === f.id;
+            return (
+              <div key={f.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div
+                  className={`note-sidebar-item ${isFolderActive ? 'selected' : ''}`}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: '8px' }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExpandedFolders((prev) => ({
+                        ...prev,
+                        [f.id]: viewingFolderId === f.id ? !(prev[f.id] ?? true) : true,
+                      }));
+                      setViewingFolderId(f.id);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      flex: 1,
+                      minWidth: 0,
+                      textAlign: 'left',
+                      fontWeight: 600,
+                    }}
+                    title={`${f.name}（親フォルダを開く）`}
+                  >
+                    <ChevronDown
+                      size={14}
+                      strokeWidth={1.75}
+                      style={{
+                        transform: isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)',
+                        transition: 'transform 150ms ease',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <FolderIcon size={16} strokeWidth={1.75} aria-hidden="true" style={{ flexShrink: 0 }} />
+                    <span className="note-sidebar-item-label">{f.name}</span>
+                    <span className="text-muted mono-num" style={{ marginLeft: 'auto' }}>
+                      {childNotes.length}
+                    </span>
+                  </button>
+                  {onCreateNoteInFolder && (
+                    <button
+                      type="button"
+                      aria-label={`${f.name}に新規ノートを作成`}
+                      title={`${f.name}に新規ノートを作成`}
+                      className="btn btn-ghost"
+                      style={{ width: '24px', height: '24px', padding: 0, flexShrink: 0 }}
+                      onClick={() => {
+                        setViewingFolderId(null);
+                        onCreateNoteInFolder(f.id);
+                        setDrawerOpen(false);
+                      }}
+                    >
+                      <Plus size={14} strokeWidth={1.75} />
+                    </button>
+                  )}
+                </div>
+
+                {isExpanded && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '20px' }}>
+                    {childNotes.length === 0 ? (
+                      <div style={{ padding: '4px 8px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                        ノートなし
+                      </div>
+                    ) : (
+                      childNotes.map((cn) => {
+                        const isCurrentNote = !viewingFolderId && cn.id === note.id;
+                        const isChildRecording =
+                          recordingNoteId === cn.id || (cn.id === note.id && isRecording);
+                        return (
+                          <button
+                            key={cn.id}
+                            type="button"
+                            className={`note-sidebar-item ${isCurrentNote ? 'selected' : ''}`}
+                            style={{ height: '32px', padding: '0 8px' }}
+                            onClick={() => {
+                              setViewingFolderId(null);
+                              onSelectNote?.(cn.id);
+                              setDrawerOpen(false);
+                            }}
+                            title={cn.title.trim() || '無題のノート'}
+                          >
+                            <FileText size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                            <span className="note-sidebar-item-label" style={{ fontSize: '12px' }}>
+                              {cn.title.trim() || '無題のノート'}
+                            </span>
+                            {isChildRecording && (
+                              <span
+                                title="録音中"
+                                style={{
+                                  width: '8px',
+                                  height: '8px',
+                                  borderRadius: '50%',
+                                  backgroundColor: 'var(--danger)',
+                                  marginLeft: 'auto',
+                                  flexShrink: 0,
+                                }}
+                              />
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </nav>
 
         {onSaveFolder && (
@@ -523,11 +637,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 permission: 'owner',
               };
               await onSaveFolder(newFolder);
-              onUpdateNote({
-                ...note,
-                folder_id: newFolder.id,
-                updated_at: new Date().toISOString(),
-              });
+              setExpandedFolders((prev) => ({ ...prev, [newFolder.id]: true }));
+              setViewingFolderId(newFolder.id);
               setNewSpaceName('');
             }}
             style={{ display: 'flex', gap: '8px', padding: '8px 4px' }}
@@ -536,7 +647,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               type="text"
               className="input"
               style={{ height: '32px' }}
-              placeholder="スペースを作成"
+              placeholder="親フォルダ（スペース）を追加"
               value={newSpaceName}
               onChange={(e) => setNewSpaceName(e.target.value)}
             />
@@ -580,6 +691,101 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           {liveAnnouncement}
         </div>
 
+        {viewingFolderId ? (
+          (() => {
+            const targetFolder =
+              folders.find((f) => f.id === viewingFolderId) || activeFolder;
+            const folderNotes = notesList.filter((n) => n.folder_id === targetFolder.id);
+            return (
+              <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <FolderIcon size={20} strokeWidth={1.75} />
+                    <h2 className="page-title">{targetFolder.name}</h2>
+                    <span className="status-chip">{folderNotes.length} 件のノート</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {onCreateNoteInFolder && (
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => {
+                          setViewingFolderId(null);
+                          onCreateNoteInFolder(targetFolder.id);
+                        }}
+                      >
+                        <Plus size={14} strokeWidth={1.75} />
+                        このスペースに新規ノート
+                      </button>
+                    )}
+                    {onDeleteFolder && targetFolder.id !== 'personal' && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={async () => {
+                          await onDeleteFolder(targetFolder.id);
+                          setViewingFolderId(null);
+                        }}
+                      >
+                        <Trash2 size={14} strokeWidth={1.75} />
+                        スペースを削除
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setViewingFolderId(null)}
+                    >
+                      開いていたノートへ戻る
+                    </button>
+                  </div>
+                </div>
+
+                {folderNotes.length === 0 ? (
+                  <div style={{ padding: '32px 0', borderTop: '1px solid var(--border-subtle)' }}>
+                    <p className="text-secondary" style={{ margin: '0px' }}>
+                      このスペース（親フォルダ）にはまだノート（子ファイル）がありません。
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flat-list">
+                    {folderNotes.map((fn) => {
+                      const isFnRecording =
+                        recordingNoteId === fn.id || (fn.id === note.id && isRecording);
+                      return (
+                        <button
+                          key={fn.id}
+                          type="button"
+                          className="flat-row"
+                          onClick={() => {
+                            setViewingFolderId(null);
+                            onSelectNote?.(fn.id);
+                          }}
+                        >
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <FileText size={15} strokeWidth={1.75} />
+                              <strong style={{ fontWeight: 600 }}>
+                                {fn.title.trim() || '無題のノート'}
+                              </strong>
+                              {isFnRecording && (
+                                <span className="status-chip danger">録音中</span>
+                              )}
+                            </div>
+                            <span className="text-muted mono-num">
+                              {formatDateTime(fn.created_at)} ・ {fn.segments.length} セグメント
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()
+        ) : (
+          <>
         {/* Header */}
         <header className="note-header">
           <input
@@ -1297,6 +1503,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             <span>他の人を録音するときは必ず同意を得てください</span>
           </div>
         </div>
+        </>
+        )}
       </div>
 
       {/* Re-record Confirmation Dialog */}

@@ -52,10 +52,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const saveKey = async (keyName: string) => {
-    const val = secretInputs[keyName] || '';
+    const val = (secretInputs[keyName] || '').trim();
+    if (!val) {
+      flash('設定を保存しました');
+      return;
+    }
     await onSetSecret(keyName, val);
     setSecretInputs((prev) => ({ ...prev, [keyName]: '' }));
-    flash('OSの資格情報ストアへ保存しました');
+    flash('APIキーを暗号化して保存しました');
   };
 
   return (
@@ -327,26 +331,47 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           {(
             [
-              { key: 'llm_openai_api_key', label: 'OpenAI API Key', saved: secretStatus?.llm_openai_api_key },
-              { key: 'llm_openai_compatible_api_key', label: 'OpenAI互換 API Key', saved: secretStatus?.llm_openai_compatible_api_key },
-              { key: 'llm_anthropic_api_key', label: 'Anthropic API Key', saved: secretStatus?.llm_anthropic_api_key },
-              { key: 'llm_gemini_api_key', label: 'Gemini API Key', saved: secretStatus?.llm_gemini_api_key },
+              { key: 'llm_openai_api_key', label: 'OpenAI API Key', saved: secretStatus?.llm_openai_api_key, provider: 'openai' },
+              { key: 'llm_openai_compatible_api_key', label: 'OpenAI互換 API Key', saved: secretStatus?.llm_openai_compatible_api_key, provider: 'openai_compatible' },
+              { key: 'llm_anthropic_api_key', label: 'Anthropic API Key', saved: secretStatus?.llm_anthropic_api_key, provider: 'anthropic' },
+              { key: 'llm_gemini_api_key', label: 'Gemini API Key', saved: secretStatus?.llm_gemini_api_key, provider: 'gemini' },
             ] as const
-          ).map((item) => (
-            <div key={item.key} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <span style={{ width: '176px', fontWeight: 600 }}>{item.label}</span>
-              <input
-                type="password"
-                className="input"
-                placeholder={item.saved ? '保存済み（更新する場合のみ入力）' : 'APIキーを入力（ローカルサーバーは空欄可）'}
-                value={secretInputs[item.key] || ''}
-                onChange={(e) => setSecretInputs((p) => ({ ...p, [item.key]: e.target.value }))}
-              />
-              <button type="button" className="btn btn-secondary" onClick={() => saveKey(item.key)}>
-                保存
-              </button>
-            </div>
-          ))}
+          ).map((item) => {
+            const isCurrentProvider = settings.llm_provider === item.provider;
+            return (
+              <div
+                key={item.key}
+                style={{
+                  display: 'flex',
+                  gap: '8px',
+                  alignItems: 'center',
+                  padding: isCurrentProvider ? '8px' : '0px',
+                  borderRadius: '8px',
+                  backgroundColor: isCurrentProvider ? 'var(--accent-tint)' : 'transparent',
+                }}
+              >
+                <span style={{ width: '176px', fontWeight: 600 }}>{item.label}</span>
+                <span className={`status-chip ${item.saved ? 'ok' : 'warn'}`} style={{ flexShrink: 0 }}>
+                  {item.saved ? '保存済み' : '未設定'}
+                </span>
+                <input
+                  type="password"
+                  className="input"
+                  placeholder={item.saved ? '保存済み（更新する場合のみ入力）' : 'APIキーを入力（入力後に保存）'}
+                  value={secretInputs[item.key] || ''}
+                  onChange={(e) => setSecretInputs((p) => ({ ...p, [item.key]: e.target.value }))}
+                  onBlur={() => {
+                    if ((secretInputs[item.key] || '').trim()) {
+                      void saveKey(item.key);
+                    }
+                  }}
+                />
+                <button type="button" className="btn btn-secondary" onClick={() => saveKey(item.key)}>
+                  保存
+                </button>
+              </div>
+            );
+          })}
         </section>
       )}
 
@@ -452,7 +477,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div>
               <h2 className="section-title">アプリ更新（GitHub Releases）</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                現在のバージョン: <span className="mono-num">v{updateInfo?.current_version ?? '0.4.0'}</span>
+                現在のバージョン: <span className="mono-num">v{updateInfo?.current_version ?? '0.5.0'}</span>
               </p>
             </div>
             <button

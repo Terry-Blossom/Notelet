@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  FileText,
   Folder as FolderIcon,
   MessageSquare,
   Plus,
@@ -233,8 +234,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       onClick={() => onOpenNote(note.id)}
                     >
                       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <strong style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
-                          {note.title}
+                        <strong style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+                          {note.title.trim() || '無題のノート'}
                         </strong>
                         <span className="text-muted mono-num">
                           {formatDateTime(note.created_at)} ・ {formatMs(note.duration_sec * 1000)} ・ {spaceName}
@@ -401,14 +402,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <section style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <FolderIcon size={15} strokeWidth={1.5} />
-              <h2 className="section-title">スペース</h2>
+              <h2 className="section-title">スペース（親フォルダ）</h2>
             </div>
 
             <form onSubmit={handleAddSpace} style={{ display: 'flex', gap: '8px' }}>
               <input
                 className="input"
-                style={{ height: '32px', fontSize: '13px' }}
-                placeholder="新しいスペース..."
+                style={{ height: '32px' }}
+                placeholder="新しい親フォルダ..."
                 value={newSpaceName}
                 onChange={(e) => setNewSpaceName(e.target.value)}
               />
@@ -424,41 +425,86 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
             <div className="flat-list">
               {folders.map((f) => {
-                const count = notes.filter((n) => n.folder_id === f.id).length;
+                const childNotes = notes.filter((n) => n.folder_id === f.id);
                 const isActive = selectedSpaceId === f.id;
                 return (
-                  <div
-                    key={f.id}
-                    className="flat-row"
-                    style={{
-                      padding: '8px',
-                      backgroundColor: isActive ? 'var(--accent-tint)' : 'transparent',
-                    }}
-                  >
-                    <button
-                      type="button"
+                  <div key={f.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <div
+                      className="flat-row"
                       style={{
-                        flex: 1,
-                        textAlign: 'left',
-                        fontSize: '13px',
-                        fontWeight: isActive ? 600 : 400,
-                        color: isActive ? 'var(--accent)' : 'var(--text-primary)',
+                        padding: '8px',
+                        borderBottom: 'none',
+                        backgroundColor: isActive ? 'var(--accent-tint)' : 'transparent',
                       }}
-                      onClick={() => setSelectedSpaceId(isActive ? 'all' : f.id)}
                     >
-                      {f.name}
-                    </button>
-                    <span className="text-muted mono-num">{count}</span>
-                    {f.id !== 'personal' && (
                       <button
                         type="button"
-                        aria-label={`${f.name}を削除`}
+                        style={{
+                          flex: 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          textAlign: 'left',
+                          fontWeight: isActive ? 600 : 400,
+                          color: isActive ? 'var(--accent)' : 'var(--text-primary)',
+                        }}
+                        onClick={() => {
+                          setSelectedSpaceId(isActive ? 'all' : f.id);
+                          if (!isActive) setSelectedDateKey('');
+                        }}
+                      >
+                        <FolderIcon size={14} strokeWidth={1.5} />
+                        <span>{f.name}</span>
+                      </button>
+                      <span className="text-muted mono-num">{childNotes.length}</span>
+                      <button
+                        type="button"
+                        aria-label={`${f.name}に新規ノート`}
+                        title={`${f.name}に新規ノート`}
                         className="btn btn-ghost"
                         style={{ height: '24px', width: '24px', padding: 0 }}
-                        onClick={() => onDeleteFolder(f.id)}
+                        onClick={() => onCreateManualNote(f.id)}
                       >
-                        <Trash2 size={13} strokeWidth={1.5} />
+                        <Plus size={13} strokeWidth={1.5} />
                       </button>
+                      {f.id !== 'personal' && (
+                        <button
+                          type="button"
+                          aria-label={`${f.name}を削除`}
+                          className="btn btn-ghost"
+                          style={{ height: '24px', width: '24px', padding: 0 }}
+                          onClick={() => onDeleteFolder(f.id)}
+                        >
+                          <Trash2 size={13} strokeWidth={1.5} />
+                        </button>
+                      )}
+                    </div>
+
+                    {childNotes.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 8px 8px 24px' }}>
+                        {childNotes.slice(0, 6).map((cn) => (
+                          <button
+                            key={cn.id}
+                            type="button"
+                            onClick={() => onOpenNote(cn.id)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              textAlign: 'left',
+                              fontSize: '12px',
+                              color: 'var(--text-secondary)',
+                            }}
+                          >
+                            <FileText size={12} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {cn.title.trim() || '無題のノート'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </div>
                 );

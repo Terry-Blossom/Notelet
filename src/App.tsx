@@ -170,6 +170,7 @@ export const App: React.FC = () => {
   const [liveManualNotes, setLiveManualNotes] = useState('');
   const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [recordingNoteId, setRecordingNoteId] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
@@ -255,6 +256,7 @@ export const App: React.FC = () => {
       const note = createEmptyNote(recordingSpaceId);
       note.title = '';
       setSnapshot((prev) => ({ ...prev, notes: [note, ...prev.notes] }));
+      setRecordingNoteId(note.id);
       setActiveNoteId(note.id);
       setView('editor');
       return;
@@ -264,6 +266,7 @@ export const App: React.FC = () => {
       note.title = '';
       const nextSnap = await apiSaveNote(note);
       setSnapshot(nextSnap);
+      setRecordingNoteId(note.id);
       setActiveNoteId(note.id);
       const st = await apiStartRecording(sourceMode, selectedDeviceId || null);
       setRecStatus(st);
@@ -276,6 +279,7 @@ export const App: React.FC = () => {
   const handleStartRecordingInNote = async () => {
     setTranscribeError(null);
     setLiveSegments([]);
+    setRecordingNoteId(activeNoteId);
     if (!isTauriRuntime()) return;
     try {
       const st = await apiStartRecording(sourceMode, selectedDeviceId || null);
@@ -288,10 +292,14 @@ export const App: React.FC = () => {
   const handleStopAndFinish = async () => {
     const finalStatus = isTauriRuntime() ? await apiStopRecording() : recStatus;
     setRecStatus(INITIAL_RECORDING_STATUS);
-    const existing = snapshot.notes.find((n) => n.id === activeNoteId);
+    const targetId = recordingNoteId || activeNoteId;
+    setRecordingNoteId(null);
+    const existing = snapshot.notes.find((n) => n.id === targetId);
+    const nowStr = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
     const targetNote: Note = existing
       ? {
           ...existing,
+          title: existing.title.trim() ? existing.title : `録音ノート ${nowStr}`,
           duration_sec: existing.duration_sec + Math.round(finalStatus.elapsed_ms / 1000),
           manual_notes: liveManualNotes
             ? [existing.manual_notes, liveManualNotes].filter(Boolean).join('\n')
@@ -300,7 +308,7 @@ export const App: React.FC = () => {
           updated_at: new Date().toISOString(),
         }
       : {
-          ...createEmptyNote(),
+          ...createEmptyNote(recordingSpaceId),
           duration_sec: Math.round(finalStatus.elapsed_ms / 1000),
           manual_notes: liveManualNotes,
           segments: liveSegments,
@@ -523,140 +531,16 @@ export const App: React.FC = () => {
     </div>
   ) : null;
 
-  if (view === 'editor' && activeNote) {
-    return (
-      <>
-        <NoteEditorView
-          note={activeNote}
-          folders={snapshot.folders}
-          settings={snapshot.settings}
-          recipes={snapshot.recipes}
-          secretStatus={secretStatus}
-          transcribing={transcribing}
-          transcribeError={transcribeError}
-          recordingStatus={recStatus}
-          liveSegments={liveSegments}
-          onStartRecording={handleStartRecordingInNote}
-          onStopRecording={handleStopAndFinish}
-          onUpdateNote={handleUpdateNote}
-          onSaveFolder={handleSaveFolder}
-        onCopyText={async (text) => {
-          if (isTauriRuntime()) {
-            await apiCopyAndPreparePaste(text);
-          } else {
-            await navigator.clipboard.writeText(text);
-          }
-        }}
-        onPastePrepare={async (text) => {
-          if (isTauriRuntime()) {
-            const hint = await apiCopyAndPreparePaste(text);
-            setBannerMessage(hint);
-          } else {
-            await navigator.clipboard.writeText(text);
-            setBannerMessage('クリップボードにコピーしました。貼り付け先で Ctrl+V / Cmd+V を押してください。');
-          }
-        }}
-        onSaveToNotion={async (noteId) => {
-          setSnapshot((prev) => ({
-            ...prev,
-            notes: prev.notes.map((n) =>
-              n.id === noteId
-                ? { ...n, notion_sync: { ...n.notion_sync, status: 'syncing' } }
-                : n
-            ),
-          }));
-          try {
-            const updated = await apiNotionSaveNote(noteId);
-            setSnapshot((prev) => ({
-              ...prev,
-              notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
-            }));
-          } catch (err) {
-            setSnapshot((prev) => ({
-              ...prev,
-              notes: prev.notes.map((n) =>
-                n.id === noteId
-                  ? {
-                      ...n,
-                      notion_sync: {
-                        ...n.notion_sync,
-                        status: 'failed',
-                        last_error: String(err),
-                      },
-                    }
-                  : n
-              ),
-            }));
-            throw err;
-          }
-        }}
-        onSummarize={async (noteId) => {
-          const updated = await apiSummarizeNote(noteId);
-          setSnapshot((prev) => ({
-            ...prev,
-            notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
-          }));
-        }}
-        onDraftFollowup={async (noteId) => {
-          const updated = await apiDraftFollowup(noteId);
-          setSnapshot((prev) => ({
-            ...prev,
-            notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
-          }));
-        }}
-        onRunRecipe={apiRunRecipe}
-        onSaveRecipe={async (recipe) => {
-          if (isTauriRuntime()) {
-            setSnapshot(await apiSaveRecipe(recipe));
-          } else {
-            setSnapshot((prev) => ({ ...prev, recipes: [...prev.recipes, recipe] }));
-          }
-        }}
-        onChatNote={apiChatNotes}
-        onShareSlack={apiShareToSlack}
-        onSendWebhook={apiSendWebhook}
-        onAddDictionaryTerm={async (term) => {
-          const entry: DictionaryEntry = {
-            id: crypto.randomUUID(),
-            term,
-            reading: '',
-            note: '',
-            scope: 'personal',
-          };
-          if (isTauriRuntime()) {
-            setSnapshot(await apiSaveDictionaryEntry(entry));
-          } else {
-            setSnapshot((prev) => ({ ...prev, dictionary: [...prev.dictionary, entry] }));
-          }
-        }}
-        onGoSettings={() => setSettingsOpen(true)}
-        onGoHome={() => setView('home')}
-      />
-      {settingsModal}
-    </>
-    );
-  }
-
   return (
     <div className="app-shell">
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="brand-row">
-          {!sidebarCollapsed && (
-            <div className="brand-mark">
-              <span className="brand-dot">
-                <Mic size={14} strokeWidth={1.75} />
-              </span>
-              <span>KoeNote</span>
-            </div>
-          )}
-          <button
-            type="button"
-            aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
-            className="btn btn-ghost"
-            onClick={() => setSidebarCollapsed((c) => !c)}
-          >
-            {sidebarCollapsed ? <PanelLeftOpen size={16} strokeWidth={1.5} /> : <PanelLeftClose size={16} strokeWidth={1.5} />}
-          </button>
+          <div className="brand-mark">
+            <span className="brand-dot">
+              <Mic size={14} strokeWidth={1.75} />
+            </span>
+            {!sidebarCollapsed && <span>KoeNote</span>}
+          </div>
         </div>
 
         <nav className="nav-list" aria-label="メインメニュー">
@@ -776,9 +660,17 @@ export const App: React.FC = () => {
               <span className="text-muted">{recStatus.device_name}</span>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              {view !== 'recording' && (
-                <button type="button" className="btn btn-secondary" style={{ height: '30px' }} onClick={() => setView('recording')}>
-                  録音画面へ
+              {(view !== 'editor' || (recordingNoteId && activeNoteId !== recordingNoteId)) && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ height: '30px' }}
+                  onClick={() => {
+                    if (recordingNoteId) setActiveNoteId(recordingNoteId);
+                    setView('editor');
+                  }}
+                >
+                  録音中のノートへ
                 </button>
               )}
               <button type="button" className="btn btn-danger" style={{ height: '30px' }} onClick={handleStopAndFinish}>
@@ -871,10 +763,14 @@ export const App: React.FC = () => {
           <HistoryView
             notes={snapshot.notes}
             folders={snapshot.folders}
+            recordingNoteId={isRecordingActive ? recordingNoteId : null}
             onOpenNote={(id) => {
               setActiveNoteId(id);
               setView('editor');
             }}
+            onCreateManualNote={handleCreateManualNote}
+            onSaveFolder={handleSaveFolder}
+            onDeleteFolder={handleDeleteFolder}
             onDeleteNote={async (id) => {
               if (isTauriRuntime()) {
                 setSnapshot(await apiDeleteNote(id));
@@ -970,12 +866,31 @@ export const App: React.FC = () => {
         {view === 'editor' && activeNote && (
           <NoteEditorView
             note={activeNote}
+            allNotes={snapshot.notes}
+            folders={snapshot.folders}
+            recordingNoteId={isRecordingActive ? recordingNoteId : null}
             settings={snapshot.settings}
             recipes={snapshot.recipes}
             secretStatus={secretStatus}
-            transcribing={transcribing}
+            transcribing={transcribing && (!recordingNoteId || activeNote.id === recordingNoteId)}
             transcribeError={transcribeError}
+            recordingStatus={
+              isRecordingActive && (!recordingNoteId || activeNote.id === recordingNoteId)
+                ? recStatus
+                : INITIAL_RECORDING_STATUS
+            }
+            liveSegments={
+              isRecordingActive && (!recordingNoteId || activeNote.id === recordingNoteId)
+                ? liveSegments
+                : []
+            }
+            onStartRecording={handleStartRecordingInNote}
+            onStopRecording={handleStopAndFinish}
             onUpdateNote={handleUpdateNote}
+            onSelectNote={(id) => setActiveNoteId(id)}
+            onCreateNoteInFolder={(folderId) => handleCreateManualNote(folderId)}
+            onSaveFolder={handleSaveFolder}
+            onDeleteFolder={handleDeleteFolder}
             onCopyText={async (text) => {
               if (isTauriRuntime()) {
                 await apiCopyAndPreparePaste(text);
@@ -1065,7 +980,8 @@ export const App: React.FC = () => {
                 setSnapshot((prev) => ({ ...prev, dictionary: [...prev.dictionary, entry] }));
               }
             }}
-            onGoSettings={() => setView('integrations')}
+            onGoSettings={() => setSettingsOpen(true)}
+            onGoHome={() => setView('home')}
           />
         )}
 

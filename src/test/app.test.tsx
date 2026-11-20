@@ -291,4 +291,59 @@ describe('App & Views', () => {
     expect(screen.getByText('未同期')).toBeInTheDocument();
     expect(screen.getByText('同期中')).toBeInTheDocument();
   });
+
+  it('keeps parent folder (Space) and child file (Note) separate when browsing another Space during recording', () => {
+    const recNote: Note = {
+      ...createEmptyNote('personal'),
+      id: 'rec-note-1',
+      title: '録音中のメモ',
+    };
+    const otherNote: Note = {
+      ...createEmptyNote('work'),
+      id: 'work-note-1',
+      title: '業務ミーティング議事録',
+    };
+    const onUpdateNote = vi.fn();
+    const onSelectNote = vi.fn();
+
+    render(
+      <NoteEditorView
+        note={recNote}
+        allNotes={[recNote, otherNote]}
+        folders={[
+          { id: 'personal', name: '個人ノート', is_shared: false, permission: 'owner' },
+          { id: 'work', name: '業務スペース', is_shared: false, permission: 'owner' },
+        ]}
+        recordingNoteId="rec-note-1"
+        settings={baseSettings}
+        recipes={[]}
+        secretStatus={null}
+        transcribing={false}
+        transcribeError={null}
+        onUpdateNote={onUpdateNote}
+        onSelectNote={onSelectNote}
+        onCopyText={vi.fn()}
+        onPastePrepare={vi.fn()}
+        onSaveToNotion={vi.fn()}
+        onSummarize={vi.fn()}
+        onDraftFollowup={vi.fn()}
+        onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
+        onChatNote={vi.fn()}
+        onShareSlack={vi.fn()}
+        onSendWebhook={vi.fn()}
+        onAddDictionaryTerm={vi.fn()}
+        onGoSettings={vi.fn()}
+      />
+    );
+
+    // Clicking another Space (parent folder) opens the folder view with its child files without changing recNote.folder_id
+    fireEvent.click(screen.getByTitle('業務スペース（親フォルダを開く）'));
+    expect(onUpdateNote).not.toHaveBeenCalled();
+    expect(screen.getByText('1 件のノート')).toBeInTheDocument();
+
+    // Clicking a child note opens that child note
+    fireEvent.click(screen.getAllByText('業務ミーティング議事録')[0]);
+    expect(onSelectNote).toHaveBeenCalledWith('work-note-1');
+  });
 });
