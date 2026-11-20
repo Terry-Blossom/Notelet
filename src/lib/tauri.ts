@@ -112,6 +112,10 @@ export async function apiTranscribeUploadedAudio(
   return invoke<Note>('transcribe_uploaded_audio', { fileName, bytes, noteId });
 }
 
+export async function apiTranscribeUploadedUrl(url: string, noteId: string): Promise<Note> {
+  return invoke<Note>('transcribe_uploaded_url', { url, noteId });
+}
+
 export async function apiSummarizeNote(noteId: string): Promise<Note> {
   return invoke<Note>('summarize_note_cmd', { noteId });
 }

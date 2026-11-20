@@ -330,6 +330,73 @@ async fn transcribe_uploaded_audio(
 }
 
 #[tauri::command]
+async fn transcribe_uploaded_url(
+    state: State<'_, AppState>,
+    url: String,
+    note_id: String,
+) -> Result<Note, String> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+        return Err("有効な http:// または https:// の動画・音声リンクを入力してください。".to_string());
+    }
+    let temp_dir = storage::app_data_dir().join("temp_recordings");
+    let _ = std::fs::create_dir_all(&temp_dir);
+    let url_path = trimmed.split('?').next().unwrap_or(trimmed);
+    let ext = url_path
+        .rsplit('.')
+        .next()
+        .filter(|e| matches!(e.to_ascii_lowercase().as_str(), "mp4" | "mov" | "webm" | "mkv" | "mp3" | "wav" | "m4a" | "ogg" | "flac"))
+        .unwrap_or("mp4");
+    let temp_path = temp_dir.join(format!("url_{}.{}", uuid::Uuid::new_v4(), ext));
+
+    // Try yt-dlp first for web video links if available, otherwise direct HTTP download
+    let mut downloaded = false;
+    let ytdlp_out = temp_dir.join(format!("url_{}.%(ext)s", uuid::Uuid::new_v4()));
+    let mut ytdlp_cmd = std::process::Command::new("yt-dlp");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        ytdlp_cmd.creation_flags(0x0800_0000);
+    }
+    if let Ok(out) = ytdlp_cmd
+        .args(["-x", "--audio-format", "wav", "-o"])
+        .arg(&ytdlp_out)
+        .arg(trimmed)
+        .output()
+    {
+        if out.status.success() {
+            let wav_cand = ytdlp_out.with_extension("wav");
+            if wav_cand.exists() {
+                let path_str = wav_cand.to_string_lossy().to_string();
+                return transcribe_recording(state, path_str, note_id).await;
+            }
+            downloaded = true;
+        }
+    }
+
+    if !downloaded {
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(trimmed)
+            .send()
+            .await
+            .map_err(|e| format!("動画・音声リンクの取得に失敗: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("動画・音声リンクの取得に失敗 ({})", resp.status()));
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("動画・音声データの読み込みに失敗: {e}"))?;
+        std::fs::write(&temp_path, &bytes)
+            .map_err(|e| format!("一時ファイルの保存に失敗: {e}"))?;
+    }
+
+    let path_str = temp_path.to_string_lossy().to_string();
+    transcribe_recording(state, path_str, note_id).await
+}
+
+#[tauri::command]
 async fn summarize_note_cmd(
     state: State<'_, AppState>,
     note_id: String,
@@ -663,6 +730,7 @@ pub fn run() {
             install_asr_runtime,
             transcribe_recording,
             transcribe_uploaded_audio,
+            transcribe_uploaded_url,
             summarize_note_cmd,
             draft_followup_cmd,
             run_recipe_cmd,

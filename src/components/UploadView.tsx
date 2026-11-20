@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, FileAudio, Loader2 } from 'lucide-react';
+import { Upload, FileAudio, Loader2, Link2 } from 'lucide-react';
 import { AppSettings, AsrModelInfo } from '../types';
 
 interface UploadViewProps {
@@ -8,6 +8,7 @@ interface UploadViewProps {
   busy: boolean;
   error: string | null;
   onUploadAndTranscribe: (file: File) => Promise<void>;
+  onUploadUrlAndTranscribe?: (url: string) => Promise<void>;
   onGoSettings: () => void;
 }
 
@@ -17,9 +18,11 @@ export const UploadView: React.FC<UploadViewProps> = ({
   busy,
   error,
   onUploadAndTranscribe,
+  onUploadUrlAndTranscribe,
   onGoSettings,
 }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [videoUrl, setVideoUrl] = useState('');
   const activeModel = models.find((m) => m.id === settings.active_asr_model_id);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -94,6 +97,47 @@ export const UploadView: React.FC<UploadViewProps> = ({
               {busy ? '文字起こし中' : '文字起こしを開始'}
             </button>
           </div>
+        )}
+
+        {onUploadUrlAndTranscribe && (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!videoUrl.trim() || busy) return;
+              await onUploadUrlAndTranscribe(videoUrl.trim());
+            }}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              paddingTop: '12px',
+              borderTop: '1px solid var(--border-subtle)',
+            }}
+          >
+            <label className="text-muted" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Link2 size={13} strokeWidth={1.5} />
+              <span>動画・音声リンク (URL) から文字起こし</span>
+            </label>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <input
+                type="url"
+                className="input"
+                style={{ flex: '1 1 260px' }}
+                placeholder="https://example.com/meeting.mp4 または動画URL"
+                value={videoUrl}
+                onChange={(e) => setVideoUrl(e.target.value)}
+                disabled={busy}
+              />
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={busy || !videoUrl.trim()}
+              >
+                {busy ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <Link2 size={15} strokeWidth={1.5} />}
+                {busy ? '文字起こし中' : 'リンクから文字起こし'}
+              </button>
+            </div>
+          </form>
         )}
 
         {error && (

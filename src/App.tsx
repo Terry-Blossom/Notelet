@@ -69,6 +69,7 @@ import {
   apiSummarizeNote,
   apiTranscribeRecording,
   apiTranscribeUploadedAudio,
+  apiTranscribeUploadedUrl,
   isTauriRuntime,
 } from './lib/tauri';
 import { createEmptyNote, formatMs } from './lib/format';
@@ -178,6 +179,7 @@ export const App: React.FC = () => {
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const notionDebounceTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const notionCatchupStartedRef = React.useRef(false);
 
   const syncNoteToNotion = useCallback(
     async (noteId: string, silent = false) => {
@@ -234,6 +236,23 @@ export const App: React.FC = () => {
     },
     [secretStatus?.notion_access_token, snapshot.settings.notion_target_id, syncNoteToNotion]
   );
+
+  // Catch-up sync for past unsynced or failed notes when Notion is configured
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!secretStatus?.notion_access_token || !snapshot.settings.notion_target_id) return;
+    if (notionCatchupStartedRef.current) return;
+    const pending = snapshot.notes.filter(
+      (n) => n.notion_sync.status === 'not_synced' || n.notion_sync.status === 'failed'
+    );
+    if (pending.length === 0) return;
+    notionCatchupStartedRef.current = true;
+    void (async () => {
+      for (const n of pending) {
+        await syncNoteToNotion(n.id, true);
+      }
+    })();
+  }, [secretStatus?.notion_access_token, snapshot.settings.notion_target_id, snapshot.notes, syncNoteToNotion]);
 
   const refreshAll = useCallback(async () => {
     if (!isTauriRuntime()) return;
@@ -435,6 +454,38 @@ export const App: React.FC = () => {
       const buffer = await file.arrayBuffer();
       const bytes = Array.from(new Uint8Array(buffer));
       const updated = await apiTranscribeUploadedAudio(file.name, bytes, newNote.id);
+      setSnapshot((prev) => ({
+        ...prev,
+        notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+      }));
+      setView('editor');
+      scheduleAutoNotionSync(updated.id, true);
+    } catch (err) {
+      setTranscribeError(String(err));
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const handleUploadUrlAndTranscribe = async (url: string) => {
+    const newNote = createEmptyNote(recordingSpaceId);
+    newNote.title = url.split('/').pop()?.split('?')[0] || '動画リンク録音';
+    newNote.language = snapshot.settings.language;
+    setTranscribeError(null);
+
+    if (!isTauriRuntime()) {
+      setSnapshot((prev) => ({ ...prev, notes: [newNote, ...prev.notes] }));
+      setActiveNoteId(newNote.id);
+      setView('editor');
+      return;
+    }
+
+    const nextSnap = await apiSaveNote(newNote);
+    setSnapshot(nextSnap);
+    setActiveNoteId(newNote.id);
+    setTranscribing(true);
+    try {
+      const updated = await apiTranscribeUploadedUrl(url, newNote.id);
       setSnapshot((prev) => ({
         ...prev,
         notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
@@ -837,6 +888,7 @@ export const App: React.FC = () => {
             busy={transcribing}
             error={transcribeError}
             onUploadAndTranscribe={handleUploadAndTranscribe}
+            onUploadUrlAndTranscribe={handleUploadUrlAndTranscribe}
             onGoSettings={() => setSettingsOpen(true)}
           />
         )}

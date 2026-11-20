@@ -422,7 +422,7 @@ pub async fn download_whisper_model(
         return Err("クラウドモデルはダウンロード不要です。APIキーを設定して利用してください。".to_string());
     }
 
-    if model.provider == AsrProviderKind::LocalWhisper {
+    if model.provider == AsrProviderKind::LocalWhisper || model.provider == AsrProviderKind::LocalQwen {
         let dest = storage::models_dir().join(&model.filename);
         download_single_file(
             app,
