@@ -664,11 +664,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
               {participantsOpen && (
                 <div className="note-popover" role="dialog" aria-label="参加者を編集">
-                  <form onSubmit={handleAddParticipant} style={{ display: 'flex', gap: '6px' }}>
+                  <form onSubmit={handleAddParticipant} style={{ display: 'flex', gap: '8px' }}>
                     <input
                       type="text"
                       className="input"
-                      style={{ height: '32px', fontSize: '13px' }}
+                      style={{ height: '32px' }}
                       placeholder="参加者名を入力"
                       value={newParticipant}
                       onChange={(e) => setNewParticipant(e.target.value)}
@@ -676,18 +676,18 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     <button
                       type="submit"
                       className="btn btn-secondary"
-                      style={{ height: '32px', padding: '0 10px' }}
+                      style={{ height: '32px', padding: '0 12px' }}
                     >
                       追加
                     </button>
                   </form>
                   {note.participants.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                       {note.participants.map((p) => (
                         <span
                           key={p}
                           className="note-meta-pill"
-                          style={{ height: '28px', padding: '0 10px', fontSize: '12px' }}
+                          style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
                         >
                           {p}
                           <button
@@ -977,8 +977,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               marginTop: '10px',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '6px',
-              fontSize: '13px',
+              gap: '8px',
+              fontSize: '14px',
               color: 'var(--ns-text-secondary)',
             }}
           >
@@ -991,7 +991,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           <div
             style={{
               marginTop: '10px',
-              fontSize: '13px',
+              fontSize: '14px',
               color: 'var(--danger)',
             }}
           >
@@ -1010,7 +1010,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               <div aria-live="polite" aria-relevant="additions">
                 {displayedSegments.length === 0 ? (
                   <div className="note-empty-state">
-                    会話がここに表示されます...
+                    まだ文字起こしがありません
                   </div>
                 ) : (
                   <div
@@ -1083,7 +1083,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 {note.decisions.length > 0 && (
                   <section className="note-card">
                     <h2 className="note-card-title">決定事項</h2>
-                    <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '15px', lineHeight: '26px' }}>
+                    <ul style={{ margin: 0, paddingLeft: '20px', lineHeight: '24px' }}>
                       {note.decisions.map((d, i) => (
                         <li key={`d-${i}`}>{d}</li>
                       ))}
@@ -1093,8 +1093,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
                 {!llmConfigured && (
                   <section className="note-card" style={{ backgroundColor: 'var(--ns-bg-sidebar)' }}>
-                    <div style={{ fontSize: '13px', fontWeight: 600 }}>LLMが未設定です</div>
-                    <p style={{ margin: 0, fontSize: '13px', color: 'var(--ns-text-secondary)' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 600 }}>LLMが未設定です</div>
+                    <p style={{ margin: 0, color: 'var(--ns-text-secondary)' }}>
                       AI要約や質問応答を使うには設定画面でプロバイダを設定してください。
                     </p>
                     <button
@@ -1109,7 +1109,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 )}
 
                 {aiError && (
-                  <div style={{ fontSize: '13px', color: 'var(--danger)' }}>{aiError}</div>
+                  <div style={{ fontSize: '14px', color: 'var(--danger)' }}>{aiError}</div>
                 )}
               </div>
             )}
@@ -1311,7 +1311,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             <h2 id="rerecord-dialog-title" className="section-title">
               録音をやり直しますか？
             </h2>
-            <p style={{ margin: 0, fontSize: '14px', color: 'var(--ns-text-secondary)' }}>
+            <p style={{ margin: 0, color: 'var(--ns-text-secondary)' }}>
               既存の文字起こしは保持したまま、新しい録音内容を末尾に追記します。
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
@@ -1349,13 +1349,13 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             <h2 id="notion-dialog-title" className="section-title">
               Notion 保存前の確認
             </h2>
-            <p style={{ margin: 0, fontSize: '13px', color: 'var(--ns-text-secondary)' }}>
+            <p style={{ margin: 0, color: 'var(--ns-text-secondary)' }}>
               {note.notion_sync.page_id
                 ? '既存ページを更新（重複ページを作成しません）'
                 : '新規ページを作成'}
             </p>
             {!notionReady && (
-              <p style={{ margin: 0, fontSize: '13px', color: 'var(--danger)' }}>
+              <p style={{ margin: 0, color: 'var(--danger)' }}>
                 Notion 連携が未設定です。連携設定からトークンと保存先を設定してください。
               </p>
             )}

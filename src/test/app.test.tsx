@@ -138,7 +138,7 @@ describe('App & Views', () => {
       />
     );
 
-    expect(screen.getByText('会話がここに表示されます...')).toBeInTheDocument();
+    expect(screen.getByText('まだ文字起こしがありません')).toBeInTheDocument();
     expect(screen.getByText('他の人を録音するときは必ず同意を得てください')).toBeInTheDocument();
 
     // Switch to あなたのノート tab via keyboard

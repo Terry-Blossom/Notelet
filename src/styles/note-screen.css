@@ -50,7 +50,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 8px 12px;
   font-size: 13px;
   font-weight: 600;
   line-height: 18px;
@@ -66,9 +66,9 @@
 .note-sidebar-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   height: 36px;
-  padding: 0 10px;
+  padding: 0 12px;
   border-radius: 8px;
   font-size: 14px;
   font-weight: 400;
@@ -93,7 +93,7 @@
 }
 
 .note-sidebar-item.indent {
-  padding-left: 34px;
+  padding-left: 36px;
 }
 
 .note-sidebar-item-label {
@@ -177,7 +177,7 @@
 
 .note-meta-pill {
   height: 36px;
-  padding: 0 14px;
+  padding: 0 16px;
   border-radius: 18px;
   background-color: var(--ns-surface-pill);
   font-size: 13px;
@@ -185,7 +185,7 @@
   color: var(--ns-text-primary);
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   border: none;
   cursor: pointer;
   white-space: nowrap;
@@ -215,7 +215,7 @@
 
 .note-tablist {
   height: 40px;
-  padding: 3px;
+  padding: 4px;
   border-radius: 22px;
   background-color: var(--ns-surface-track);
   display: inline-flex;
@@ -225,14 +225,14 @@
 
 .note-tab {
   height: 34px;
-  padding: 0 14px;
+  padding: 0 16px;
   border-radius: 19px;
   font-size: 14px;
   font-weight: 500;
   color: var(--ns-text-secondary);
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   background: transparent;
   border: none;
   cursor: pointer;
@@ -338,7 +338,7 @@
 .note-waveform {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   height: 20px;
 }
 
@@ -392,7 +392,7 @@
 .note-share-action {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 13px;
   font-weight: 500;
   color: var(--ns-text-primary);
@@ -416,7 +416,7 @@
   box-shadow: var(--ns-shadow-input);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .note-popover.right {
@@ -531,7 +531,7 @@
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .note-card-title {
@@ -556,7 +556,7 @@
 /* Q&A Answer Card */
 .note-qa-card {
   max-width: 840px;
-  margin: 0 auto 10px;
+  margin: 0 auto 12px;
   width: 100%;
   background-color: var(--ns-surface-pill);
   border: 1px solid var(--ns-border-pill);
@@ -580,14 +580,14 @@
   width: 100%;
   max-width: 840px;
   min-height: 56px;
-  padding: 8px 10px 8px 20px;
+  padding: 8px 12px 8px 20px;
   border-radius: 28px;
   background-color: #ffffff;
   border: 1px solid var(--ns-border-pill);
   box-shadow: var(--ns-shadow-input);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .note-composer-input {
@@ -637,7 +637,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 12px;
   line-height: 18px;
   color: var(--ns-text-muted);
@@ -684,7 +684,7 @@
 
   .note-sidebar-heading {
     justify-content: center;
-    padding: 6px 0;
+    padding: 8px 0;
   }
 
   .note-sidebar-item {
@@ -723,17 +723,17 @@
 
   .note-sidebar-heading {
     justify-content: flex-start;
-    padding: 6px 10px;
+    padding: 8px 12px;
   }
 
   .note-sidebar-item {
     width: 100%;
     justify-content: flex-start;
-    padding: 0 10px;
+    padding: 0 12px;
   }
 
   .note-sidebar-item.indent {
-    padding-left: 34px;
+    padding-left: 36px;
   }
 
   .note-sidebar-backdrop.open {
@@ -764,7 +764,7 @@
   .note-toolbar {
     flex-direction: column;
     align-items: stretch;
-    gap: 10px;
+    gap: 8px;
     height: auto;
   }
 

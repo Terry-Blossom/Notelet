@@ -10,6 +10,8 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
+  Search,
   Square,
   X,
 } from 'lucide-react';
@@ -717,7 +719,51 @@ export const App: React.FC = () => {
       </aside>
 
       <main className="main-area">
-        {isRecordingActive && (
+        <div className="main-canvas">
+          <header className="topbar">
+            <div className="topbar-left">
+              <button
+                type="button"
+                aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
+                className="btn btn-ghost"
+                style={{ width: '32px', height: '32px', padding: 0 }}
+                onClick={() => setSidebarCollapsed((v) => !v)}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen size={16} strokeWidth={1.5} /> : <PanelLeftClose size={16} strokeWidth={1.5} />}
+              </button>
+              <h1 className="topbar-title">
+                {view === 'editor'
+                  ? 'ノート'
+                  : view === 'recording'
+                  ? '録音'
+                  : navItems.find((n) => n.id === view)?.label ?? 'ホーム'}
+              </h1>
+            </div>
+
+            <button
+              type="button"
+              className="topbar-search"
+              onClick={() => setView('notes')}
+            >
+              <Search size={14} strokeWidth={1.5} />
+              <span>ノートや会話を検索...</span>
+            </button>
+
+            <div className="topbar-right">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ height: '30px', padding: '0 12px', fontSize: '12px' }}
+                onClick={() => handleCreateManualNote(recordingSpaceId)}
+              >
+                <Plus size={14} strokeWidth={1.5} />
+                新規ノート
+              </button>
+            </div>
+          </header>
+
+          <div className="main-scroll">
+            {isRecordingActive && (
           <div className="recording-dock" role="status" aria-live="polite">
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <span className="recording-live-dot" />
@@ -1023,6 +1069,8 @@ export const App: React.FC = () => {
           />
         )}
 
+          </div>
+        </div>
       </main>
       {settingsModal}
     </div>

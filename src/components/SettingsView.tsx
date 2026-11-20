@@ -452,7 +452,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div>
               <h2 className="section-title">アプリ更新（GitHub Releases）</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                現在のバージョン: <span className="mono-num">v{updateInfo?.current_version ?? '0.3.0'}</span>
+                現在のバージョン: <span className="mono-num">v{updateInfo?.current_version ?? '0.4.0'}</span>
               </p>
             </div>
             <button

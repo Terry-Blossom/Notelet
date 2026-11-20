@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Search, Folder as FolderIcon, Trash2, Calendar, FileText } from 'lucide-react';
+import { Search, Trash2, Calendar, FileText } from 'lucide-react';
 import { Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
 import { NotionSyncBadge } from './NotionSyncBadge';
@@ -55,11 +55,27 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   return (
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-        <div>
-          <h1 className="page-title">ノート</h1>
-          <p className="text-secondary" style={{ margin: '4px 0 0' }}>
-            保存されたノートの検索、フォルダ絞り込み、編集を行います
-          </p>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            type="button"
+            className={`chip-filter ${selectedFolderId === 'all' ? 'active' : ''}`}
+            onClick={() => setSelectedFolderId('all')}
+          >
+            すべて ({notes.length})
+          </button>
+          {folders.map((folder) => {
+            const count = notes.filter((n) => n.folder_id === folder.id).length;
+            return (
+              <button
+                key={folder.id}
+                type="button"
+                className={`chip-filter ${selectedFolderId === folder.id ? 'active' : ''}`}
+                onClick={() => setSelectedFolderId(folder.id)}
+              >
+                {folder.name} ({count})
+              </button>
+            );
+          })}
         </div>
 
         <div className="tabs-row" style={{ borderBottom: 'none', paddingBottom: 0 }}>
@@ -80,162 +96,161 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         </div>
       </div>
 
-      {auxMode === 'list' && (
-        <>
-          <section className="surface-card" style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 2fr) repeat(3, minmax(140px, 1fr))', gap: '12px' }}>
-            <div style={{ position: 'relative' }}>
-              <Search size={15} strokeWidth={1.5} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-muted)' }} />
-              <input
-                type="search"
-                aria-label="キーワード検索"
-                className="input"
-                style={{ paddingLeft: '32px' }}
-                placeholder="タイトル・本文・タグを検索"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </div>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: '1 1 260px' }}>
+          <Search
+            size={15}
+            strokeWidth={1.5}
+            style={{
+              position: 'absolute',
+              left: '12px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: 'var(--text-muted)',
+            }}
+          />
+          <input
+            aria-label="ノートを検索"
+            className="input"
+            style={{ paddingLeft: '36px', borderRadius: '999px', backgroundColor: 'var(--bg-subtle)' }}
+            placeholder="キーワード、決定事項、文字起こしを検索"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <input
+          aria-label="話者で絞り込み"
+          className="input"
+          style={{ width: '160px' }}
+          placeholder="話者名"
+          value={speakerFilter}
+          onChange={(e) => setSpeakerFilter(e.target.value)}
+        />
+        <input
+          aria-label="開始日で絞り込み"
+          type="date"
+          className="input"
+          style={{ width: '160px' }}
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+        />
+      </div>
 
-            <select
-              aria-label="フォルダ絞り込み"
-              className="select"
-              value={selectedFolderId}
-              onChange={(e) => setSelectedFolderId(e.target.value)}
-            >
-              <option value="all">すべてのフォルダ</option>
-              {folders.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
-
-            <input
-              type="text"
-              aria-label="話者で絞り込み"
-              className="input"
-              placeholder="話者名"
-              value={speakerFilter}
-              onChange={(e) => setSpeakerFilter(e.target.value)}
-            />
-
-            <input
-              type="date"
-              aria-label="開始日"
-              className="input"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-            />
-          </section>
-
-          <section style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {filteredNotes.length === 0 ? (
-              <div className="surface-subtle text-secondary">
-                条件に一致するノートはありません。
-              </div>
-            ) : (
-              filteredNotes.map((note) => {
-                const folder = folders.find((f) => f.id === note.folder_id);
-                return (
-                  <div
-                    key={note.id}
-                    className="surface-card"
+      {auxMode === 'list' ? (
+        filteredNotes.length === 0 ? (
+          <div style={{ padding: '32px 0', borderTop: '1px solid var(--border-subtle)', textAlign: 'center' }}>
+            <FileText size={24} strokeWidth={1.5} style={{ color: 'var(--text-muted)', marginBottom: '8px' }} />
+            <p className="text-secondary" style={{ margin: 0 }}>
+              条件に一致するノートはありません
+            </p>
+          </div>
+        ) : (
+          <div className="flat-list">
+            {filteredNotes.map((note) => {
+              const folderName = folders.find((f) => f.id === note.folder_id)?.name ?? '個人';
+              return (
+                <div key={note.id} className="flat-row">
+                  <button
+                    type="button"
+                    onClick={() => onOpenNote(note.id)}
                     style={{
+                      flex: 1,
+                      minWidth: 0,
+                      textAlign: 'left',
                       display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '16px',
-                      padding: '12px 16px',
+                      flexDirection: 'column',
+                      gap: '4px',
                     }}
                   >
-                    <button
-                      type="button"
-                      onClick={() => onOpenNote(note.id)}
-                      style={{ flex: 1, textAlign: 'left', minWidth: 0 }}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                        {note.title}
+                      </strong>
+                      <span className="status-chip">{folderName}</span>
+                    </div>
+                    <p
+                      className="text-secondary"
+                      style={{
+                        margin: 0,
+                        fontSize: '14px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <FileText size={16} strokeWidth={1.5} color="var(--text-muted)" />
-                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                          {note.title || '無題のノート'}
-                        </span>
-                        {folder && (
-                          <span className="status-chip">
-                            <FolderIcon size={12} strokeWidth={1.5} />
-                            {folder.name}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-muted" style={{ marginTop: '4px' }}>
-                        {formatDateTime(note.created_at)} · <span className="mono-num">{formatMs(note.duration_sec * 1000)}</span> · {note.segments.length} 行
-                      </div>
-                    </button>
+                      {note.summary || note.segments[0]?.text || note.manual_notes || '文字起こしなし'}
+                    </p>
+                    <span className="text-muted mono-num">
+                      {formatDateTime(note.created_at)} ・ {formatMs(note.duration_sec * 1000)} ・ {note.segments.length} セグメント
+                    </span>
+                  </button>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-                      {confirmDeleteId === note.id ? (
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button
-                            type="button"
-                            className="btn btn-danger"
-                            style={{ height: '30px', fontSize: '12px' }}
-                            onClick={async () => {
-                              await onDeleteNote(note.id);
-                              setConfirmDeleteId(null);
-                            }}
-                          >
-                            削除確定
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            style={{ height: '30px', fontSize: '12px' }}
-                            onClick={() => setConfirmDeleteId(null)}
-                          >
-                            取消
-                          </button>
-                        </div>
-                      ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                    {confirmDeleteId === note.id ? (
+                      <>
                         <button
                           type="button"
-                          aria-label="ノートを削除"
-                          className="btn btn-ghost"
-                          onClick={() => setConfirmDeleteId(note.id)}
+                          className="btn btn-danger"
+                          style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
+                          onClick={async () => {
+                            await onDeleteNote(note.id);
+                            setConfirmDeleteId(null);
+                          }}
                         >
-                          <Trash2 size={15} strokeWidth={1.5} />
+                          削除する
                         </button>
-                      )}
-                      <NotionSyncBadge status={note.notion_sync.status} />
-                    </div>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ height: '28px', padding: '0 8px', fontSize: '12px' }}
+                          onClick={() => setConfirmDeleteId(null)}
+                        >
+                          キャンセル
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={`${note.title}を削除`}
+                        className="btn btn-ghost"
+                        style={{ height: '28px', width: '28px', padding: 0 }}
+                        onClick={() => setConfirmDeleteId(note.id)}
+                      >
+                        <Trash2 size={14} strokeWidth={1.5} />
+                      </button>
+                    )}
+                    <NotionSyncBadge status={note.notion_sync.status} />
                   </div>
-                );
-              })
-            )}
-          </section>
-        </>
-      )}
-
-      {auxMode === 'brief' && (
-        <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Calendar size={18} strokeWidth={1.5} />
-            <h2 className="section-title">会議前ブリーフ</h2>
+                </div>
+              );
+            })}
           </div>
-          <p className="text-secondary" style={{ margin: 0 }}>
-            過去のノートから直近の決定事項や未完了アクションを一覧できます。
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {notes.slice(0, 5).map((n) => (
-              <div key={n.id} className="surface-subtle">
-                <div style={{ fontWeight: 600 }}>{n.title}</div>
-                <div className="text-muted">{formatDateTime(n.created_at)}</div>
-                {n.action_items.filter((a) => !a.done).length > 0 && (
-                  <div style={{ marginTop: '4px' }}>
-                    未完了タスク: {n.action_items.filter((a) => !a.done).map((a) => a.text).join(' / ')}
-                  </div>
-                )}
+        )
+      ) : (
+        <div className="flat-list">
+          {filteredNotes.slice(0, 6).map((note) => (
+            <div key={note.id} className="flat-row" style={{ alignItems: 'flex-start' }}>
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Calendar size={14} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
+                  <strong style={{ fontSize: '14px', fontWeight: 500 }}>{note.title}</strong>
+                  <span className="text-muted mono-num">{formatDateTime(note.created_at)}</span>
+                </div>
+                <p className="text-secondary" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                  {note.summary || '要約はまだありません'}
+                </p>
               </div>
-            ))}
-          </div>
-        </section>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ height: '28px', fontSize: '12px', flexShrink: 0 }}
+                onClick={() => onOpenNote(note.id)}
+              >
+                開く
+              </button>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

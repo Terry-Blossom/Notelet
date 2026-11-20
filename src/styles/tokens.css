@@ -2,12 +2,13 @@
 /* critique: Neutral white/graphite Base ramp with single #0F5C6E accent; 4px grid; nested radii; no gradients or glows. */
 
 :root {
-  /* Palette — Neutral Ramp (Base-inspired) */
+  /* Palette — Neutral Ramp (OpenWhispr + Base inspired) */
+  --bg-window: #f7f7f7;
   --bg-canvas: #ffffff;
-  --bg-subtle: #f6f6f6;
-  --bg-muted: #eeeeee;
-  --bg-hover: #eaeaea;
-  --bg-active: #e2e2e2;
+  --bg-subtle: #fafafa;
+  --bg-muted: #f2f2f2;
+  --bg-hover: rgba(17, 17, 17, 0.045);
+  --bg-active: rgba(17, 17, 17, 0.08);
 
   /* Text — Three Roles */
   --text-primary: #111111;

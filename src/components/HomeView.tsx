@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import {
-  Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
   Folder as FolderIcon,
@@ -103,294 +102,371 @@ export const HomeView: React.FC<HomeViewProps> = ({
     setNewSpaceName('');
   };
 
-  const handleChat = async (e: React.FormEvent) => {
+  const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatQuestion.trim()) return;
     setChatBusy(true);
     setChatError(null);
     try {
-      const targetSpace = selectedSpaceId === 'all' ? null : selectedSpaceId;
       const targetIds = notes
-        .filter((n) => !targetSpace || n.folder_id === targetSpace)
+        .filter((n) => selectedSpaceId === 'all' || n.folder_id === selectedSpaceId)
         .map((n) => n.id);
-      const res = await onChatSpace(targetIds, chatQuestion, targetSpace);
+      const res = await onChatSpace(
+        targetIds,
+        chatQuestion.trim(),
+        selectedSpaceId === 'all' ? null : selectedSpaceId
+      );
       setChatAnswer(res);
     } catch (err) {
-      setChatError(String(err));
+      setChatError(err instanceof Error ? err.message : String(err));
     } finally {
       setChatBusy(false);
     }
   };
 
+  const shiftMonth = (delta: number) => {
+    const d = new Date(calYear, calMonth + delta, 1);
+    setCalYear(d.getFullYear());
+    setCalMonth(d.getMonth());
+  };
+
+  const activeSpaceName =
+    selectedSpaceId === 'all'
+      ? 'すべてのスペース'
+      : folders.find((f) => f.id === selectedSpaceId)?.name ?? 'スペース';
+
   return (
     <div className="page-container">
-      {/* Header + Search */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-        <h1 className="page-title">ホーム</h1>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flex: 1, maxWidth: '520px' }}>
-          <div style={{ position: 'relative', flex: 1 }}>
-            <Search size={15} strokeWidth={1.5} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-muted)' }} />
-            <input
-              type="search"
-              className="input"
-              style={{ paddingLeft: '32px' }}
-              placeholder="ノートを検索（空欄時は選択日のノートを表示）"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => onCreateManualNote(selectedSpaceId === 'all' ? 'personal' : selectedSpaceId)}
-          >
-            <Plus size={15} strokeWidth={1.5} />
-            新規ノート
-          </button>
-        </div>
-      </div>
-
-      {/* Calendar + Spaces */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
-        {/* Calendar */}
-        <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
-              <CalendarIcon size={16} strokeWidth={1.5} />
-              <span>{calYear}年 {calMonth + 1}月</span>
-            </div>
-            <div style={{ display: 'flex', gap: '4px' }}>
+      <div className="home-grid">
+        {/* Main Column: Search + Notes + Quick AI Chat */}
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <Search
+                  size={15}
+                  strokeWidth={1.5}
+                  style={{
+                    position: 'absolute',
+                    left: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: 'var(--text-muted)',
+                  }}
+                />
+                <input
+                  className="input"
+                  style={{ paddingLeft: '36px', borderRadius: '999px', backgroundColor: 'var(--bg-subtle)' }}
+                  placeholder="ノートを検索（タイトル・要約・メモ・文字起こし）"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
               <button
                 type="button"
-                aria-label="前月"
-                className="btn btn-ghost"
-                onClick={() => {
-                  if (calMonth === 0) {
-                    setCalYear((y) => y - 1);
-                    setCalMonth(11);
-                  } else {
-                    setCalMonth((m) => m - 1);
-                  }
-                }}
+                className="btn btn-secondary"
+                onClick={() => onCreateManualNote(selectedSpaceId === 'all' ? 'personal' : selectedSpaceId)}
               >
-                <ChevronLeft size={16} strokeWidth={1.5} />
-              </button>
-              <button
-                type="button"
-                aria-label="翌月"
-                className="btn btn-ghost"
-                onClick={() => {
-                  if (calMonth === 11) {
-                    setCalYear((y) => y + 1);
-                    setCalMonth(0);
-                  } else {
-                    setCalMonth((m) => m + 1);
-                  }
-                }}
-              >
-                <ChevronRight size={16} strokeWidth={1.5} />
+                <Plus size={14} strokeWidth={1.5} />
+                メモを作成
               </button>
             </div>
-          </div>
 
-          <div className="calendar-grid">
-            {['日', '月', '火', '水', '木', '金', '土'].map((w) => (
-              <div key={w} className="text-muted" style={{ textAlign: 'center' }}>{w}</div>
-            ))}
-            {calendarCells.map((day, idx) => {
-              if (!day) return <div key={`e-${idx}`} />;
-              const key = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-              const hasNotes = noteDates.has(key);
-              const isSelected = selectedDateKey === key && !searchQuery.trim();
-              return (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+              <button
+                type="button"
+                className={`chip-filter ${selectedSpaceId === 'all' ? 'active' : ''}`}
+                onClick={() => setSelectedSpaceId('all')}
+              >
+                すべて
+              </button>
+              {folders.map((f) => (
                 <button
-                  key={key}
+                  key={f.id}
                   type="button"
-                  className={`calendar-day ${isSelected ? 'selected' : ''}`}
-                  onClick={() => {
-                    setSearchQuery('');
-                    setSelectedDateKey((prev) => (prev === key ? '' : key));
+                  className={`chip-filter ${selectedSpaceId === f.id ? 'active' : ''}`}
+                  onClick={() => setSelectedSpaceId(f.id)}
+                >
+                  {f.name}
+                </button>
+              ))}
+              {selectedDateKey && !searchQuery.trim() && (
+                <button
+                  type="button"
+                  className="chip-filter"
+                  style={{ marginLeft: 'auto' }}
+                  onClick={() => setSelectedDateKey('')}
+                >
+                  {selectedDateKey} ×
+                </button>
+              )}
+            </div>
+          </div>
+
+          <section style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 className="section-title">
+                {searchQuery.trim()
+                  ? `検索結果 (${filteredNotes.length})`
+                  : selectedDateKey
+                  ? `${selectedDateKey} のノート`
+                  : `ノート (${filteredNotes.length})`}
+              </h2>
+              <span className="text-muted">{activeSpaceName}</span>
+            </div>
+
+            {filteredNotes.length === 0 ? (
+              <div style={{ padding: '24px 0', borderTop: '1px solid var(--border-subtle)' }}>
+                <p className="text-muted" style={{ margin: 0 }}>
+                  該当するノートはありません。
+                </p>
+              </div>
+            ) : (
+              <div className="flat-list">
+                {filteredNotes.map((note) => {
+                  const spaceName = folders.find((f) => f.id === note.folder_id)?.name ?? '個人';
+                  return (
+                    <button
+                      key={note.id}
+                      type="button"
+                      className="flat-row"
+                      onClick={() => onOpenNote(note.id)}
+                    >
+                      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <strong style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                          {note.title}
+                        </strong>
+                        <span className="text-muted mono-num">
+                          {formatDateTime(note.created_at)} ・ {formatMs(note.duration_sec * 1000)} ・ {spaceName}
+                        </span>
+                      </div>
+                      <div style={{ flexShrink: 0 }}>
+                        <NotionSyncBadge status={note.notion_sync.status} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section
+            style={{
+              paddingTop: '20px',
+              borderTop: '1px solid var(--border-subtle)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <MessageSquare size={15} strokeWidth={1.5} />
+                <h2 className="section-title">AI チャット（{activeSpaceName}）</h2>
+              </div>
+              {!llmConfigured && (
+                <button type="button" className="btn btn-secondary" style={{ height: '28px', fontSize: '12px' }} onClick={onGoSettings}>
+                  AIプロバイダを設定
+                </button>
+              )}
+            </div>
+
+            <form onSubmit={handleChatSubmit} style={{ display: 'flex', gap: '8px' }}>
+              <input
+                className="input"
+                placeholder={`${activeSpaceName} のノートをもとにAIへ質問...`}
+                value={chatQuestion}
+                onChange={(e) => setChatQuestion(e.target.value)}
+                disabled={chatBusy}
+              />
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={chatBusy || !chatQuestion.trim()}
+              >
+                {chatBusy ? '送信中' : '送信'}
+              </button>
+            </form>
+
+            {chatError && (
+              <p style={{ color: 'var(--danger)', fontSize: '13px', margin: 0 }}>{chatError}</p>
+            )}
+
+            {chatAnswer && (
+              <div
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '8px',
+                  backgroundColor: 'var(--bg-subtle)',
+                  border: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ whiteSpace: 'pre-wrap', fontSize: '14px', lineHeight: 1.7 }}>
+                  {chatAnswer.answer}
+                </div>
+                {chatAnswer.citations.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {chatAnswer.citations.map((c, idx) => (
+                      <button
+                        key={`${c.note_id}-${idx}`}
+                        type="button"
+                        className="chip-filter"
+                        onClick={() => onOpenNote(c.note_id)}
+                      >
+                        {c.note_title}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* Right Rail: Calendar + Spaces */}
+        <aside style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <section className="surface-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <strong className="mono-num" style={{ fontSize: '13px' }}>
+                {calYear}年 {calMonth + 1}月
+              </strong>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <button
+                  type="button"
+                  aria-label="前月"
+                  className="btn btn-ghost"
+                  style={{ width: '28px', height: '28px', padding: 0 }}
+                  onClick={() => shiftMonth(-1)}
+                >
+                  <ChevronLeft size={14} strokeWidth={1.5} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="翌月"
+                  className="btn btn-ghost"
+                  style={{ width: '28px', height: '28px', padding: 0 }}
+                  onClick={() => shiftMonth(1)}
+                >
+                  <ChevronRight size={14} strokeWidth={1.5} />
+                </button>
+              </div>
+            </div>
+
+            <div className="calendar-grid">
+              {['日', '月', '火', '水', '木', '金', '土'].map((w) => (
+                <div
+                  key={w}
+                  style={{
+                    textAlign: 'center',
+                    fontSize: '11px',
+                    color: 'var(--text-muted)',
+                    paddingBottom: '4px',
                   }}
                 >
-                  <span className="mono-num">{day}</span>
-                  {hasNotes && <span className="calendar-day-dot" />}
-                </button>
-              );
-            })}
-          </div>
-        </section>
+                  {w}
+                </div>
+              ))}
+              {calendarCells.map((day, idx) => {
+                if (day === null) return <div key={`empty-${idx}`} />;
+                const key = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const isSelected = selectedDateKey === key;
+                const hasNote = noteDates.has(key);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`calendar-day ${isSelected ? 'selected' : ''}`}
+                    onClick={() => setSelectedDateKey((prev) => (prev === key ? '' : key))}
+                  >
+                    <span className="mono-num">{day}</span>
+                    {hasNote && <span className="calendar-day-dot" />}
+                  </button>
+                );
+              })}
+            </div>
 
-        {/* Spaces */}
-        <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 className="section-title">スペース</h2>
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() => setSelectedSpaceId('all')}
+              style={{ height: '28px', fontSize: '12px', alignSelf: 'flex-start', padding: '0 8px' }}
+              onClick={() => setSelectedDateKey('')}
             >
-              すべて表示
+              すべての日付を表示
             </button>
-          </div>
+          </section>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {folders.map((f) => {
-              const count = notes.filter((n) => n.folder_id === f.id).length;
-              const active = selectedSpaceId === f.id;
-              return (
-                <div
-                  key={f.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: '8px',
-                    padding: '8px 12px',
-                    borderRadius: 'var(--radius-sm)',
-                    border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                    backgroundColor: active ? 'var(--accent-tint)' : 'var(--bg-subtle)',
-                  }}
-                >
-                  <button
-                    type="button"
-                    style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, textAlign: 'left', fontWeight: active ? 600 : 400 }}
-                    onClick={() => setSelectedSpaceId(active ? 'all' : f.id)}
+          <section style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FolderIcon size={15} strokeWidth={1.5} />
+              <h2 className="section-title">スペース</h2>
+            </div>
+
+            <form onSubmit={handleAddSpace} style={{ display: 'flex', gap: '8px' }}>
+              <input
+                className="input"
+                style={{ height: '32px', fontSize: '13px' }}
+                placeholder="新しいスペース..."
+                value={newSpaceName}
+                onChange={(e) => setNewSpaceName(e.target.value)}
+              />
+              <button
+                type="submit"
+                className="btn btn-secondary"
+                style={{ height: '32px', padding: '0 12px' }}
+                aria-label="スペースを作成"
+              >
+                <Plus size={14} strokeWidth={1.5} />
+              </button>
+            </form>
+
+            <div className="flat-list">
+              {folders.map((f) => {
+                const count = notes.filter((n) => n.folder_id === f.id).length;
+                const isActive = selectedSpaceId === f.id;
+                return (
+                  <div
+                    key={f.id}
+                    className="flat-row"
+                    style={{
+                      padding: '8px',
+                      backgroundColor: isActive ? 'var(--accent-tint)' : 'transparent',
+                    }}
                   >
-                    <FolderIcon size={15} strokeWidth={1.5} />
-                    <span>{f.name}</span>
-                    <span className="mono-num text-muted">({count})</span>
-                  </button>
-                  {f.id !== 'personal' && (
                     <button
                       type="button"
-                      aria-label={`${f.name}を削除`}
-                      className="btn btn-ghost"
-                      onClick={() => onDeleteFolder(f.id)}
+                      style={{
+                        flex: 1,
+                        textAlign: 'left',
+                        fontSize: '13px',
+                        fontWeight: isActive ? 600 : 400,
+                        color: isActive ? 'var(--accent)' : 'var(--text-primary)',
+                      }}
+                      onClick={() => setSelectedSpaceId(isActive ? 'all' : f.id)}
                     >
-                      <Trash2 size={14} strokeWidth={1.5} />
+                      {f.name}
                     </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <form onSubmit={handleAddSpace} style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
-            <input
-              type="text"
-              className="input"
-              placeholder="新しいスペース名"
-              value={newSpaceName}
-              onChange={(e) => setNewSpaceName(e.target.value)}
-            />
-            <button type="submit" className="btn btn-secondary" disabled={!newSpaceName.trim()}>
-              追加
-            </button>
-          </form>
-        </section>
-      </div>
-
-      {/* Filtered Notes List */}
-      <section style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 className="section-title">
-            {searchQuery.trim()
-              ? `検索結果 (${filteredNotes.length})`
-              : selectedDateKey
-                ? `${selectedDateKey} のノート (${filteredNotes.length})`
-                : `すべてのノート (${filteredNotes.length})`}
-          </h2>
-          {selectedDateKey && !searchQuery.trim() && (
-            <button type="button" className="btn btn-ghost" onClick={() => setSelectedDateKey('')}>
-              日付絞り込みを解除
-            </button>
-          )}
-        </div>
-
-        {filteredNotes.length === 0 ? (
-          <div className="surface-subtle text-secondary">
-            表示するノートはありません。
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {filteredNotes.slice(0, 12).map((note) => (
-              <button
-                key={note.id}
-                type="button"
-                className="surface-card"
-                onClick={() => onOpenNote(note.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '16px',
-                  padding: '12px 16px',
-                  textAlign: 'left',
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 600 }}>{note.title || '無題のノート'}</div>
-                  <div className="text-muted">
-                    {formatDateTime(note.created_at)} · <span className="mono-num">{formatMs(note.duration_sec * 1000)}</span>
+                    <span className="text-muted mono-num">{count}</span>
+                    {f.id !== 'personal' && (
+                      <button
+                        type="button"
+                        aria-label={`${f.name}を削除`}
+                        className="btn btn-ghost"
+                        style={{ height: '24px', width: '24px', padding: 0 }}
+                        onClick={() => onDeleteFolder(f.id)}
+                      >
+                        <Trash2 size={13} strokeWidth={1.5} />
+                      </button>
+                    )}
                   </div>
-                </div>
-                <NotionSyncBadge status={note.notion_sync.status} />
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Embedded Quick AI Chat */}
-      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 className="section-title">
-            AIチャット（{selectedSpaceId === 'all' ? '全スペース' : folders.find((f) => f.id === selectedSpaceId)?.name || 'スペース'}）
-          </h2>
-          {!llmConfigured && (
-            <button type="button" className="btn btn-secondary" onClick={onGoSettings}>
-              AI設定を開く
-            </button>
-          )}
-        </div>
-
-        <form onSubmit={handleChat} style={{ display: 'flex', gap: '8px' }}>
-          <input
-            type="text"
-            className="input"
-            placeholder={llmConfigured ? 'スペース内のノートについて質問' : '設定からLLMを登録すると質問できます'}
-            value={chatQuestion}
-            onChange={(e) => setChatQuestion(e.target.value)}
-          />
-          <button type="submit" className="btn btn-primary" disabled={!llmConfigured || chatBusy || notes.length === 0}>
-            <MessageSquare size={15} strokeWidth={1.5} />
-            {chatBusy ? '回答中' : '質問'}
-          </button>
-        </form>
-
-        {chatError && (
-          <div className="surface-subtle" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}>
-            {chatError}
-          </div>
-        )}
-
-        {chatAnswer && (
-          <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <div style={{ whiteSpace: 'pre-wrap' }}>{chatAnswer.answer}</div>
-            {chatAnswer.citations.map((c, idx) => (
-              <button
-                key={idx}
-                type="button"
-                className="btn btn-ghost"
-                style={{ justifyContent: 'flex-start', height: 'auto', padding: '4px 8px' }}
-                onClick={() => onOpenNote(c.note_id)}
-              >
-                <span className="mono-num">[{c.timestamp}]</span> {c.note_title}: {c.excerpt}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+                );
+              })}
+            </div>
+          </section>
+        </aside>
+      </div>
     </div>
   );
 };

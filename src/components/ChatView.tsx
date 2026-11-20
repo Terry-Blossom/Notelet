@@ -27,6 +27,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>('all');
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState<ChatAnswer | null>(null);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyQuery, setHistoryQuery] = useState('');
@@ -45,11 +46,17 @@ export const ChatView: React.FC<ChatViewProps> = ({
     });
   }, [chatHistory, historyQuery, selectedSpaceId]);
 
+  const activeHistoryItem = useMemo(
+    () => filteredHistory.find((h) => h.id === selectedHistoryId) ?? null,
+    [filteredHistory, selectedHistoryId]
+  );
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!question.trim()) return;
     setBusy(true);
     setError(null);
+    setSelectedHistoryId(null);
     try {
       const spaceId = selectedSpaceId === 'all' ? null : selectedSpaceId;
       const targetIds = notes
@@ -59,153 +66,212 @@ export const ChatView: React.FC<ChatViewProps> = ({
       setAnswer(res);
       setQuestion('');
     } catch (err) {
-      setError(String(err));
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   };
 
+  const activeSpaceName =
+    selectedSpaceId === 'all'
+      ? 'すべてのスペース'
+      : folders.find((f) => f.id === selectedSpaceId)?.name ?? 'スペース';
+
+  const displayedAnswer = activeHistoryItem
+    ? { answer: activeHistoryItem.answer, citations: activeHistoryItem.citations }
+    : answer;
+
   return (
-    <div className="page-container">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-        <div>
-          <h1 className="page-title">チャット</h1>
-          <p className="text-secondary" style={{ margin: '4px 0 0' }}>
-            スペースごとのAI質問と、これまでの会話履歴の検索ができます
-          </p>
+    <div className="chat-split">
+      {/* Left Rail: Searchable Conversation History */}
+      <aside className="chat-history-rail">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <strong style={{ fontSize: '14px', fontWeight: 600 }}>会話履歴 ({filteredHistory.length})</strong>
+          {chatHistory.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
+              onClick={onClearHistory}
+            >
+              <Trash2 size={12} strokeWidth={1.5} />
+              削除
+            </button>
+          )}
         </div>
 
-        <select
-          aria-label="対象スペース"
-          className="select"
-          style={{ width: 'auto', minWidth: '180px' }}
-          value={selectedSpaceId}
-          onChange={(e) => setSelectedSpaceId(e.target.value)}
-        >
-          <option value="all">すべてのスペース</option>
-          {folders.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.name}
-            </option>
-          ))}
-        </select>
-      </div>
+        <div style={{ position: 'relative' }}>
+          <Search
+            size={14}
+            strokeWidth={1.5}
+            style={{
+              position: 'absolute',
+              left: '12px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: 'var(--text-muted)',
+            }}
+          />
+          <input
+            aria-label="会話履歴を検索"
+            className="input"
+            style={{ height: '32px', paddingLeft: '32px', fontSize: '12px', backgroundColor: 'var(--bg-canvas)' }}
+            placeholder="履歴を検索..."
+            value={historyQuery}
+            onChange={(e) => setHistoryQuery(e.target.value)}
+          />
+        </div>
 
-      {!llmConfigured && (
-        <section className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--warning)' }}>
-            <AlertCircle size={16} strokeWidth={1.5} />
-            <span>LLMが未設定のため利用できません。設定から LLM プロバイダーと API キーを登録してください。</span>
+        {filteredHistory.length === 0 ? (
+          <p className="text-muted" style={{ margin: '8px 0 0' }}>
+            履歴はありません
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {filteredHistory.map((item) => {
+              const isSelected = selectedHistoryId === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSelectedHistoryId(item.id)}
+                  style={{
+                    textAlign: 'left',
+                    padding: '8px',
+                    borderRadius: '6px',
+                    backgroundColor: isSelected ? 'var(--accent-tint)' : 'transparent',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: '14px',
+                      fontWeight: isSelected ? 600 : 500,
+                      color: isSelected ? 'var(--accent)' : 'var(--text-primary)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {item.question}
+                  </span>
+                  <span className="text-muted mono-num" style={{ fontSize: '11px' }}>
+                    {formatDateTime(item.timestamp)}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <button type="button" className="btn btn-secondary" onClick={onGoSettings}>
-            AI設定を開く
-          </button>
-        </section>
-      )}
+        )}
+      </aside>
 
-      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Main Chat Pane */}
+      <div className="chat-main-pane">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+          <button
+            type="button"
+            className={`chip-filter ${selectedSpaceId === 'all' ? 'active' : ''}`}
+            onClick={() => setSelectedSpaceId('all')}
+          >
+            すべて
+          </button>
+          {folders.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              className={`chip-filter ${selectedSpaceId === f.id ? 'active' : ''}`}
+              onClick={() => setSelectedSpaceId(f.id)}
+            >
+              {f.name}
+            </button>
+          ))}
+        </div>
+
+        {!llmConfigured && (
+          <div
+            style={{
+              padding: '12px 16px',
+              borderRadius: '8px',
+              border: '1px solid var(--border-subtle)',
+              backgroundColor: 'var(--bg-subtle)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={16} strokeWidth={1.5} style={{ color: 'var(--warning)' }} />
+              <span>AIプロバイダが未設定のため、ローカル検索ベースで回答します。</span>
+            </div>
+            <button type="button" className="btn btn-secondary" style={{ height: '28px', fontSize: '12px' }} onClick={onGoSettings}>
+              設定へ
+            </button>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '8px' }}>
           <input
-            type="text"
+            aria-label="全ノートへの質問"
             className="input"
-            placeholder="スペースや過去のノートについて質問"
+            placeholder={`${activeSpaceName} のノートをもとに質問（例：今週決まったタスクは？）`}
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
+            disabled={busy}
           />
-          <button type="submit" className="btn btn-primary" disabled={!llmConfigured || busy || notes.length === 0}>
-            <MessageSquare size={16} strokeWidth={1.5} />
-            {busy ? '回答中' : '質問'}
+          <button type="submit" className="btn btn-primary" disabled={busy || !question.trim()}>
+            <MessageSquare size={15} strokeWidth={1.5} />
+            {busy ? '検索中' : '質問する'}
           </button>
         </form>
 
         {error && (
-          <div className="surface-subtle" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}>
-            {error}
-          </div>
+          <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
         )}
 
-        {answer && (
-          <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ whiteSpace: 'pre-wrap' }}>{answer.answer}</div>
-            {answer.citations.length > 0 && (
-              <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <div className="text-muted">根拠となったノート</div>
-                {answer.citations.map((c, idx) => (
+        {displayedAnswer ? (
+          <div
+            style={{
+              padding: '16px',
+              borderRadius: '8px',
+              border: '1px solid var(--border-subtle)',
+              backgroundColor: 'var(--bg-subtle)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            {activeHistoryItem && (
+              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Q. {activeHistoryItem.question}
+              </div>
+            )}
+            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.75 }}>
+              {displayedAnswer.answer}
+            </div>
+            {displayedAnswer.citations.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)' }}>
+                {displayedAnswer.citations.map((c, idx) => (
                   <button
-                    key={idx}
+                    key={`${c.note_id}-${idx}`}
                     type="button"
+                    className="chip-filter"
                     onClick={() => onOpenNote(c.note_id)}
-                    style={{ textAlign: 'left', padding: '8px 12px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--bg-canvas)', border: '1px solid var(--border-subtle)' }}
                   >
-                    <div style={{ fontWeight: 600 }}>{c.note_title}</div>
-                    <div className="text-muted">
-                      <span className="mono-num">[{c.timestamp}]</span> {c.excerpt}
-                    </div>
+                    {c.note_title}
                   </button>
                 ))}
               </div>
             )}
           </div>
-        )}
-      </section>
-
-      {/* Chat History Search */}
-      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          <h2 className="section-title">会話履歴 ({filteredHistory.length})</h2>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flex: 1, maxWidth: '400px' }}>
-            <div style={{ position: 'relative', flex: 1 }}>
-              <Search size={14} strokeWidth={1.5} style={{ position: 'absolute', left: '10px', top: '11px', color: 'var(--text-muted)' }} />
-              <input
-                type="search"
-                className="input"
-                style={{ paddingLeft: '32px' }}
-                placeholder="過去の会話を検索"
-                value={historyQuery}
-                onChange={(e) => setHistoryQuery(e.target.value)}
-              />
-            </div>
-            {chatHistory.length > 0 && (
-              <button type="button" className="btn btn-ghost" onClick={onClearHistory} title="履歴をクリア">
-                <Trash2 size={15} strokeWidth={1.5} />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {filteredHistory.length === 0 ? (
-          <p className="text-muted" style={{ margin: 0 }}>
-            保存された会話履歴はありません。
-          </p>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {filteredHistory.map((item) => (
-              <div key={item.id} className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <strong style={{ fontSize: '14px' }}>Q: {item.question}</strong>
-                  <span className="text-muted">{formatDateTime(item.timestamp)}</span>
-                </div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{item.answer}</div>
-                {item.citations.length > 0 && (
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {item.citations.map((c, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        className="btn btn-ghost"
-                        style={{ height: '28px', fontSize: '12px' }}
-                        onClick={() => onOpenNote(c.note_id)}
-                      >
-                        {c.note_title} [{c.timestamp}]
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+          <div style={{ padding: '24px 0', color: 'var(--text-muted)' }}>
+            上の入力欄から質問するか、左側の履歴から過去の回答を開けます。
           </div>
         )}
-      </section>
+      </div>
     </div>
   );
 };
