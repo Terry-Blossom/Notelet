@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { MessageSquare, AlertCircle, Search, Trash2 } from 'lucide-react';
 import { AppSettings, ChatAnswer, ChatHistoryItem, Folder, Note } from '../types';
 import { formatDateTime } from '../lib/format';
+import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 
 interface ChatViewProps {
   notes: Note[];
@@ -231,7 +232,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
         )}
 
-        {displayedAnswer ? (
+        {busy || displayedAnswer ? (
           <div
             style={{
               padding: '16px',
@@ -248,10 +249,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 Q. {activeHistoryItem.question}
               </div>
             )}
-            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.75 }}>
-              {displayedAnswer.answer}
-            </div>
-            {displayedAnswer.citations.length > 0 && (
+            <StreamingMarkdownArticle
+              content={busy ? '' : displayedAnswer?.answer || ''}
+              isGenerating={busy}
+              animateOnChange={!activeHistoryItem}
+            />
+            {!busy && displayedAnswer && displayedAnswer.citations.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)' }}>
                 {displayedAnswer.citations.map((c, idx) => (
                   <button

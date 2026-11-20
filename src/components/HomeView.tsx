@@ -11,6 +11,7 @@ import {
 import { AppSettings, ChatAnswer, Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
 import { NotionSyncBadge } from './NotionSyncBadge';
+import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 
 interface HomeViewProps {
   settings: AppSettings;
@@ -278,7 +279,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <p style={{ color: 'var(--danger)', margin: '0px' }}>{chatError}</p>
             )}
 
-            {chatAnswer && (
+            {(chatBusy || chatAnswer) && (
               <div
                 style={{
                   padding: '12px 16px',
@@ -290,10 +291,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   gap: '8px',
                 }}
               >
-                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
-                  {chatAnswer.answer}
-                </div>
-                {chatAnswer.citations.length > 0 && (
+                <StreamingMarkdownArticle
+                  content={chatBusy ? '' : chatAnswer?.answer || ''}
+                  isGenerating={chatBusy}
+                  animateOnChange
+                />
+                {!chatBusy && chatAnswer && chatAnswer.citations.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {chatAnswer.citations.map((c, idx) => (
                       <button

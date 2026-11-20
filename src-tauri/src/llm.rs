@@ -298,7 +298,7 @@ pub async fn summarize_note(
     settings: &AppSettings,
     note: &Note,
 ) -> Result<(String, Vec<String>, Vec<ActionItem>), String> {
-    let sys = "あなたは正確な議事録アシスタントです。与えられた文字起こしとメモのみを根拠にし、会話にない事実を推測で補わないでください。必ずJSONのみで返答してください: {\"summary\": \"...\", \"decisions\": [\"...\"], \"action_items\": [{\"text\": \"...\", \"assignee\": \"...\"}]}";
+    let sys = "あなたは正確な議事録・ノート要約アシスタントです。与えられた文字起こしとメモのみを根拠にし、会話にない事実を推測で補わないでください。必ずJSONのみで返答し、summaryフィールドは見出し(## 概要、## 要点など)や箇条書き(- )、太字(**強調**)を用いた読みやすいMarkdown記事形式で記述してください: {\"summary\": \"## 概要\\n...\\n\\n## 要点\\n- ...\", \"decisions\": [\"...\"], \"action_items\": [{\"text\": \"...\", \"assignee\": \"...\"}]}";
     let user = note_context_text(note);
     let raw = call_llm(settings, sys, &user).await?;
     let cleaned = raw
@@ -473,7 +473,7 @@ pub async fn chat_with_notes(
         return Ok(ChatAnswer { answer, citations });
     }
 
-    let sys = "あなたはノート検索・質問応答アシスタントです。与えられたノートの記録だけに基づいて回答してください。記録にない情報は「記録に見当たりません」と答え、推測で補わないでください。回答には該当するノート名と [MM:SS] タイムスタンプを明記してください。";
+    let sys = "あなたはノート検索・質問応答アシスタントです。与えられたノートの記録だけに基づいて、見出し(## や ###)・箇条書き(- )・太字(**...**)を使った読みやすいMarkdown記事形式で回答してください。記録にない情報は「記録に見当たりません」と答え、推測で補わないでください。回答には該当するノート名と [MM:SS] タイムスタンプを明記してください。";
     let user = format!("質問: {question}\n\n参照ノート:\n{context}");
     match call_llm(settings, sys, &user).await {
         Ok(answer) => Ok(ChatAnswer { answer, citations }),

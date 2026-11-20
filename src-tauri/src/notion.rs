@@ -137,66 +137,96 @@ fn format_ms(ms: u64) -> String {
     format!("{:02}:{:02}", sec / 60, sec % 60)
 }
 
-fn build_children_blocks(note: &Note) -> Vec<Value> {
-    let mut blocks = Vec::new();
-    if !note.summary.trim().is_empty() {
-        blocks.push(json!({
-            "object": "block",
-            "type": "heading_2",
-            "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "要約" } }] }
-        }));
-        blocks.push(json!({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": { "rich_text": [{ "type": "text", "text": { "content": note.summary.chars().take(1900).collect::<String>() } }] }
-        }));
-    }
-    if !note.manual_notes.trim().is_empty() {
-        blocks.push(json!({
-            "object": "block",
-            "type": "heading_2",
-            "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "手入力メモ" } }] }
-        }));
-        blocks.push(json!({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": { "rich_text": [{ "type": "text", "text": { "content": note.manual_notes.chars().take(1900).collect::<String>() } }] }
-        }));
-    }
-    if !note.action_items.is_empty() {
-        blocks.push(json!({
-            "object": "block",
-            "type": "heading_2",
-            "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "アクション項目" } }] }
-        }));
-        for a in &note.action_items {
-            let line = if a.assignee.is_empty() {
-                a.text.clone()
-            } else {
-                format!("{}（担当: {}）", a.text, a.assignee)
-            };
-            blocks.push(json!({
-                "object": "block",
-                "type": "to_do",
-                "to_do": {
-                    "rich_text": [{ "type": "text", "text": { "content": line } }],
-                    "checked": a.done
-                }
-            }));
+fn strip_html_to_text(raw: &str) -> String {
+    let mut s = raw
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+        .replace("</p>", "\n")
+        .replace("</div>", "\n")
+        .replace("</h1>", "\n")
+        .replace("</h2>", "\n")
+        .replace("</h3>", "\n")
+        .replace("</li>", "\n")
+        .replace("<li>", "・")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">");
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        if ch == '<' {
+            in_tag = true;
+        } else if ch == '>' {
+            in_tag = false;
+        } else if !in_tag {
+            out.push(ch);
         }
     }
+    s.clear();
+    out.trim().to_string()
+}
+
+fn build_children_blocks(note: &Note) -> Vec<Value> {
+    let mut blocks = Vec::new();
+
+    // 1. 要約
+    blocks.push(json!({
+        "object": "block",
+        "type": "heading_2",
+        "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "要約" } }] }
+    }));
+    let summary_text = if note.summary.trim().is_empty() {
+        "（要約なし）".to_string()
+    } else {
+        note.summary.trim().chars().take(1900).collect::<String>()
+    };
+    blocks.push(json!({
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": { "rich_text": [{ "type": "text", "text": { "content": summary_text } }] }
+    }));
+
+    // 2. メモ
+    blocks.push(json!({
+        "object": "block",
+        "type": "heading_2",
+        "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "メモ" } }] }
+    }));
+    let clean_memo = strip_html_to_text(&note.manual_notes);
+    let memo_text = if clean_memo.is_empty() {
+        "（メモなし）".to_string()
+    } else {
+        clean_memo.chars().take(1900).collect::<String>()
+    };
+    blocks.push(json!({
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": { "rich_text": [{ "type": "text", "text": { "content": memo_text } }] }
+    }));
+
+    // 3. 文字起こし
     blocks.push(json!({
         "object": "block",
         "type": "heading_2",
         "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "文字起こし" } }] }
     }));
-    for seg in note.segments.iter().take(60) {
-        let line = format!("[{}] {}: {}", format_ms(seg.start_ms), seg.speaker, seg.text);
+    if note.segments.is_empty() {
         blocks.push(json!({
             "object": "block",
             "type": "paragraph",
-            "paragraph": { "rich_text": [{ "type": "text", "text": { "content": line.chars().take(1900).collect::<String>() } }] }
+            "paragraph": { "rich_text": [{ "type": "text", "text": { "content": "（文字起こしなし）" } }] }
         }));
+    } else {
+        for seg in note.segments.iter().take(60) {
+            let line = format!("[{}] {}: {}", format_ms(seg.start_ms), seg.speaker, seg.text);
+            blocks.push(json!({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": { "rich_text": [{ "type": "text", "text": { "content": line.chars().take(1900).collect::<String>() } }] }
+            }));
+        }
     }
     blocks
 }
@@ -218,11 +248,13 @@ pub async fn save_note_to_notion(
         note.title.trim()
     };
 
-    // 既に notion_page_id がある場合は重複作成を防ぎ、既存ページを更新する
+    // 既に notion_page_id がある場合は重複作成を防ぎ、既存ページのタイトルと3種ブロック（要約・メモ・文字起こし）を更新する
     if let Some(ref existing_page_id) = note.notion_sync.page_id {
-        let update_url = format!("https://api.notion.com/v1/pages/{existing_page_id}");
+        let update_url = format!("https://api.notion.notion_api_placeholder");
+        let _ = update_url;
+        let page_url = format!("https://api.notion.com/v1/pages/{existing_page_id}");
         let resp = client
-            .patch(&update_url)
+            .patch(&page_url)
             .bearer_auth(&token)
             .header("Notion-Version", NOTION_VERSION)
             .json(&json!({
@@ -239,6 +271,43 @@ pub async fn save_note_to_notion(
         if resp.status().is_success() {
             let v: Value = resp.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
             let url = v["url"].as_str().unwrap_or("").to_string();
+
+            // 既存の子ブロックを取得して削除し、最新の3セクション（要約・メモ・文字起こし）を上書き追加
+            let blocks_url = format!("https://api.notion.com/v1/blocks/{existing_page_id}/children?page_size=100");
+            if let Ok(list_resp) = client
+                .get(&blocks_url)
+                .bearer_auth(&token)
+                .header("Notion-Version", NOTION_VERSION)
+                .send()
+                .await
+            {
+                if let Ok(list_json) = list_resp.json::<Value>().await {
+                    if let Some(results) = list_json["results"].as_array() {
+                        for b in results {
+                            if let Some(bid) = b["id"].as_str() {
+                                let del_url = format!("https://api.notion.com/v1/blocks/{bid}");
+                                let _ = client
+                                    .delete(&del_url)
+                                    .bearer_auth(&token)
+                                    .header("Notion-Version", NOTION_VERSION)
+                                    .send()
+                                    .await;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let children = build_children_blocks(note);
+            let append_url = format!("https://api.notion.com/v1/blocks/{existing_page_id}/children");
+            let _ = client
+                .patch(&append_url)
+                .bearer_auth(&token)
+                .header("Notion-Version", NOTION_VERSION)
+                .json(&json!({ "children": children }))
+                .send()
+                .await;
+
             return Ok((existing_page_id.clone(), url, Utc::now().to_rfc3339()));
         }
     }

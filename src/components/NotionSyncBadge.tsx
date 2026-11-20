@@ -6,6 +6,23 @@ interface NotionSyncBadgeProps {
   status: NotionSyncState['status'];
 }
 
+const NotionLogoSvg: React.FC = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.85"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="3" y="3" width="18" height="18" rx="3" />
+    <path d="M8.5 16.5V7.5l7 9V7.5" />
+  </svg>
+);
+
 export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status }) => {
   if (status === 'synced') {
     return (
@@ -22,20 +39,7 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status }) => {
           flexShrink: 0,
         }}
       >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <rect x="3" y="3" width="18" height="18" rx="3" />
-          <path d="M8.5 16.5V7.5l7 9V7.5" />
-        </svg>
+        <NotionLogoSvg />
       </span>
     );
   }
@@ -51,7 +55,7 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status }) => {
           gap: '4px',
           fontSize: '12px',
           fontWeight: 600,
-          color: 'var(--accent)',
+          color: 'var(--text-secondary)',
           flexShrink: 0,
         }}
       >
@@ -63,14 +67,20 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status }) => {
 
   return (
     <span
+      title="Notion 未同期"
+      aria-label="Notion 未同期"
       style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
         fontSize: '12px',
         fontWeight: 600,
         color: 'var(--danger)',
         flexShrink: 0,
       }}
     >
-      {status === 'failed' ? '同期失敗' : '未同期'}
+      <NotionLogoSvg />
+      <span>{status === 'failed' ? '同期失敗' : '未同期'}</span>
     </span>
   );
 };

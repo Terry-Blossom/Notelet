@@ -177,6 +177,63 @@ export const App: React.FC = () => {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
+  const notionDebounceTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const syncNoteToNotion = useCallback(
+    async (noteId: string, silent = false) => {
+      if (!isTauriRuntime()) return;
+      setSnapshot((prev) => ({
+        ...prev,
+        notes: prev.notes.map((n) =>
+          n.id === noteId
+            ? { ...n, notion_sync: { ...n.notion_sync, status: 'syncing' } }
+            : n
+        ),
+      }));
+      try {
+        const updated = await apiNotionSaveNote(noteId);
+        setSnapshot((prev) => ({
+          ...prev,
+          notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+        }));
+      } catch (err) {
+        setSnapshot((prev) => ({
+          ...prev,
+          notes: prev.notes.map((n) =>
+            n.id === noteId
+              ? {
+                  ...n,
+                  notion_sync: {
+                    ...n.notion_sync,
+                    status: 'failed',
+                    last_error: String(err),
+                  },
+                }
+              : n
+          ),
+        }));
+        if (!silent) throw err;
+      }
+    },
+    []
+  );
+
+  const scheduleAutoNotionSync = useCallback(
+    (noteId: string, immediate = false) => {
+      if (!isTauriRuntime()) return;
+      if (!secretStatus?.notion_access_token || !snapshot.settings.notion_target_id) return;
+      const existingTimer = notionDebounceTimersRef.current[noteId];
+      if (existingTimer) clearTimeout(existingTimer);
+      if (immediate) {
+        void syncNoteToNotion(noteId, true);
+      } else {
+        notionDebounceTimersRef.current[noteId] = setTimeout(() => {
+          void syncNoteToNotion(noteId, true);
+        }, 1800);
+      }
+    },
+    [secretStatus?.notion_access_token, snapshot.settings.notion_target_id, syncNoteToNotion]
+  );
 
   const refreshAll = useCallback(async () => {
     if (!isTauriRuntime()) return;
@@ -336,11 +393,14 @@ export const App: React.FC = () => {
             ...prev,
             notes: prev.notes.map((n) => (n.id === finalNote.id ? finalNote : n)),
           }));
+          scheduleAutoNotionSync(finalNote.id, true);
         } catch (err) {
           setTranscribeError(String(err));
         } finally {
           setTranscribing(false);
         }
+      } else {
+        scheduleAutoNotionSync(targetNote.id, true);
       }
     } else {
       setSnapshot((prev) => ({
@@ -380,6 +440,7 @@ export const App: React.FC = () => {
         notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
       }));
       setView('editor');
+      scheduleAutoNotionSync(updated.id, true);
     } catch (err) {
       setTranscribeError(String(err));
     } finally {
@@ -390,11 +451,15 @@ export const App: React.FC = () => {
   const handleUpdateNote = async (updated: Note) => {
     setSnapshot((prev) => ({
       ...prev,
-      notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+      notes: prev.notes.some((n) => n.id === updated.id)
+        ? prev.notes.map((n) => (n.id === updated.id ? updated : n))
+        : [updated, ...prev.notes],
     }));
+    setActiveNoteId((prevId) => prevId || updated.id);
     if (isTauriRuntime()) {
       const nextSnap = await apiSaveNote(updated);
       setSnapshot(nextSnap);
+      scheduleAutoNotionSync(updated.id, false);
     }
   };
 
@@ -899,38 +964,7 @@ export const App: React.FC = () => {
               }
             }}
             onSaveToNotion={async (noteId) => {
-              setSnapshot((prev) => ({
-                ...prev,
-                notes: prev.notes.map((n) =>
-                  n.id === noteId
-                    ? { ...n, notion_sync: { ...n.notion_sync, status: 'syncing' } }
-                    : n
-                ),
-              }));
-              try {
-                const updated = await apiNotionSaveNote(noteId);
-                setSnapshot((prev) => ({
-                  ...prev,
-                  notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
-                }));
-              } catch (err) {
-                setSnapshot((prev) => ({
-                  ...prev,
-                  notes: prev.notes.map((n) =>
-                    n.id === noteId
-                      ? {
-                          ...n,
-                          notion_sync: {
-                            ...n.notion_sync,
-                            status: 'failed',
-                            last_error: String(err),
-                          },
-                        }
-                      : n
-                  ),
-                }));
-                throw err;
-              }
+              await syncNoteToNotion(noteId, false);
             }}
             onSummarize={async (noteId) => {
               const updated = await apiSummarizeNote(noteId);
@@ -938,6 +972,7 @@ export const App: React.FC = () => {
                 ...prev,
                 notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
               }));
+              scheduleAutoNotionSync(noteId, true);
             }}
             onDraftFollowup={async (noteId) => {
               const updated = await apiDraftFollowup(noteId);

@@ -43,6 +43,7 @@ import {
 } from '../lib/format';
 import { NoteWaveform } from './NoteWaveform';
 import { NotionSyncBadge } from './NotionSyncBadge';
+import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 
 export type NotePhase = 'idle' | 'recording' | 'processing' | 'completed';
 
@@ -148,8 +149,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [shareOpen, setShareOpen] = useState(false);
   const [notionPreviewOpen, setNotionPreviewOpen] = useState(false);
   const [notionBusy, setNotionBusy] = useState(false);
-  const [rerecordConfirmOpen, setRerecordConfirmOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [editingSummaryRaw, setEditingSummaryRaw] = useState(false);
 
   // Recording / processing / playback state
   const [localRecording, setLocalRecording] = useState(false);
@@ -160,18 +161,63 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackMs, setPlaybackMs] = useState(0);
 
-  // Sync rich memo HTML when note switches
+  // Sync rich memo HTML when note or activeTab switches
   useEffect(() => {
-    if (memoEditorRef.current && memoEditorRef.current.innerHTML !== note.manual_notes) {
-      memoEditorRef.current.innerHTML = note.manual_notes || '';
+    if (activeTab === 'memo' && memoEditorRef.current) {
+      const targetHtml = note.manual_notes || '';
+      if (
+        document.activeElement !== memoEditorRef.current &&
+        memoEditorRef.current.innerHTML !== targetHtml
+      ) {
+        memoEditorRef.current.innerHTML = targetHtml;
+      }
     }
-  }, [note.id]);
+  }, [note.id, activeTab, note.manual_notes]);
 
-  // AI / Q&A
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
+  const saveMemoHtml = (html: string) => {
+    if (html === note.manual_notes) return;
+    onUpdateNote({
+      ...note,
+      manual_notes: html,
+      updated_at: new Date().toISOString(),
+    });
+  };
+
+  const applyMemoCommand = (command: string, value?: string) => {
+    document.execCommand(command, false, value);
+    if (memoEditorRef.current) {
+      saveMemoHtml(memoEditorRef.current.innerHTML);
+    }
+  };
+
+  // Per-note AI / Q&A state so summarizing Note A never blocks Note B
+  const [summarizingByNote, setSummarizingByNote] = useState<Record<string, boolean>>({});
+  const [askingByNote, setAskingByNote] = useState<Record<string, boolean>>({});
+  const [aiErrorByNote, setAiErrorByNote] = useState<Record<string, string | null>>({});
+  const [qaAnswerByNote, setQaAnswerByNote] = useState<Record<string, ChatAnswer | null>>({});
+  const [dismissedSuggestByNote, setDismissedSuggestByNote] = useState<Record<string, boolean>>({});
   const [question, setQuestion] = useState('');
-  const [qaAnswer, setQaAnswer] = useState<ChatAnswer | null>(null);
+
+  const isSummarizingThisNote = Boolean(summarizingByNote[note.id]);
+  const isAskingThisNote = Boolean(askingByNote[note.id]);
+  const aiError = aiErrorByNote[note.id] ?? null;
+  const qaAnswer = qaAnswerByNote[note.id] ?? null;
+
+  const handleRunSummarize = async () => {
+    const targetNoteId = note.id;
+    if (summarizingByNote[targetNoteId]) return;
+    setActiveTab('summary');
+    setEditingSummaryRaw(false);
+    setSummarizingByNote((prev) => ({ ...prev, [targetNoteId]: true }));
+    setAiErrorByNote((prev) => ({ ...prev, [targetNoteId]: null }));
+    try {
+      await onSummarize(targetNoteId);
+    } catch (err) {
+      setAiErrorByNote((prev) => ({ ...prev, [targetNoteId]: String(err) }));
+    } finally {
+      setSummarizingByNote((prev) => ({ ...prev, [targetNoteId]: false }));
+    }
+  };
 
   // Scroll tracking
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -188,6 +234,17 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     recordingStatus?.state === 'recording' || recordingStatus?.state === 'paused';
   const isRecording = isExternalRecording || localRecording;
   const isProcessing = transcribing || localProcessing;
+
+  const prevExtRecRef = useRef(isExternalRecording);
+  useEffect(() => {
+    if (isExternalRecording) {
+      setLocalRecording(false);
+    } else if (prevExtRecRef.current && !isExternalRecording) {
+      setLocalRecording(false);
+      setLocalRms(0);
+    }
+    prevExtRecRef.current = isExternalRecording;
+  }, [isExternalRecording]);
 
   const displayedSegments = useMemo(() => {
     if (isRecording) {
@@ -224,14 +281,14 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     }
   }, [phase]);
 
-  // Local timer + simulated RMS when recording without Tauri runtime
+  // Local timer when recording without Tauri runtime (stays flat/silent when no real audio input)
   useEffect(() => {
     if (!localRecording) return;
     const startAt = Date.now();
     const id = setInterval(() => {
       const elapsed = Date.now() - startAt;
       setLocalElapsedMs(elapsed);
-      setLocalRms(0.18 + Math.abs(Math.sin(elapsed / 240)) * 0.45);
+      setLocalRms(0);
     }, 200);
     return () => clearInterval(id);
   }, [localRecording]);
@@ -307,9 +364,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     setLocalElapsedMs(0);
     setIsAtBottom(true);
 
-    if (onStartRecording) {
+    const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    if (onStartRecording && isTauriEnv) {
       await onStartRecording();
-      // If external runtime didn't switch to recording (e.g. browser preview), start local timer
+    } else if (onStartRecording) {
+      await onStartRecording();
       if (!recordingStatus || recordingStatus.state === 'idle') {
         setLocalRecording(true);
       }
@@ -319,14 +378,14 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   };
 
   const stopRecording = async () => {
+    setLocalRecording(false);
+    setLocalRms(0);
     if (isExternalRecording && onStopRecording) {
       await onStopRecording();
       return;
     }
 
     const elapsedSec = Math.max(1, Math.round(localElapsedMs / 1000));
-    setLocalRecording(false);
-    setLocalRms(0);
     setLocalProcessing(true);
 
     setTimeout(() => {
@@ -361,9 +420,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const handleRecordButtonClick = () => {
     if (phase === 'recording') {
       void stopRecording();
-    } else if (phase === 'completed') {
-      setRerecordConfirmOpen(true);
-    } else if (phase === 'idle') {
+    } else if (phase === 'completed' || phase === 'idle') {
       void beginRecording();
     }
   };
@@ -422,22 +479,23 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
   const handleAskQuestion = async () => {
     const q = question.trim();
-    if (!q || aiBusy) return;
-    setAiBusy(true);
-    setAiError(null);
+    const targetNoteId = note.id;
+    if (!q || askingByNote[targetNoteId]) return;
+    setAskingByNote((prev) => ({ ...prev, [targetNoteId]: true }));
+    setAiErrorByNote((prev) => ({ ...prev, [targetNoteId]: null }));
     try {
-      const ids = chatScope === 'note' ? [note.id] : [];
+      const ids = chatScope === 'note' ? [targetNoteId] : [];
       const res = await (onChatNote as (noteIds: string[], question: string, spaceId?: string | null) => Promise<ChatAnswer>)(
         ids,
         q,
         chatScope === 'space' ? note.folder_id : null
       );
-      setQaAnswer(res);
+      setQaAnswerByNote((prev) => ({ ...prev, [targetNoteId]: res }));
       setQuestion('');
     } catch (err) {
-      setAiError(String(err));
+      setAiErrorByNote((prev) => ({ ...prev, [targetNoteId]: String(err) }));
     } finally {
-      setAiBusy(false);
+      setAskingByNote((prev) => ({ ...prev, [targetNoteId]: false }));
     }
   };
 
@@ -478,6 +536,98 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     folders[0] || { id: 'personal', name: '個人', is_shared: false, permission: 'owner' as const };
   const folderDisplayName =
     activeFolder.id === 'personal' ? '個人' : activeFolder.name;
+
+  // Smart Category Suggestion ("もしかして：授業" etc.)
+  const suggestedCategory = useMemo((): { id: string | null; name: string } | null => {
+    if (dismissedSuggestByNote[note.id]) return null;
+    const textHaystack = [
+      note.title,
+      note.summary,
+      note.manual_notes.replace(/<[^>]*>/g, ' '),
+      ...note.segments.map((s) => s.text),
+    ]
+      .join(' ')
+      .toLowerCase();
+    if (textHaystack.trim().length < 3) return null;
+
+    const domainKeywords: Record<string, string[]> = {
+      授業: ['授業', '講義', '教授', '先生', '単位', '課題', 'レポート', 'シラバス', '試験', 'テスト', '学期', '科目', '宿題', 'ゼミ'],
+      講義: ['講義', '授業', '教授', '単位', 'シラバス', 'レポート', '試験'],
+      会議: ['会議', '定例', '議題', '進捗', 'クライアント', '納期', '仕様', 'リリース', 'ミーティング', '打ち合わせ', 'タスク'],
+      研究: ['研究', '論文', '実験', 'データ', '仮説', '学会', '考察'],
+      面接: ['面接', '採用', '志望動機', '自己pr', '選考', 'キャリア'],
+    };
+
+    let bestFolder: Folder | null = null;
+    let bestScore = 0;
+
+    for (const f of folders) {
+      if (f.id === note.folder_id || f.id === 'personal') continue;
+      const fNameLower = f.name.toLowerCase();
+      let score = 0;
+      if (fNameLower.length >= 2 && textHaystack.includes(fNameLower)) {
+        score += 3;
+      }
+      for (const [domain, kwList] of Object.entries(domainKeywords)) {
+        if (f.name.includes(domain)) {
+          for (const kw of kwList) {
+            if (textHaystack.includes(kw)) score += 2;
+          }
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestFolder = f;
+      }
+    }
+
+    if (bestFolder && bestScore >= 2) {
+      return { id: bestFolder.id, name: bestFolder.name };
+    }
+
+    // Also suggest creating/moving to "授業" or "会議" if note is still in 'personal' and clearly matches
+    if (note.folder_id === 'personal') {
+      const lectureHits = domainKeywords['授業'].filter((kw) => textHaystack.includes(kw)).length;
+      if (lectureHits >= 1) {
+        const existing = folders.find((f) => f.name.includes('授業') || f.name.includes('講義'));
+        return existing ? { id: existing.id, name: existing.name } : { id: null, name: '授業' };
+      }
+      const meetingHits = domainKeywords['会議'].filter((kw) => textHaystack.includes(kw)).length;
+      if (meetingHits >= 2) {
+        const existing = folders.find((f) => f.name.includes('会議'));
+        if (existing && existing.id !== note.folder_id) {
+          return { id: existing.id, name: existing.name };
+        }
+      }
+    }
+    return null;
+  }, [note, folders, dismissedSuggestByNote]);
+
+  const handleApplySuggestedCategory = async () => {
+    if (!suggestedCategory) return;
+    if (suggestedCategory.id) {
+      onUpdateNote({
+        ...note,
+        folder_id: suggestedCategory.id,
+        updated_at: new Date().toISOString(),
+      });
+      notify(`「${suggestedCategory.name}」に移動しました`);
+    } else if (onSaveFolder) {
+      const created: Folder = {
+        id: crypto.randomUUID(),
+        name: suggestedCategory.name,
+        is_shared: false,
+        permission: 'owner',
+      };
+      await onSaveFolder(created);
+      onUpdateNote({
+        ...note,
+        folder_id: created.id,
+        updated_at: new Date().toISOString(),
+      });
+      notify(`「${created.name}」を作成して移動しました`);
+    }
+  };
 
   const llmConfigured = settings.llm_provider !== 'none' && settings.llm_provider !== '';
   const notionReady = Boolean(secretStatus?.notion_access_token) && Boolean(settings.notion_target_id);
@@ -977,6 +1127,35 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 </div>
               )}
             </div>
+
+            {suggestedCategory && (
+              <div className="category-suggest-pill" role="status">
+                <button
+                  type="button"
+                  onClick={handleApplySuggestedCategory}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontWeight: 600,
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  <Sparkles size={13} strokeWidth={1.75} />
+                  <span>もしかして：{suggestedCategory.name}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="カテゴリ提案を閉じる"
+                  onClick={() =>
+                    setDismissedSuggestByNote((prev) => ({ ...prev, [note.id]: true }))
+                  }
+                  style={{ display: 'inline-flex', padding: 0, color: 'var(--text-muted)' }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
@@ -1267,51 +1446,65 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             {activeTab === 'summary' && (
               <div className="note-notes-tab">
                 <section className="note-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
                     <h2 className="note-card-title">要約</h2>
-                    {llmConfigured && (
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        style={{ height: '30px', fontSize: '12px' }}
-                        disabled={aiBusy}
-                        onClick={async () => {
-                          setAiBusy(true);
-                          setAiError(null);
-                          try {
-                            await onSummarize(note.id);
-                          } catch (err) {
-                            setAiError(String(err));
-                          } finally {
-                            setAiBusy(false);
-                          }
-                        }}
-                      >
-                        <Sparkles size={13} strokeWidth={1.75} />
-                        {aiBusy ? '生成中' : '要約を生成'}
-                      </button>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {note.summary.trim() && !isSummarizingThisNote && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ height: '28px', padding: '0 8px', fontSize: '12px' }}
+                          onClick={() => setEditingSummaryRaw((v) => !v)}
+                        >
+                          {editingSummaryRaw ? 'プレビュー表示' : 'テキストを編集'}
+                        </button>
+                      )}
+                      {llmConfigured && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ height: '28px', fontSize: '12px' }}
+                          disabled={isSummarizingThisNote}
+                          onClick={handleRunSummarize}
+                        >
+                          <Sparkles size={13} strokeWidth={1.75} />
+                          {isSummarizingThisNote ? '生成中' : '要約を生成'}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <textarea
-                    aria-label="要約内容"
-                    className="textarea"
-                    style={{ minHeight: '160px' }}
-                    value={note.summary}
-                    onChange={(e) =>
-                      onUpdateNote({
-                        ...note,
-                        summary: e.target.value,
-                        updated_at: new Date().toISOString(),
-                      })
-                    }
-                    placeholder="要約はまだ生成されていません（下のボタンまたは右上から生成できます）"
-                  />
+
+                  {editingSummaryRaw ? (
+                    <textarea
+                      aria-label="要約内容"
+                      className="textarea"
+                      style={{ minHeight: '200px', border: 'none', padding: '8px 0' }}
+                      value={note.summary}
+                      onChange={(e) =>
+                        onUpdateNote({
+                          ...note,
+                          summary: e.target.value,
+                          updated_at: new Date().toISOString(),
+                        })
+                      }
+                      placeholder="要約はまだ生成されていません（下のボタンまたは右上から生成できます）"
+                    />
+                  ) : (
+                    <div aria-label="要約内容" style={{ padding: '4px 0' }}>
+                      <StreamingMarkdownArticle
+                        content={isSummarizingThisNote ? '' : note.summary}
+                        isGenerating={isSummarizingThisNote}
+                        animateOnChange
+                        placeholder="要約はまだ生成されていません（下のボタンまたは右上から生成できます）"
+                      />
+                    </div>
+                  )}
                 </section>
 
                 {note.decisions.length > 0 && (
                   <section className="note-card">
                     <h2 className="note-card-title">決定事項</h2>
-                    <ul style={{ margin: 0, paddingLeft: '20px', lineHeight: '24px' }}>
+                    <ul style={{ margin: '0px', paddingLeft: '20px', lineHeight: '24px' }}>
                       {note.decisions.map((d, i) => (
                         <li key={`d-${i}`}>{d}</li>
                       ))}
@@ -1320,9 +1513,9 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 )}
 
                 {!llmConfigured && (
-                  <section className="note-card" style={{ backgroundColor: 'var(--ns-bg-sidebar)' }}>
-                    <div style={{ fontSize: '14px', fontWeight: 600 }}>LLMが未設定です</div>
-                    <p style={{ margin: 0, color: 'var(--ns-text-secondary)' }}>
+                  <section className="note-card">
+                    <div style={{ fontWeight: 600 }}>LLMが未設定です</div>
+                    <p style={{ margin: '0px', color: 'var(--ns-text-secondary)' }}>
                       AI要約や質問応答を使うには設定画面でプロバイダを設定してください。
                     </p>
                     <button
@@ -1337,21 +1530,21 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 )}
 
                 {aiError && (
-                  <div style={{ fontSize: '14px', color: 'var(--danger)' }}>{aiError}</div>
+                  <div style={{ color: 'var(--danger)' }}>{aiError}</div>
                 )}
               </div>
             )}
 
             {activeTab === 'memo' && (
               <div className="note-notes-tab">
-                <section className="note-card" style={{ padding: 0, overflow: 'hidden' }}>
+                <section className="note-card" style={{ padding: 0 }}>
                   <div className="rich-memo-toolbar" role="toolbar" aria-label="メモ書式ツールバー">
                     <button
                       type="button"
                       className="rich-memo-tool-btn"
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        document.execCommand('formatBlock', false, 'h1');
+                        applyMemoCommand('formatBlock', 'h1');
                       }}
                     >
                       H1
@@ -1361,7 +1554,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       className="rich-memo-tool-btn"
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        document.execCommand('formatBlock', false, 'h2');
+                        applyMemoCommand('formatBlock', 'h2');
                       }}
                     >
                       H2
@@ -1371,7 +1564,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       className="rich-memo-tool-btn"
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        document.execCommand('formatBlock', false, 'h3');
+                        applyMemoCommand('formatBlock', 'h3');
                       }}
                     >
                       H3
@@ -1381,7 +1574,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       className="rich-memo-tool-btn"
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        document.execCommand('bold');
+                        applyMemoCommand('bold');
                       }}
                     >
                       <strong>太字</strong>
@@ -1391,7 +1584,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       className="rich-memo-tool-btn"
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        document.execCommand('underline');
+                        applyMemoCommand('underline');
                       }}
                     >
                       <u>下線</u>
@@ -1401,7 +1594,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       className="rich-memo-tool-btn"
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        document.execCommand('insertUnorderedList');
+                        applyMemoCommand('insertUnorderedList');
                       }}
                     >
                       箇条書き
@@ -1416,11 +1609,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     suppressContentEditableWarning
                     className="rich-memo-editor"
                     onInput={(e) => {
-                      onUpdateNote({
-                        ...note,
-                        manual_notes: e.currentTarget.innerHTML,
-                        updated_at: new Date().toISOString(),
-                      });
+                      saveMemoHtml(e.currentTarget.innerHTML);
+                    }}
+                    onBlur={(e) => {
+                      saveMemoHtml(e.currentTarget.innerHTML);
                     }}
                   />
                 </section>
@@ -1440,19 +1632,29 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           )}
         </div>
 
-        {/* Q&A Answer Card (when answered) */}
-        {qaAnswer && (
+        {/* Q&A Answer Card (when asking or answered) */}
+        {(isAskingThisNote || qaAnswer) && (
           <div className="note-qa-card" role="region" aria-label="質問への回答">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-              <div style={{ whiteSpace: 'pre-wrap' }}>{qaAnswer.answer}</div>
-              <button
-                type="button"
-                aria-label="回答を閉じる"
-                onClick={() => setQaAnswer(null)}
-                style={{ padding: '2px', color: 'var(--ns-text-muted)' }}
-              >
-                <X size={14} />
-              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <StreamingMarkdownArticle
+                  content={isAskingThisNote ? '' : qaAnswer?.answer || ''}
+                  isGenerating={isAskingThisNote}
+                  animateOnChange
+                />
+              </div>
+              {!isAskingThisNote && (
+                <button
+                  type="button"
+                  aria-label="回答を閉じる"
+                  onClick={() =>
+                    setQaAnswerByNote((prev) => ({ ...prev, [note.id]: null }))
+                  }
+                  style={{ padding: '4px', color: 'var(--ns-text-muted)' }}
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1464,22 +1666,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={!llmConfigured || aiBusy}
-                onClick={async () => {
-                  setAiBusy(true);
-                  setAiError(null);
-                  try {
-                    await onSummarize(note.id);
-                    setActiveTab('summary');
-                  } catch (err) {
-                    setAiError(String(err));
-                  } finally {
-                    setAiBusy(false);
-                  }
-                }}
+                disabled={!llmConfigured || isSummarizingThisNote}
+                onClick={handleRunSummarize}
               >
                 <Sparkles size={14} strokeWidth={1.75} />
-                {aiBusy ? '要約を生成中...' : '要約を生成'}
+                {isSummarizingThisNote ? '要約を生成中...' : '要約を生成'}
               </button>
               <div style={{ display: 'flex', gap: '4px' }}>
                 <button
@@ -1513,7 +1704,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               type="button"
               className="note-send-btn"
               aria-label="質問を送信"
-              disabled={!question.trim() || aiBusy}
+              disabled={!question.trim() || isAskingThisNote}
               onClick={handleAskQuestion}
             >
               <ArrowUp size={18} strokeWidth={2} aria-hidden="true" />
@@ -1528,44 +1719,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         </>
         )}
       </div>
-
-      {/* Re-record Confirmation Dialog */}
-      {rerecordConfirmOpen && (
-        <div
-          className="note-dialog-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="rerecord-dialog-title"
-        >
-          <div className="note-dialog">
-            <h2 id="rerecord-dialog-title" className="section-title">
-              録音をやり直しますか？
-            </h2>
-            <p style={{ margin: 0, color: 'var(--ns-text-secondary)' }}>
-              既存の文字起こしは保持したまま、新しい録音内容を末尾に追記します。
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setRerecordConfirmOpen(false)}
-              >
-                キャンセル
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  setRerecordConfirmOpen(false);
-                  void beginRecording();
-                }}
-              >
-                やり直す
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Notion Duplicate-Prevention Preview Dialog */}
       {notionPreviewOpen && (

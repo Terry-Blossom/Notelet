@@ -233,11 +233,10 @@ describe('App & Views', () => {
     expect(screen.getByText('文字起こし済み')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '録音を再生' })).toBeInTheDocument();
 
-    // Re-record opens confirmation dialog
+    // Re-record starts recording directly without confirmation popup
     fireEvent.click(screen.getByRole('button', { name: '再録音' }));
-    expect(screen.getByText('録音をやり直しますか？')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'キャンセル' }));
     expect(screen.queryByText('録音をやり直しますか？')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '録音を停止' })).toBeInTheDocument();
 
     vi.useRealTimers();
   });
@@ -345,5 +344,103 @@ describe('App & Views', () => {
     // Clicking a child note opens that child note
     fireEvent.click(screen.getAllByText('業務ミーティング議事録')[0]);
     expect(onSelectNote).toHaveBeenCalledWith('work-note-1');
+  });
+
+  it('suggests category ("もしかして：授業"), auto-switches to summary tab without blocking other notes, and preserves memo across tab switches', async () => {
+    const noteA: Note = {
+      ...createEmptyNote('personal'),
+      id: 'note-a',
+      title: '心理学の授業ノート（教授の講義と期末レポート課題）',
+      manual_notes: '<p>来週までにレポート提出</p>',
+    };
+    const noteB: Note = {
+      ...createEmptyNote('personal'),
+      id: 'note-b',
+      title: '別のメモ',
+    };
+    const onUpdateNote = vi.fn();
+    let resolveSummarizeA: () => void = () => {};
+    const onSummarize = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSummarizeA = resolve;
+        })
+    );
+
+    const { rerender } = render(
+      <NoteEditorView
+        note={noteA}
+        allNotes={[noteA, noteB]}
+        folders={[
+          { id: 'personal', name: '個人', is_shared: false, permission: 'owner' },
+          { id: 'class-1', name: '授業', is_shared: false, permission: 'owner' },
+        ]}
+        settings={{ ...baseSettings, llm_provider: 'openai', llm_model: 'gpt-4o-mini' }}
+        recipes={[]}
+        secretStatus={null}
+        transcribing={false}
+        transcribeError={null}
+        onUpdateNote={onUpdateNote}
+        onCopyText={vi.fn()}
+        onPastePrepare={vi.fn()}
+        onSaveToNotion={vi.fn()}
+        onSummarize={onSummarize}
+        onDraftFollowup={vi.fn()}
+        onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
+        onChatNote={vi.fn()}
+        onShareSlack={vi.fn()}
+        onSendWebhook={vi.fn()}
+        onAddDictionaryTerm={vi.fn()}
+        onGoSettings={vi.fn()}
+      />
+    );
+
+    // 1. Category suggestion "もしかして：授業" is shown and moves note on click
+    const suggestBtn = screen.getByText('もしかして：授業');
+    expect(suggestBtn).toBeInTheDocument();
+    fireEvent.click(suggestBtn);
+    expect(onUpdateNote).toHaveBeenCalledWith(expect.objectContaining({ folder_id: 'class-1' }));
+
+    // 2. Switching to Memo tab restores manual_notes
+    fireEvent.click(screen.getByRole('tab', { name: 'メモ' }));
+    expect(screen.getByRole('textbox', { name: '自由メモ帳' }).innerHTML).toContain('来週までにレポート提出');
+
+    // 3. Clicking "要約を生成" immediately switches to summary tab and starts summarizing Note A
+    fireEvent.click(screen.getByRole('button', { name: '要約を生成' }));
+    expect(screen.getByRole('tab', { name: '要約' })).toHaveAttribute('aria-selected', 'true');
+
+    // 4. Switching to Note B while Note A is summarizing does NOT lock Note B in "生成中"
+    rerender(
+      <NoteEditorView
+        note={noteB}
+        allNotes={[noteA, noteB]}
+        folders={[
+          { id: 'personal', name: '個人', is_shared: false, permission: 'owner' },
+          { id: 'class-1', name: '授業', is_shared: false, permission: 'owner' },
+        ]}
+        settings={{ ...baseSettings, llm_provider: 'openai', llm_model: 'gpt-4o-mini' }}
+        recipes={[]}
+        secretStatus={null}
+        transcribing={false}
+        transcribeError={null}
+        onUpdateNote={onUpdateNote}
+        onCopyText={vi.fn()}
+        onPastePrepare={vi.fn()}
+        onSaveToNotion={vi.fn()}
+        onSummarize={onSummarize}
+        onDraftFollowup={vi.fn()}
+        onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
+        onChatNote={vi.fn()}
+        onShareSlack={vi.fn()}
+        onSendWebhook={vi.fn()}
+        onAddDictionaryTerm={vi.fn()}
+        onGoSettings={vi.fn()}
+      />
+    );
+    const summarizeButtonsOnB = screen.getAllByRole('button', { name: '要約を生成' });
+    expect(summarizeButtonsOnB[0]).not.toBeDisabled();
+    resolveSummarizeA();
   });
 });

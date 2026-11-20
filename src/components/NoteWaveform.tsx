@@ -7,7 +7,8 @@ interface NoteWaveformProps {
   playbackProgress?: number; // 0..1 when mode === 'completed'
 }
 
-const STATIC_HEIGHTS = [7, 11, 15, 9, 13, 17, 10, 8, 14, 16, 11, 7];
+const BAR_COUNT = 10;
+const COMPLETED_HEIGHTS = [6, 10, 14, 8, 12, 14, 10, 8, 12, 6];
 
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
@@ -31,35 +32,34 @@ export const NoteWaveform: React.FC<NoteWaveformProps> = ({
   playbackProgress = 0,
 }) => {
   const reducedMotion = usePrefersReducedMotion();
+  const hasVoiceSignal = mode === 'recording' && levelRms >= 0.015;
 
   return (
     <div className="note-waveform" aria-hidden="true">
-      {STATIC_HEIGHTS.map((baseHeight, i) => {
-        let height = baseHeight;
+      {Array.from({ length: BAR_COUNT }).map((_, i) => {
+        let height = 4;
 
-        if (mode === 'recording' && !reducedMotion) {
+        if (mode === 'completed') {
+          height = COMPLETED_HEIGHTS[i] ?? 8;
+        } else if (hasVoiceSignal && !reducedMotion) {
           const sample =
             waveform.length > 0
-              ? waveform[Math.min(waveform.length - 1, Math.floor((i / 12) * waveform.length))] ?? levelRms
+              ? waveform[Math.min(waveform.length - 1, Math.floor((i / BAR_COUNT) * waveform.length))] ?? levelRms
               : levelRms;
-          const weight = 0.65 + ((i % 3) * 0.25);
-          const scaled = Math.min(1, Math.max(0.08, sample * 3.8 * weight + levelRms * 1.4));
-          height = Math.round(6 + scaled * 12);
+          const weight = 0.7 + ((i % 3) * 0.2);
+          const scaled = Math.min(1, Math.max(0, sample * 3.5 * weight + levelRms * 1.2));
+          height = Math.round(4 + scaled * 12);
         }
 
-        let backgroundColor: string;
+        let backgroundColor = 'rgba(17, 17, 17, 0.28)';
         if (mode === 'completed') {
-          const barThreshold = (i + 1) / 12;
+          const barThreshold = (i + 1) / BAR_COUNT;
           backgroundColor =
             playbackProgress > 0 && barThreshold <= playbackProgress
-              ? 'var(--ns-accent-blue)'
-              : 'var(--ns-wave-idle)';
-        } else if (i < 4) {
-          backgroundColor = 'var(--ns-accent-blue)';
-        } else if (i >= 9) {
-          backgroundColor = 'var(--ns-accent-warm)';
-        } else {
-          backgroundColor = 'var(--ns-wave-idle)';
+              ? '#111111'
+              : 'rgba(17, 17, 17, 0.28)';
+        } else if (mode === 'recording') {
+          backgroundColor = hasVoiceSignal ? '#111111' : 'rgba(17, 17, 17, 0.35)';
         }
 
         return (
