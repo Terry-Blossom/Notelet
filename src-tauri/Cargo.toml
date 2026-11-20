@@ -1,6 +1,6 @@
 [package]
 name = "koenote"
-version = "0.2.0"
+version = "0.2.1"
 description = "軽量なローカルファースト録音・文字起こし・Notion連携ノートアプリ"
 authors = ["KoeNote Contributors"]
 edition = "2021"

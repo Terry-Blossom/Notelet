@@ -452,7 +452,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div>
               <h2 className="section-title">アプリ更新（GitHub Releases）</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                現在のバージョン: <span className="mono-num">v{updateInfo?.current_version ?? '0.2.0'}</span>
+                現在のバージョン: <span className="mono-num">v{updateInfo?.current_version ?? '0.2.1'}</span>
               </p>
             </div>
             <button
@@ -494,29 +494,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                   <div className="text-muted">{updateInfo.release_name}</div>
                 </div>
-                {updateInfo.has_update && updateInfo.download_url && updateInfo.asset_name && (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={installingUpdate}
-                    onClick={async () => {
-                      setInstallingUpdate(true);
-                      setUpdateError(null);
-                      try {
-                        const msg = await onInstallUpdate(updateInfo.download_url!, updateInfo.asset_name!);
-                        flash(msg);
-                      } catch (e) {
-                        setUpdateError(String(e));
-                      } finally {
-                        setInstallingUpdate(false);
-                      }
-                    }}
-                  >
-                    {installingUpdate ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <Download size={15} strokeWidth={1.5} />}
-                    {installingUpdate
-                      ? `更新中 ${updateProgress ?? 0}%`
-                      : `v${updateInfo.latest_version} へアップデート`}
-                  </button>
+                {updateInfo.has_update && (
+                  updateInfo.download_url && updateInfo.asset_name ? (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={installingUpdate}
+                      onClick={async () => {
+                        setInstallingUpdate(true);
+                        setUpdateError(null);
+                        try {
+                          const msg = await onInstallUpdate(updateInfo.download_url!, updateInfo.asset_name!);
+                          flash(msg);
+                        } catch (e) {
+                          setUpdateError(String(e));
+                        } finally {
+                          setInstallingUpdate(false);
+                        }
+                      }}
+                    >
+                      {installingUpdate ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <Download size={15} strokeWidth={1.5} />}
+                      {installingUpdate
+                        ? `更新中 ${updateProgress ?? 0}%`
+                        : `v${updateInfo.latest_version} へそのままアップデート`}
+                    </button>
+                  ) : (
+                    <a
+                      href={updateInfo.release_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-secondary"
+                    >
+                      このOS向けのビルド準備中（リリースページを開く）
+                    </a>
+                  )
                 )}
               </div>
               {updateInfo.release_notes && (

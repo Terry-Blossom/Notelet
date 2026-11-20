@@ -84,12 +84,22 @@ pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
     let latest_clean = tag.trim_start_matches('v').to_string();
     let has_update = parse_semver(&latest_clean) > parse_semver(&current);
 
+    let has_token = secrets::get_secret("github_update_token")
+        .ok()
+        .flatten()
+        .map(|t| !t.trim().is_empty())
+        .unwrap_or(false);
+
     let mut asset_name = None;
     let mut download_url = None;
     if let Some(assets) = v["assets"].as_array() {
         for a in assets {
             let name = a["name"].as_str().unwrap_or("");
-            let url = a["browser_download_url"].as_str().unwrap_or("");
+            let url = if has_token {
+                a["url"].as_str().unwrap_or("")
+            } else {
+                a["browser_download_url"].as_str().unwrap_or("")
+            };
             let matches_os = if cfg!(windows) {
                 name.ends_with("-setup.exe") || name.ends_with(".msi") || name == "koenote.exe"
             } else if cfg!(target_os = "macos") {
@@ -139,7 +149,9 @@ pub async fn download_and_launch_update(
     let mut req = client.get(download_url);
     if let Ok(Some(token)) = secrets::get_secret("github_update_token") {
         if !token.trim().is_empty() {
-            req = req.bearer_auth(token.trim());
+            req = req
+                .bearer_auth(token.trim())
+                .header("Accept", "application/octet-stream");
         }
     }
     let mut resp = req
