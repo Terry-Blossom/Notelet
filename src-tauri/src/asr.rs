@@ -9,6 +9,19 @@ use std::process::Command;
 use tauri::Emitter;
 use uuid::Uuid;
 
+fn configure_bg_command(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
 mod futures_util_stub {
     // reqwest::Response::chunk() を使うため追加依存不要
 }
@@ -462,7 +475,9 @@ pub async fn install_runtime_binary(
             let zip_path = bin_root.join("whisper-bin-x64.zip");
             download_single_file(app, "runtime:whisper", &asset_url, &zip_path, 0.0, 90.0, 15 * 1024 * 1024).await?;
 
-            let status = Command::new("powershell")
+            let mut cmd = Command::new("powershell");
+            configure_bg_command(&mut cmd);
+            let status = cmd
                 .args([
                     "-NoProfile",
                     "-Command",
@@ -520,7 +535,9 @@ pub async fn install_runtime_binary(
             let archive_path = bin_root.join("sherpa-onnx.tar.bz2");
             download_single_file(app, "runtime:parakeet", &asset_url, &archive_path, 0.0, 90.0, 45 * 1024 * 1024).await?;
 
-            let status = Command::new("tar")
+            let mut cmd = Command::new("tar");
+            configure_bg_command(&mut cmd);
+            let status = cmd
                 .arg("-xjf")
                 .arg(&archive_path)
                 .arg("-C")
@@ -558,7 +575,9 @@ fn ensure_local_wav(input_path: &Path) -> Result<(PathBuf, bool), String> {
         return Ok((input_path.to_path_buf(), false));
     }
     let converted = input_path.with_extension("converted_16k.wav");
-    let status = Command::new("ffmpeg")
+    let mut cmd = Command::new("ffmpeg");
+    configure_bg_command(&mut cmd);
+    let status = cmd
         .args([
             "-y",
             "-i",
@@ -627,6 +646,7 @@ pub async fn transcribe_wav(
             }
             let out_base = local_wav.with_extension("whisper_out");
             let mut cmd = Command::new(cli);
+            configure_bg_command(&mut cmd);
             cmd.arg("-m")
                 .arg(&model_path)
                 .arg("-f")
@@ -714,6 +734,8 @@ pub async fn transcribe_wav(
             let ctc_model = model_dir.join("model.int8.onnx");
             let tokens = model_dir.join("tokens.txt");
             let mut cmd = Command::new(cli);
+            configure_bg_command(&mut cmd);
+            configure_bg_command(&mut cmd);
             if model.id == "sense-voice-int8-ja" {
                 cmd.arg(format!("--sense-voice-model={}", ctc_model.display()))
                     .arg("--sense-voice-use-itn=1")
@@ -940,6 +962,7 @@ pub fn transcribe_chunk_sync(
             }
             let out_base = chunk_wav.with_extension("chunk_out");
             let mut cmd = Command::new(cli);
+            configure_bg_command(&mut cmd);
             cmd.arg("-m")
                 .arg(&model_path)
                 .arg("-f")
@@ -981,6 +1004,8 @@ pub fn transcribe_chunk_sync(
             let ctc_model = model_dir.join("model.int8.onnx");
             let tokens = model_dir.join("tokens.txt");
             let mut cmd = Command::new(cli);
+            configure_bg_command(&mut cmd);
+            configure_bg_command(&mut cmd);
             if model.id == "sense-voice-int8-ja" {
                 cmd.arg(format!("--sense-voice-model={}", ctc_model.display()))
                     .arg("--sense-voice-use-itn=1")

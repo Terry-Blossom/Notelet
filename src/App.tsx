@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Square,
+  X,
 } from 'lucide-react';
 import {
   AppDataSnapshot,
@@ -52,6 +53,9 @@ import {
   apiResumeRecording,
   apiRunRecipe,
   apiSaveRecipe,
+  apiSaveFolder,
+  apiDeleteFolder,
+  apiClearChatHistory,
   apiSaveDictionaryEntry,
   apiSaveNote,
   apiSaveSettings,
@@ -141,22 +145,25 @@ const INITIAL_RECORDING_STATUS: RecordingStatus = {
 
 export const App: React.FC = () => {
   const [view, setView] = useState<NavView>('home');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [recordingSpaceId, setRecordingSpaceId] = useState('personal');
   const [snapshot, setSnapshot] = useState<AppDataSnapshot>({
     notes: [],
-    folders: [{ id: 'personal', name: '個人ノート（ローカル）', is_shared: false, permission: 'owner' }],
+    folders: [{ id: 'personal', name: '一般', is_shared: false, permission: 'owner' }],
     dictionary: [],
     recipes: [],
     settings: FALLBACK_SETTINGS,
     audit_logs: [],
+    chat_history: [],
   });
   const [models, setModels] = useState<AsrModelInfo[]>([]);
-  const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
+  const [, setDevices] = useState<AudioDeviceInfo[]>([]);
   const [adapters, setAdapters] = useState<IntegrationAdapterInfo[]>([]);
   const [secretStatus, setSecretStatus] = useState<SecretStatus | null>(null);
   const [mcpPreview, setMcpPreview] = useState('');
-  const [sourceMode, setSourceMode] = useState<AudioSourceMode>('mic');
-  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [sourceMode] = useState<AudioSourceMode>('mic');
+  const [selectedDeviceId] = useState('');
   const [recStatus, setRecStatus] = useState<RecordingStatus>(INITIAL_RECORDING_STATUS);
   const [liveManualNotes, setLiveManualNotes] = useState('');
   const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
@@ -243,7 +250,7 @@ export const App: React.FC = () => {
     setLiveManualNotes('');
     setLiveSegments([]);
     if (!isTauriRuntime()) {
-      const note = createEmptyNote();
+      const note = createEmptyNote(recordingSpaceId);
       note.title = '';
       setSnapshot((prev) => ({ ...prev, notes: [note, ...prev.notes] }));
       setActiveNoteId(note.id);
@@ -251,7 +258,7 @@ export const App: React.FC = () => {
       return;
     }
     try {
-      const note = createEmptyNote();
+      const note = createEmptyNote(recordingSpaceId);
       note.title = '';
       const nextSnap = await apiSaveNote(note);
       setSnapshot(nextSnap);
@@ -266,6 +273,7 @@ export const App: React.FC = () => {
 
   const handleStartRecordingInNote = async () => {
     setTranscribeError(null);
+    setLiveSegments([]);
     if (!isTauriRuntime()) return;
     try {
       const st = await apiStartRecording(sourceMode, selectedDeviceId || null);
@@ -303,7 +311,7 @@ export const App: React.FC = () => {
       setActiveNoteId(targetNote.id);
       setView('editor');
 
-      if (finalStatus.temp_wav_path) {
+      if (finalStatus.temp_wav_path && liveSegments.length === 0) {
         setTranscribing(true);
         setTranscribeError(null);
         try {
@@ -379,8 +387,8 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleCreateManualNote = async () => {
-    const note = createEmptyNote();
+  const handleCreateManualNote = async (folderId?: string) => {
+    const note = createEmptyNote(folderId || recordingSpaceId || 'personal');
     note.title = '';
     if (isTauriRuntime()) {
       const next = await apiSaveNote(note);
@@ -405,20 +413,131 @@ export const App: React.FC = () => {
     { id: 'integrations', label: '連携', icon: Link2 },
   ];
 
+  const handleSaveFolder = async (folder: { id: string; name: string; is_shared: boolean; permission: 'owner' | 'editor' | 'viewer' }) => {
+    if (isTauriRuntime()) {
+      setSnapshot(await apiSaveFolder(folder));
+    } else {
+      setSnapshot((prev) => ({
+        ...prev,
+        folders: prev.folders.some((f) => f.id === folder.id)
+          ? prev.folders.map((f) => (f.id === folder.id ? folder : f))
+          : [...prev.folders, folder],
+      }));
+    }
+  };
+
+  const handleDeleteFolder = async (folderId: string) => {
+    if (isTauriRuntime()) {
+      setSnapshot(await apiDeleteFolder(folderId));
+    } else {
+      setSnapshot((prev) => ({
+        ...prev,
+        folders: prev.folders.filter((f) => f.id !== folderId),
+      }));
+    }
+    if (recordingSpaceId === folderId) {
+      setRecordingSpaceId('personal');
+    }
+  };
+
+  const settingsModal = settingsOpen ? (
+    <div
+      className="settings-modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="設定"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) setSettingsOpen(false);
+      }}
+    >
+      <div className="settings-modal-panel">
+        <button
+          type="button"
+          aria-label="設定を閉じる"
+          className="btn btn-ghost"
+          onClick={() => setSettingsOpen(false)}
+          style={{ position: 'sticky', top: '12px', float: 'right', marginRight: '16px', marginTop: '12px', zIndex: 10 }}
+        >
+          <X size={18} strokeWidth={1.75} />
+        </button>
+        <SettingsView
+          settings={snapshot.settings}
+          models={models}
+          secretStatus={secretStatus}
+          downloadProgress={downloadProgress}
+          updateProgress={updateProgress}
+          onSaveSettings={async (next) => {
+            if (isTauriRuntime()) {
+              setSnapshot(await apiSaveSettings(next));
+              await refreshAll();
+            } else {
+              setSnapshot((prev) => ({ ...prev, settings: next }));
+            }
+          }}
+          onDownloadModel={async (modelId) => {
+            try {
+              await apiDownloadAsrModel(modelId);
+              await refreshAll();
+            } catch (e) {
+              setBannerMessage(String(e));
+            }
+          }}
+          onInstallRuntime={async (kind) => {
+            try {
+              await apiInstallAsrRuntime(kind);
+              await refreshAll();
+              setBannerMessage(`${kind === 'whisper' ? 'whisper.cpp' : 'sherpa-onnx-offline'} をインストールしました`);
+            } catch (e) {
+              setBannerMessage(String(e));
+            }
+          }}
+          onCheckUpdate={apiCheckAppUpdate}
+          onInstallUpdate={apiInstallAppUpdate}
+          onSetSecret={async (key, val) => {
+            await apiSetSecret(key, val);
+            await refreshAll();
+          }}
+          onExportAll={async () => {
+            const json = isTauriRuntime()
+              ? await apiExportAllData()
+              : JSON.stringify(snapshot, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'koenote-export.json';
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+          onPurgeAll={async () => {
+            if (isTauriRuntime()) {
+              setSnapshot(await apiPurgeAllData());
+            } else {
+              setSnapshot((prev) => ({ ...prev, notes: [], audit_logs: [] }));
+            }
+          }}
+        />
+      </div>
+    </div>
+  ) : null;
+
   if (view === 'editor' && activeNote) {
     return (
-      <NoteEditorView
-        note={activeNote}
-        folders={snapshot.folders}
-        settings={snapshot.settings}
-        recipes={snapshot.recipes}
-        secretStatus={secretStatus}
-        transcribing={transcribing}
-        transcribeError={transcribeError}
-        recordingStatus={recStatus}
-        onStartRecording={handleStartRecordingInNote}
-        onStopRecording={handleStopAndFinish}
-        onUpdateNote={handleUpdateNote}
+      <>
+        <NoteEditorView
+          note={activeNote}
+          folders={snapshot.folders}
+          settings={snapshot.settings}
+          recipes={snapshot.recipes}
+          secretStatus={secretStatus}
+          transcribing={transcribing}
+          transcribeError={transcribeError}
+          recordingStatus={recStatus}
+          liveSegments={liveSegments}
+          onStartRecording={handleStartRecordingInNote}
+          onStopRecording={handleStopAndFinish}
+          onUpdateNote={handleUpdateNote}
+          onSaveFolder={handleSaveFolder}
         onCopyText={async (text) => {
           if (isTauriRuntime()) {
             await apiCopyAndPreparePaste(text);
@@ -508,9 +627,11 @@ export const App: React.FC = () => {
             setSnapshot((prev) => ({ ...prev, dictionary: [...prev.dictionary, entry] }));
           }
         }}
-        onGoSettings={() => setView('integrations')}
+        onGoSettings={() => setSettingsOpen(true)}
         onGoHome={() => setView('home')}
       />
+      {settingsModal}
+    </>
     );
   }
 
@@ -562,21 +683,35 @@ export const App: React.FC = () => {
             type="button"
             aria-label="設定"
             title="設定"
-            className={`btn-icon-circle ${view === 'settings' ? 'active' : ''}`}
-            onClick={() => setView('settings')}
+            className={`btn-icon-circle ${settingsOpen ? 'active' : ''}`}
+            onClick={() => setSettingsOpen(true)}
           >
             <Settings size={18} strokeWidth={1.5} />
           </button>
 
           {!sidebarCollapsed && (
-            <button
-              type="button"
-              className={`btn-sidebar-record ${isRecordingActive ? 'recording' : ''}`}
-              onClick={isRecordingActive ? handleStopAndFinish : handleStartRecording}
-            >
-              {isRecordingActive ? <Square size={15} strokeWidth={1.5} /> : <Mic size={15} strokeWidth={1.5} />}
-              <span>{isRecordingActive ? '停止' : '録音'}</span>
-            </button>
+            <div className={`record-split-group ${isRecordingActive ? 'recording' : ''}`}>
+              <button
+                type="button"
+                className="record-split-btn"
+                onClick={isRecordingActive ? handleStopAndFinish : handleStartRecording}
+              >
+                {isRecordingActive ? <Square size={14} strokeWidth={1.5} /> : <Mic size={14} strokeWidth={1.5} />}
+                <span>{isRecordingActive ? '停止' : '録音'}</span>
+              </button>
+              <select
+                aria-label="録音先のスペース"
+                className="record-split-select"
+                value={recordingSpaceId}
+                onChange={(e) => setRecordingSpaceId(e.target.value)}
+              >
+                {snapshot.folders.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
         </div>
       </aside>
@@ -629,34 +764,60 @@ export const App: React.FC = () => {
         {view === 'home' && (
           <HomeView
             settings={snapshot.settings}
-            models={models}
-            devices={devices}
-            sourceMode={sourceMode}
-            selectedDeviceId={selectedDeviceId}
             notes={snapshot.notes}
-            secretStatus={secretStatus}
-            onChangeSourceMode={setSourceMode}
-            onChangeDevice={setSelectedDeviceId}
-            onStartRecording={handleStartRecording}
+            folders={snapshot.folders}
             onOpenNote={(id) => {
               setActiveNoteId(id);
               setView('editor');
             }}
             onCreateManualNote={handleCreateManualNote}
-            onGoSettings={() => setView('settings')}
+            onSaveFolder={handleSaveFolder}
+            onDeleteFolder={handleDeleteFolder}
+            onChatSpace={apiChatNotes}
+            onGoSettings={() => setSettingsOpen(true)}
           />
         )}
 
         {view === 'chat' && (
           <ChatView
             notes={snapshot.notes}
+            folders={snapshot.folders}
+            chatHistory={snapshot.chat_history || []}
             settings={snapshot.settings}
-            onChatAcrossNotes={apiChatNotes}
+            onChatAcrossNotes={async (ids, q, spaceId) => {
+              const res = await apiChatNotes(ids, q, spaceId);
+              if (isTauriRuntime()) {
+                await refreshAll();
+              } else {
+                setSnapshot((prev) => ({
+                  ...prev,
+                  chat_history: [
+                    {
+                      id: crypto.randomUUID(),
+                      timestamp: new Date().toISOString(),
+                      space_id: spaceId ?? null,
+                      question: q,
+                      answer: res.answer,
+                      citations: res.citations,
+                    },
+                    ...(prev.chat_history || []),
+                  ],
+                }));
+              }
+              return res;
+            }}
+            onClearHistory={async () => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiClearChatHistory());
+              } else {
+                setSnapshot((prev) => ({ ...prev, chat_history: [] }));
+              }
+            }}
             onOpenNote={(id) => {
               setActiveNoteId(id);
               setView('editor');
             }}
-            onGoSettings={() => setView('settings')}
+            onGoSettings={() => setSettingsOpen(true)}
           />
         )}
 
@@ -685,7 +846,7 @@ export const App: React.FC = () => {
             busy={transcribing}
             error={transcribeError}
             onUploadAndTranscribe={handleUploadAndTranscribe}
-            onGoSettings={() => setView('settings')}
+            onGoSettings={() => setSettingsOpen(true)}
           />
         )}
 
@@ -862,66 +1023,8 @@ export const App: React.FC = () => {
           />
         )}
 
-        {view === 'settings' && (
-          <SettingsView
-            settings={snapshot.settings}
-            models={models}
-            secretStatus={secretStatus}
-            downloadProgress={downloadProgress}
-            updateProgress={updateProgress}
-            onSaveSettings={async (next) => {
-              if (isTauriRuntime()) {
-                setSnapshot(await apiSaveSettings(next));
-                await refreshAll();
-              } else {
-                setSnapshot((prev) => ({ ...prev, settings: next }));
-              }
-            }}
-            onDownloadModel={async (modelId) => {
-              try {
-                await apiDownloadAsrModel(modelId);
-                await refreshAll();
-              } catch (e) {
-                setBannerMessage(String(e));
-              }
-            }}
-            onInstallRuntime={async (kind) => {
-              try {
-                await apiInstallAsrRuntime(kind);
-                await refreshAll();
-                setBannerMessage(`${kind === 'whisper' ? 'whisper.cpp' : 'sherpa-onnx-offline'} をインストールしました`);
-              } catch (e) {
-                setBannerMessage(String(e));
-              }
-            }}
-            onCheckUpdate={apiCheckAppUpdate}
-            onInstallUpdate={apiInstallAppUpdate}
-            onSetSecret={async (key, val) => {
-              await apiSetSecret(key, val);
-              await refreshAll();
-            }}
-            onExportAll={async () => {
-              const json = isTauriRuntime()
-                ? await apiExportAllData()
-                : JSON.stringify(snapshot, null, 2);
-              const blob = new Blob([json], { type: 'application/json' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = 'koenote-export.json';
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-            onPurgeAll={async () => {
-              if (isTauriRuntime()) {
-                setSnapshot(await apiPurgeAllData());
-              } else {
-                setSnapshot((prev) => ({ ...prev, notes: [], audit_logs: [] }));
-              }
-            }}
-          />
-        )}
       </main>
+      {settingsModal}
     </div>
   );
 };

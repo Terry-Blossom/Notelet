@@ -38,15 +38,15 @@ fn default_folders() -> Vec<Folder> {
     vec![
         Folder {
             id: "personal".to_string(),
-            name: "個人ノート（ローカル）".to_string(),
+            name: "一般".to_string(),
             is_shared: false,
             permission: "owner".to_string(),
         },
         Folder {
-            id: "team-shared".to_string(),
-            name: "共有フォルダ（設定で共有）".to_string(),
-            is_shared: true,
-            permission: "editor".to_string(),
+            id: "meeting".to_string(),
+            name: "会議".to_string(),
+            is_shared: false,
+            permission: "owner".to_string(),
         },
     ]
 }
@@ -81,6 +81,7 @@ pub fn load_snapshot() -> AppDataSnapshot {
     let path = data_file_path();
     if let Ok(raw) = fs::read_to_string(&path) {
         if let Ok(mut snap) = serde_json::from_str::<AppDataSnapshot>(&raw) {
+            snap.folders.retain(|f| f.id != "team-shared" && !f.is_shared);
             if snap.folders.is_empty() {
                 snap.folders = default_folders();
             }
@@ -97,6 +98,7 @@ pub fn load_snapshot() -> AppDataSnapshot {
         recipes: default_recipes(),
         settings: AppSettings::default(),
         audit_logs: Vec::new(),
+        chat_history: Vec::new(),
     }
 }
 

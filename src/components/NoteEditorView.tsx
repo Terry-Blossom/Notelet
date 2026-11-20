@@ -8,12 +8,9 @@ import {
   ChevronDown,
   ClipboardPaste,
   Copy,
-  FileText,
   Folder as FolderIcon,
-  LayoutGrid,
   Link2,
   List,
-  Lock,
   Menu,
   Mic,
   Pause,
@@ -25,7 +22,6 @@ import {
   Upload,
   UploadCloud,
   Users,
-  Video,
   X,
 } from 'lucide-react';
 import {
@@ -40,7 +36,6 @@ import {
 } from '../types';
 import {
   formatDateTime,
-  formatMonthDay,
   formatNoteForCopy,
   formatNoteTimer,
 } from '../lib/format';
@@ -57,9 +52,11 @@ interface NoteEditorViewProps {
   transcribing: boolean;
   transcribeError: string | null;
   recordingStatus?: RecordingStatus;
+  liveSegments?: TranscriptSegment[];
   onStartRecording?: () => Promise<void> | void;
   onStopRecording?: () => Promise<void> | void;
   onUpdateNote: (note: Note) => void;
+  onSaveFolder?: (folder: Folder) => Promise<void>;
   onCopyText: (text: string, label: string) => Promise<void>;
   onPastePrepare: (text: string) => Promise<void>;
   onSaveToNotion: (noteId: string) => Promise<void>;
@@ -77,15 +74,17 @@ interface NoteEditorViewProps {
 
 export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   note,
-  folders = [{ id: 'personal', name: '個人', is_shared: false, permission: 'owner' }],
+  folders = [{ id: 'personal', name: '一般', is_shared: false, permission: 'owner' }],
   settings,
   secretStatus,
   transcribing,
   transcribeError,
   recordingStatus,
+  liveSegments: externalLiveSegments = [],
   onStartRecording,
   onStopRecording,
   onUpdateNote,
+  onSaveFolder,
   onCopyText,
   onPastePrepare,
   onSaveToNotion,
@@ -98,7 +97,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 }) => {
   // Sidebar & responsive drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selectedNav, setSelectedNav] = useState<'private' | 'personal' | 'note' | 'meeting' | 'video'>('note');
+  const [newSpaceName, setNewSpaceName] = useState('');
+  const [chatScope, setChatScope] = useState<'note' | 'space'>('note');
 
   // Inline title editing with Enter confirm / Esc cancel
   const [titleDraft, setTitleDraft] = useState(note.title);
@@ -110,11 +110,13 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     titleSnapshotRef.current = note.title;
   }, [note.id, note.title]);
 
-  // Tabs
-  const [activeTab, setActiveTab] = useState<'transcript' | 'notes'>('transcript');
+  // Tabs: 3 stages (文字起こし / 要約 / メモ)
+  const [activeTab, setActiveTab] = useState<'transcript' | 'summary' | 'memo'>('transcript');
   const [hasUnreadTranscript, setHasUnreadTranscript] = useState(false);
   const transcriptTabRef = useRef<HTMLButtonElement>(null);
-  const notesTabRef = useRef<HTMLButtonElement>(null);
+  const summaryTabRef = useRef<HTMLButtonElement>(null);
+  const memoTabRef = useRef<HTMLButtonElement>(null);
+  const memoEditorRef = useRef<HTMLDivElement>(null);
 
   // Popovers & dialogs
   const [participantsOpen, setParticipantsOpen] = useState(false);
@@ -131,13 +133,16 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [localProcessing, setLocalProcessing] = useState(false);
   const [localElapsedMs, setLocalElapsedMs] = useState(0);
   const [localRms, setLocalRms] = useState(0);
-  const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
+  const [localFallbackSegments, setLocalFallbackSegments] = useState<TranscriptSegment[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackMs, setPlaybackMs] = useState(0);
 
-  // Notes tab inline editing
-  const [editingManualNotes, setEditingManualNotes] = useState(false);
-  const manualNotesRef = useRef<HTMLTextAreaElement>(null);
+  // Sync rich memo HTML when note switches
+  useEffect(() => {
+    if (memoEditorRef.current && memoEditorRef.current.innerHTML !== note.manual_notes) {
+      memoEditorRef.current.innerHTML = note.manual_notes || '';
+    }
+  }, [note.id]);
 
   // AI / Q&A
   const [aiBusy, setAiBusy] = useState(false);
@@ -162,11 +167,12 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const isProcessing = transcribing || localProcessing;
 
   const displayedSegments = useMemo(() => {
-    if (isRecording && liveSegments.length > 0) {
-      return [...note.segments, ...liveSegments];
+    if (isRecording) {
+      const merged = [...note.segments, ...externalLiveSegments, ...localFallbackSegments];
+      if (merged.length > 0) return merged;
     }
     return note.segments;
-  }, [isRecording, liveSegments, note.segments]);
+  }, [isRecording, externalLiveSegments, localFallbackSegments, note.segments]);
 
   const totalDurationMs = useMemo(() => {
     if (note.duration_sec > 0) return note.duration_sec * 1000;
@@ -228,7 +234,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   useEffect(() => {
     const count = displayedSegments.length;
     if (count > prevSegCountRef.current) {
-      if (activeTab === 'notes' && phase === 'recording') {
+      if (activeTab !== 'transcript' && phase === 'recording') {
         setHasUnreadTranscript(true);
       }
       if (isAtBottom && scrollRef.current) {
@@ -274,7 +280,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
   const beginRecording = async () => {
     setIsPlaying(false);
-    setLiveSegments([]);
+    setLocalFallbackSegments([]);
     setLocalElapsedMs(0);
     setIsAtBottom(true);
 
@@ -306,8 +312,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           ? note.segments[note.segments.length - 1].end_ms + 1000
           : 0;
       const appended: TranscriptSegment[] =
-        liveSegments.length > 0
-          ? liveSegments
+        localFallbackSegments.length > 0
+          ? localFallbackSegments
           : [
               {
                 id: crypto.randomUUID(),
@@ -324,7 +330,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         segments: [...note.segments, ...appended],
         updated_at: new Date().toISOString(),
       });
-      setLiveSegments([]);
+      setLocalFallbackSegments([]);
       setLocalProcessing(false);
     }, 600);
   };
@@ -339,26 +345,26 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     }
   };
 
-  const handleTabKeyDown = (e: React.KeyboardEvent, current: 'transcript' | 'notes') => {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+  const handleTabKeyDown = (e: React.KeyboardEvent, current: 'transcript' | 'summary' | 'memo') => {
+    const order: ('transcript' | 'summary' | 'memo')[] = ['transcript', 'summary', 'memo'];
+    const idx = order.indexOf(current);
+    let next: 'transcript' | 'summary' | 'memo' | null = null;
+    if (e.key === 'ArrowRight') next = order[(idx + 1) % order.length];
+    else if (e.key === 'ArrowLeft') next = order[(idx + order.length - 1) % order.length];
+    else if (e.key === 'Home') next = 'transcript';
+    else if (e.key === 'End') next = 'memo';
+
+    if (next) {
       e.preventDefault();
-      const next = current === 'transcript' ? 'notes' : 'transcript';
       setActiveTab(next);
       if (next === 'transcript') {
         setHasUnreadTranscript(false);
         transcriptTabRef.current?.focus();
+      } else if (next === 'summary') {
+        summaryTabRef.current?.focus();
       } else {
-        notesTabRef.current?.focus();
+        memoTabRef.current?.focus();
       }
-    } else if (e.key === 'Home') {
-      e.preventDefault();
-      setActiveTab('transcript');
-      setHasUnreadTranscript(false);
-      transcriptTabRef.current?.focus();
-    } else if (e.key === 'End') {
-      e.preventDefault();
-      setActiveTab('notes');
-      notesTabRef.current?.focus();
     }
   };
 
@@ -397,7 +403,12 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     setAiBusy(true);
     setAiError(null);
     try {
-      const res = await onChatNote([note.id], q);
+      const ids = chatScope === 'note' ? [note.id] : [];
+      const res = await (onChatNote as (noteIds: string[], question: string, spaceId?: string | null) => Promise<ChatAnswer>)(
+        ids,
+        q,
+        chatScope === 'space' ? note.folder_id : null
+      );
       setQaAnswer(res);
       setQuestion('');
     } catch (err) {
@@ -459,12 +470,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       ? Math.min(1, playbackMs / totalDurationMs)
       : 0;
 
-  const hasNotesContent =
-    Boolean(note.summary.trim()) ||
-    Boolean(note.manual_notes.trim()) ||
-    note.decisions.length > 0 ||
-    note.action_items.length > 0;
-
   return (
     <div className="note-shell">
       {/* Mobile drawer backdrop */}
@@ -474,85 +479,72 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         aria-hidden="true"
       />
 
-      {/* Sidebar (272px) */}
+      {/* Sidebar (272px): Spaces */}
       <aside
         className={`note-sidebar ${drawerOpen ? 'drawer-open' : ''}`}
-        aria-label="テンプレートとアクション"
+        aria-label="スペース"
       >
         <div className="note-sidebar-heading">
-          <LayoutGrid size={16} strokeWidth={1.75} aria-hidden="true" />
-          <span className="note-sidebar-heading-text">テンプレートとアクション</span>
+          <FolderIcon size={16} strokeWidth={1.75} aria-hidden="true" />
+          <span className="note-sidebar-heading-text">スペース</span>
         </div>
 
-        <nav className="note-sidebar-list" aria-label="ノート階層">
-          <button
-            type="button"
-            className={`note-sidebar-item ${selectedNav === 'private' ? 'selected' : ''}`}
-            onClick={() => {
-              setSelectedNav('private');
-              setDrawerOpen(false);
-            }}
-            title="プライベート"
-          >
-            <Lock size={18} strokeWidth={1.75} aria-hidden="true" />
-            <span className="note-sidebar-item-label">プライベート</span>
-          </button>
-
-          <button
-            type="button"
-            className={`note-sidebar-item ${selectedNav === 'personal' ? 'selected' : ''}`}
-            onClick={() => {
-              setSelectedNav('personal');
-              setDrawerOpen(false);
-            }}
-            title="個人"
-          >
-            <FolderIcon size={18} strokeWidth={1.75} aria-hidden="true" />
-            <span className="note-sidebar-item-label">個人</span>
-          </button>
-
-          <button
-            type="button"
-            className={`note-sidebar-item indent ${selectedNav === 'note' ? 'selected' : ''}`}
-            onClick={() => {
-              setSelectedNav('note');
-              setDrawerOpen(false);
-            }}
-            aria-current="page"
-            title={note.title.trim() || '無題のノート'}
-          >
-            <FileText size={18} strokeWidth={1.75} aria-hidden="true" />
-            <span className="note-sidebar-item-label">
-              {note.title.trim() || '無題のノート'}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className={`note-sidebar-item ${selectedNav === 'meeting' ? 'selected' : ''}`}
-            onClick={() => {
-              setSelectedNav('meeting');
-              setDrawerOpen(false);
-            }}
-            title="ミーティング"
-          >
-            <Users size={18} strokeWidth={1.75} aria-hidden="true" />
-            <span className="note-sidebar-item-label">ミーティング</span>
-          </button>
-
-          <button
-            type="button"
-            className={`note-sidebar-item ${selectedNav === 'video' ? 'selected' : ''}`}
-            onClick={() => {
-              setSelectedNav('video');
-              setDrawerOpen(false);
-            }}
-            title="ビデオ"
-          >
-            <Video size={18} strokeWidth={1.75} aria-hidden="true" />
-            <span className="note-sidebar-item-label">ビデオ</span>
-          </button>
+        <nav className="note-sidebar-list" aria-label="スペース一覧">
+          {folders.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              className={`note-sidebar-item ${note.folder_id === f.id ? 'selected' : ''}`}
+              onClick={() => {
+                onUpdateNote({
+                  ...note,
+                  folder_id: f.id,
+                  updated_at: new Date().toISOString(),
+                });
+                setDrawerOpen(false);
+              }}
+              title={f.name}
+            >
+              <FolderIcon size={18} strokeWidth={1.75} aria-hidden="true" />
+              <span className="note-sidebar-item-label">{f.name}</span>
+            </button>
+          ))}
         </nav>
+
+        {onSaveFolder && (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newSpaceName.trim()) return;
+              const newFolder: Folder = {
+                id: crypto.randomUUID(),
+                name: newSpaceName.trim(),
+                is_shared: false,
+                permission: 'owner',
+              };
+              await onSaveFolder(newFolder);
+              onUpdateNote({
+                ...note,
+                folder_id: newFolder.id,
+                updated_at: new Date().toISOString(),
+              });
+              setNewSpaceName('');
+            }}
+            style={{ display: 'flex', gap: '8px', padding: '8px 4px' }}
+          >
+            <input
+              type="text"
+              className="input"
+              style={{ height: '32px' }}
+              placeholder="スペースを作成"
+              value={newSpaceName}
+              onChange={(e) => setNewSpaceName(e.target.value)}
+            />
+            <button type="submit" className="btn btn-secondary" style={{ height: '32px', padding: '0 8px' }} disabled={!newSpaceName.trim()}>
+              <Plus size={14} strokeWidth={1.75} />
+            </button>
+          </form>
+        )}
 
         {onGoHome && (
           <div className="note-sidebar-footer">
@@ -624,10 +616,31 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
           {/* Metadata Pills */}
           <div className="note-meta-pills">
-            <span className="note-meta-pill" style={{ cursor: 'default' }}>
+            <label className="note-meta-pill" style={{ cursor: 'pointer' }} title="日付を変更">
               <Calendar size={15} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
-              <span>{formatMonthDay(note.created_at)}</span>
-            </span>
+              <input
+                type="date"
+                aria-label="ノートの日付"
+                value={note.created_at ? note.created_at.slice(0, 10) : ''}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  const timePart = note.created_at.slice(10) || 'T00:00:00.000Z';
+                  onUpdateNote({
+                    ...note,
+                    created_at: `${e.target.value}${timePart}`,
+                    updated_at: new Date().toISOString(),
+                  });
+                }}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  fontSize: 'inherit',
+                  color: 'inherit',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              />
+            </label>
 
             <div className="note-meta-pill-wrap">
               <button
@@ -762,16 +775,29 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             </button>
 
             <button
-              ref={notesTabRef}
+              ref={summaryTabRef}
               type="button"
               role="tab"
-              aria-selected={activeTab === 'notes'}
-              className={`note-tab ${activeTab === 'notes' ? 'active' : ''}`}
-              onClick={() => setActiveTab('notes')}
-              onKeyDown={(e) => handleTabKeyDown(e, 'notes')}
+              aria-selected={activeTab === 'summary'}
+              className={`note-tab ${activeTab === 'summary' ? 'active' : ''}`}
+              onClick={() => setActiveTab('summary')}
+              onKeyDown={(e) => handleTabKeyDown(e, 'summary')}
+            >
+              <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
+              <span>要約</span>
+            </button>
+
+            <button
+              ref={memoTabRef}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'memo'}
+              className={`note-tab ${activeTab === 'memo' ? 'active' : ''}`}
+              onClick={() => setActiveTab('memo')}
+              onKeyDown={(e) => handleTabKeyDown(e, 'memo')}
             >
               <List size={15} strokeWidth={1.75} aria-hidden="true" />
-              <span>あなたのノート</span>
+              <span>メモ</span>
             </button>
           </div>
 
@@ -1010,113 +1036,59 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               </div>
             )}
 
-            {activeTab === 'notes' && (
+            {activeTab === 'summary' && (
               <div className="note-notes-tab">
-                {!hasNotesContent && !editingManualNotes ? (
-                  <div className="note-empty-state" style={{ flexDirection: 'column', gap: '8px' }}>
-                    <span>メモはまだありません</span>
-                    <button
-                      type="button"
-                      className="note-inline-link"
-                      onClick={() => {
-                        setEditingManualNotes(true);
-                        setTimeout(() => manualNotesRef.current?.focus(), 0);
-                      }}
-                    >
-                      メモを追記
-                    </button>
+                <section className="note-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h2 className="note-card-title">要約</h2>
+                    {llmConfigured && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ height: '30px', fontSize: '12px' }}
+                        disabled={aiBusy}
+                        onClick={async () => {
+                          setAiBusy(true);
+                          setAiError(null);
+                          try {
+                            await onSummarize(note.id);
+                          } catch (err) {
+                            setAiError(String(err));
+                          } finally {
+                            setAiBusy(false);
+                          }
+                        }}
+                      >
+                        <Sparkles size={13} strokeWidth={1.75} />
+                        {aiBusy ? '生成中' : '要約を生成'}
+                      </button>
+                    )}
                   </div>
-                ) : (
-                  <>
-                    {(note.summary.trim() || llmConfigured) && (
-                      <section className="note-card">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <h2 className="note-card-title">要約</h2>
-                          {llmConfigured && (
-                            <button
-                              type="button"
-                              className="btn btn-secondary"
-                              style={{ height: '30px', fontSize: '12px' }}
-                              disabled={aiBusy}
-                              onClick={async () => {
-                                setAiBusy(true);
-                                setAiError(null);
-                                try {
-                                  await onSummarize(note.id);
-                                } catch (err) {
-                                  setAiError(String(err));
-                                } finally {
-                                  setAiBusy(false);
-                                }
-                              }}
-                            >
-                              <Sparkles size={13} strokeWidth={1.75} />
-                              {aiBusy ? '生成中' : '要約を生成'}
-                            </button>
-                          )}
-                        </div>
-                        {note.summary.trim() ? (
-                          <p style={{ margin: 0, fontSize: '15px', lineHeight: '26px' }}>
-                            {note.summary}
-                          </p>
-                        ) : (
-                          <p style={{ margin: 0, fontSize: '13px', color: 'var(--ns-text-muted)' }}>
-                            要約はまだ生成されていません。
-                          </p>
-                        )}
-                      </section>
-                    )}
+                  <textarea
+                    aria-label="要約内容"
+                    className="textarea"
+                    style={{ minHeight: '160px' }}
+                    value={note.summary}
+                    onChange={(e) =>
+                      onUpdateNote({
+                        ...note,
+                        summary: e.target.value,
+                        updated_at: new Date().toISOString(),
+                      })
+                    }
+                    placeholder="要約はまだ生成されていません（下のボタンまたは右上から生成できます）"
+                  />
+                </section>
 
-                    {(note.decisions.length > 0 || note.action_items.length > 0) && (
-                      <section className="note-card">
-                        <h2 className="note-card-title">メモ・アクション</h2>
-                        <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '15px', lineHeight: '26px' }}>
-                          {note.decisions.map((d, i) => (
-                            <li key={`d-${i}`}>{d}</li>
-                          ))}
-                          {note.action_items.map((a) => (
-                            <li key={a.id}>
-                              {a.text}
-                              {a.assignee ? `（${a.assignee}）` : ''}
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
-                    )}
-
-                    <section className="note-card">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h2 className="note-card-title">手入力メモ</h2>
-                        {!editingManualNotes && (
-                          <button
-                            type="button"
-                            className="note-inline-link"
-                            onClick={() => {
-                              setEditingManualNotes(true);
-                              setTimeout(() => manualNotesRef.current?.focus(), 0);
-                            }}
-                          >
-                            <Plus size={13} style={{ verticalAlign: 'middle', marginRight: '2px' }} />
-                            編集
-                          </button>
-                        )}
-                      </div>
-                      <textarea
-                        ref={manualNotesRef}
-                        aria-label="手入力メモ"
-                        className="textarea"
-                        value={note.manual_notes}
-                        onChange={(e) =>
-                          onUpdateNote({
-                            ...note,
-                            manual_notes: e.target.value,
-                            updated_at: new Date().toISOString(),
-                          })
-                        }
-                        placeholder="メモを入力..."
-                      />
-                    </section>
-                  </>
+                {note.decisions.length > 0 && (
+                  <section className="note-card">
+                    <h2 className="note-card-title">決定事項</h2>
+                    <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '15px', lineHeight: '26px' }}>
+                      {note.decisions.map((d, i) => (
+                        <li key={`d-${i}`}>{d}</li>
+                      ))}
+                    </ul>
+                  </section>
                 )}
 
                 {!llmConfigured && (
@@ -1139,6 +1111,91 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 {aiError && (
                   <div style={{ fontSize: '13px', color: 'var(--danger)' }}>{aiError}</div>
                 )}
+              </div>
+            )}
+
+            {activeTab === 'memo' && (
+              <div className="note-notes-tab">
+                <section className="note-card" style={{ padding: 0, overflow: 'hidden' }}>
+                  <div className="rich-memo-toolbar" role="toolbar" aria-label="メモ書式ツールバー">
+                    <button
+                      type="button"
+                      className="rich-memo-tool-btn"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        document.execCommand('formatBlock', false, 'h1');
+                      }}
+                    >
+                      H1
+                    </button>
+                    <button
+                      type="button"
+                      className="rich-memo-tool-btn"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        document.execCommand('formatBlock', false, 'h2');
+                      }}
+                    >
+                      H2
+                    </button>
+                    <button
+                      type="button"
+                      className="rich-memo-tool-btn"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        document.execCommand('formatBlock', false, 'h3');
+                      }}
+                    >
+                      H3
+                    </button>
+                    <button
+                      type="button"
+                      className="rich-memo-tool-btn"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        document.execCommand('bold');
+                      }}
+                    >
+                      <strong>太字</strong>
+                    </button>
+                    <button
+                      type="button"
+                      className="rich-memo-tool-btn"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        document.execCommand('underline');
+                      }}
+                    >
+                      <u>下線</u>
+                    </button>
+                    <button
+                      type="button"
+                      className="rich-memo-tool-btn"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        document.execCommand('insertUnorderedList');
+                      }}
+                    >
+                      箇条書き
+                    </button>
+                  </div>
+                  <div
+                    ref={memoEditorRef}
+                    role="textbox"
+                    aria-label="自由メモ帳"
+                    aria-multiline="true"
+                    contentEditable
+                    suppressContentEditableWarning
+                    className="rich-memo-editor"
+                    onInput={(e) => {
+                      onUpdateNote({
+                        ...note,
+                        manual_notes: e.currentTarget.innerHTML,
+                        updated_at: new Date().toISOString(),
+                      });
+                    }}
+                  />
+                </section>
               </div>
             )}
           </div>
@@ -1172,8 +1229,48 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           </div>
         )}
 
-        {/* Bottom Question Input + Consent Notice */}
+        {/* Bottom Question Input + Generate Summary Button (when summary empty) */}
         <div className="note-composer-wrap">
+          {!note.summary.trim() && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={!llmConfigured || aiBusy}
+                onClick={async () => {
+                  setAiBusy(true);
+                  setAiError(null);
+                  try {
+                    await onSummarize(note.id);
+                    setActiveTab('summary');
+                  } catch (err) {
+                    setAiError(String(err));
+                  } finally {
+                    setAiBusy(false);
+                  }
+                }}
+              >
+                <Sparkles size={14} strokeWidth={1.75} />
+                {aiBusy ? '要約を生成中...' : '要約を生成'}
+              </button>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  type="button"
+                  className={`tab-btn ${chatScope === 'note' ? 'active' : ''}`}
+                  onClick={() => setChatScope('note')}
+                >
+                  このノート
+                </button>
+                <button
+                  type="button"
+                  className={`tab-btn ${chatScope === 'space' ? 'active' : ''}`}
+                  onClick={() => setChatScope('space')}
+                >
+                  {activeFolder.name}全体
+                </button>
+              </div>
+            </div>
+          )}
           <div className="note-composer-box">
             <textarea
               aria-label="ノートについて何でも質問"

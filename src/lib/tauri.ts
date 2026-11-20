@@ -7,6 +7,7 @@ import {
   AudioSourceMode,
   ChatAnswer,
   DictionaryEntry,
+  Folder,
   IntegrationAdapterInfo,
   Note,
   NotionTarget,
@@ -46,6 +47,18 @@ export async function apiDeleteDictionaryEntry(entryId: string): Promise<AppData
 
 export async function apiSaveRecipe(recipe: Recipe): Promise<AppDataSnapshot> {
   return invoke<AppDataSnapshot>('save_recipe', { recipe });
+}
+
+export async function apiSaveFolder(folder: Folder): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>('save_folder', { folder });
+}
+
+export async function apiDeleteFolder(folderId: string): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>('delete_folder', { folderId });
+}
+
+export async function apiClearChatHistory(): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>('clear_chat_history');
 }
 
 export async function apiListAudioDevices(): Promise<AudioDeviceInfo[]> {
@@ -111,8 +124,12 @@ export async function apiRunRecipe(noteId: string, recipePrompt: string): Promis
   return invoke<string>('run_recipe_cmd', { noteId, recipePrompt });
 }
 
-export async function apiChatNotes(noteIds: string[], question: string): Promise<ChatAnswer> {
-  return invoke<ChatAnswer>('chat_notes_cmd', { noteIds, question });
+export async function apiChatNotes(
+  noteIds: string[],
+  question: string,
+  spaceId?: string | null
+): Promise<ChatAnswer> {
+  return invoke<ChatAnswer>('chat_notes_cmd', { noteIds, question, spaceId: spaceId ?? null });
 }
 
 export async function apiSetSecret(key: string, value: string): Promise<void> {

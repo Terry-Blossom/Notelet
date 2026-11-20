@@ -81,7 +81,7 @@ describe('App & Views', () => {
     expect(screen.getByRole('button', { name: '設定' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '録音' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '空のノートを作成' }));
+    fireEvent.click(screen.getByRole('button', { name: '新規ノート' }));
     expect(screen.getByLabelText('ノートタイトル')).toBeInTheDocument();
   });
 
@@ -144,8 +144,10 @@ describe('App & Views', () => {
     // Switch to あなたのノート tab via keyboard
     const transcriptTab = screen.getByRole('tab', { name: '文字起こし' });
     fireEvent.keyDown(transcriptTab, { key: 'ArrowRight' });
-    expect(screen.getByText('メモはまだありません')).toBeInTheDocument();
+    expect(screen.getByLabelText('要約内容')).toBeInTheDocument();
     expect(screen.getByText('LLMが未設定です')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('tab', { name: '要約' }), { key: 'ArrowRight' });
+    expect(screen.getByRole('textbox', { name: '自由メモ帳' })).toBeInTheDocument();
 
     // Open share popover and Notion preview
     fireEvent.click(screen.getByRole('button', { name: '共有' }));

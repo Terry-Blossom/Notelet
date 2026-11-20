@@ -11,7 +11,8 @@ mod updater;
 use audio::AudioManager;
 use models::{
     AppDataSnapshot, AppSettings, AsrModelInfo, AudioDeviceInfo, AudioSourceMode, ChatAnswer,
-    DictionaryEntry, IntegrationAdapterInfo, Note, Recipe, RecordingStatus,
+    ChatHistoryItem, DictionaryEntry, Folder, IntegrationAdapterInfo, Note, Recipe,
+    RecordingStatus,
 };
 use notion::NotionTarget;
 use std::sync::Mutex;
@@ -110,6 +111,46 @@ fn save_recipe(state: State<AppState>, recipe: Recipe) -> Result<AppDataSnapshot
 }
 
 #[tauri::command]
+fn save_folder(state: State<AppState>, folder: Folder) -> Result<AppDataSnapshot, String> {
+    let mut data = state.data.lock().unwrap();
+    let clean = Folder {
+        is_shared: false,
+        ..folder
+    };
+    if let Some(existing) = data.folders.iter_mut().find(|f| f.id == clean.id) {
+        *existing = clean;
+    } else {
+        data.folders.push(clean);
+    }
+    storage::save_snapshot(&data)?;
+    Ok(data.clone())
+}
+
+#[tauri::command]
+fn delete_folder(state: State<AppState>, folder_id: String) -> Result<AppDataSnapshot, String> {
+    let mut data = state.data.lock().unwrap();
+    if folder_id == "personal" {
+        return Err("既定のスペースは削除できません。".to_string());
+    }
+    data.folders.retain(|f| f.id != folder_id);
+    for note in data.notes.iter_mut() {
+        if note.folder_id == folder_id {
+            note.folder_id = "personal".to_string();
+        }
+    }
+    storage::save_snapshot(&data)?;
+    Ok(data.clone())
+}
+
+#[tauri::command]
+fn clear_chat_history(state: State<AppState>) -> Result<AppDataSnapshot, String> {
+    let mut data = state.data.lock().unwrap();
+    data.chat_history.clear();
+    storage::save_snapshot(&data)?;
+    Ok(data.clone())
+}
+
+#[tauri::command]
 fn list_audio_devices() -> Vec<AudioDeviceInfo> {
     AudioManager::list_devices()
 }
@@ -129,7 +170,7 @@ fn start_recording(
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(600)).await;
             let st_ref = app_handle.state::<AppState>();
             let rec_state = {
                 let audio = st_ref.audio.lock().unwrap();
@@ -143,7 +184,7 @@ fn start_recording(
             }
             let chunk_opt = {
                 let audio = st_ref.audio.lock().unwrap();
-                audio.take_live_chunk(48_000)
+                audio.take_live_chunk(32_000)
             };
             if let Some((chunk_path, elapsed_ms)) = chunk_opt {
                 let (settings, dictionary) = {
@@ -159,7 +200,7 @@ fn start_recording(
                 .await;
                 if let Ok(Ok(text)) = res {
                     if !text.is_empty() {
-                        let start_ms = elapsed_ms.saturating_sub(3000);
+                        let start_ms = elapsed_ms.saturating_sub(2000);
                         let seg = models::TranscriptSegment {
                             id: uuid::Uuid::new_v4().to_string(),
                             start_ms,
@@ -363,21 +404,45 @@ async fn chat_notes_cmd(
     state: State<'_, AppState>,
     note_ids: Vec<String>,
     question: String,
+    space_id: Option<String>,
 ) -> Result<ChatAnswer, String> {
     let (settings, notes) = {
         let data = state.data.lock().unwrap();
-        let filtered: Vec<Note> = if note_ids.is_empty() {
-            data.notes.clone()
-        } else {
+        let filtered: Vec<Note> = if !note_ids.is_empty() {
             data.notes
                 .iter()
                 .filter(|n| note_ids.contains(&n.id))
                 .cloned()
                 .collect()
+        } else if let Some(ref sid) = space_id {
+            data.notes
+                .iter()
+                .filter(|n| &n.folder_id == sid)
+                .cloned()
+                .collect()
+        } else {
+            data.notes.clone()
         };
         (data.settings.clone(), filtered)
     };
-    llm::chat_with_notes(&settings, &notes, &question).await
+    let ans = llm::chat_with_notes(&settings, &notes, &question).await?;
+    let mut data = state.data.lock().unwrap();
+    data.chat_history.insert(
+        0,
+        ChatHistoryItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            space_id,
+            question,
+            answer: ans.answer.clone(),
+            citations: ans.citations.clone(),
+        },
+    );
+    if data.chat_history.len() > 200 {
+        data.chat_history.truncate(200);
+    }
+    let _ = storage::save_snapshot(&data);
+    Ok(ans)
 }
 
 #[tauri::command]
@@ -584,6 +649,9 @@ pub fn run() {
             save_dictionary_entry,
             delete_dictionary_entry,
             save_recipe,
+            save_folder,
+            delete_folder,
+            clear_chat_history,
             list_audio_devices,
             start_recording,
             pause_recording,

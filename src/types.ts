@@ -188,6 +188,15 @@ export interface ChatAnswer {
   citations: ChatCitation[];
 }
 
+export interface ChatHistoryItem {
+  id: string;
+  timestamp: string;
+  space_id?: string | null;
+  question: string;
+  answer: string;
+  citations: ChatCitation[];
+}
+
 export interface AppDataSnapshot {
   notes: Note[];
   folders: Folder[];
@@ -195,6 +204,7 @@ export interface AppDataSnapshot {
   recipes: Recipe[];
   settings: AppSettings;
   audit_logs: AuditEvent[];
+  chat_history?: ChatHistoryItem[];
 }
 
 export interface NotionTarget {

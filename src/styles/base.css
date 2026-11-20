@@ -203,6 +203,163 @@ button:disabled {
   transform: scale(0.98);
 }
 
+.record-split-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background-color: var(--text-primary);
+  color: var(--text-inverse);
+  overflow: hidden;
+  height: 40px;
+}
+
+.record-split-group.recording {
+  background-color: var(--danger);
+}
+
+.record-split-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 12px;
+  color: var(--text-inverse);
+  font-weight: 600;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.record-split-btn:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.record-split-select {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+  background: transparent;
+  color: var(--text-inverse);
+  font-size: 12px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.record-split-select option {
+  color: var(--text-primary);
+  background-color: var(--bg-canvas);
+}
+
+/* Settings Modal with Mosaic Backdrop */
+.settings-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-4);
+  background-color: rgba(17, 17, 17, 0.28);
+  backdrop-filter: blur(10px) saturate(115%);
+  -webkit-backdrop-filter: blur(10px) saturate(115%);
+}
+
+.settings-modal-panel {
+  width: 100%;
+  max-width: 920px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  position: relative;
+}
+
+/* Rich Memo Editor */
+.rich-memo-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border-default);
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background-color: var(--bg-subtle);
+}
+
+.rich-memo-tool-btn {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.rich-memo-tool-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.rich-memo-editor {
+  min-height: 240px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background-color: var(--bg-canvas);
+  line-height: 1.75;
+  outline: none;
+}
+
+.rich-memo-editor:focus {
+  border-color: var(--accent);
+}
+
+/* Home Calendar */
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-day {
+  height: 36px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  position: relative;
+  color: var(--text-primary);
+}
+
+.calendar-day:hover {
+  background-color: var(--bg-hover);
+}
+
+.calendar-day.selected {
+  background-color: var(--accent);
+  color: var(--text-inverse);
+  font-weight: 600;
+}
+
+.calendar-day-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  margin-top: 2px;
+}
+
+.calendar-day.selected .calendar-day-dot {
+  background-color: var(--text-inverse);
+}
+
 .main-area {
   flex: 1;
   min-width: 0;

@@ -295,6 +295,16 @@ pub struct ChatAnswer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatHistoryItem {
+    pub id: String,
+    pub timestamp: String,
+    pub space_id: Option<String>,
+    pub question: String,
+    pub answer: String,
+    pub citations: Vec<ChatCitation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppDataSnapshot {
     pub notes: Vec<Note>,
     pub folders: Vec<Folder>,
@@ -302,4 +312,6 @@ pub struct AppDataSnapshot {
     pub recipes: Vec<Recipe>,
     pub settings: AppSettings,
     pub audit_logs: Vec<AuditEvent>,
+    #[serde(default)]
+    pub chat_history: Vec<ChatHistoryItem>,
 }

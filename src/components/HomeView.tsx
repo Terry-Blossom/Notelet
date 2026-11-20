@@ -1,192 +1,319 @@
-import React from 'react';
-import { Mic, Monitor, Layers, FileAudio, ArrowRight, AlertCircle, CheckCircle2 } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
 import {
-  AppSettings,
-  AsrModelInfo,
-  AudioDeviceInfo,
-  AudioSourceMode,
-  Note,
-  SecretStatus,
-} from '../types';
+  Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
+  Folder as FolderIcon,
+  MessageSquare,
+  Plus,
+  Search,
+  Trash2,
+} from 'lucide-react';
+import { AppSettings, ChatAnswer, Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
 import { NotionSyncBadge } from './NotionSyncBadge';
 
 interface HomeViewProps {
   settings: AppSettings;
-  models: AsrModelInfo[];
-  devices: AudioDeviceInfo[];
-  sourceMode: AudioSourceMode;
-  selectedDeviceId: string;
   notes: Note[];
-  secretStatus: SecretStatus | null;
-  onChangeSourceMode: (mode: AudioSourceMode) => void;
-  onChangeDevice: (deviceId: string) => void;
-  onStartRecording: () => void;
+  folders: Folder[];
   onOpenNote: (noteId: string) => void;
-  onCreateManualNote: () => void;
+  onCreateManualNote: (folderId?: string) => void;
+  onSaveFolder: (folder: Folder) => Promise<void>;
+  onDeleteFolder: (folderId: string) => Promise<void>;
+  onChatSpace: (noteIds: string[], question: string, spaceId?: string | null) => Promise<ChatAnswer>;
   onGoSettings: () => void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
   settings,
-  models,
-  devices,
-  sourceMode,
-  selectedDeviceId,
   notes,
-  secretStatus,
-  onChangeSourceMode,
-  onChangeDevice,
-  onStartRecording,
+  folders,
   onOpenNote,
   onCreateManualNote,
+  onSaveFolder,
+  onDeleteFolder,
+  onChatSpace,
   onGoSettings,
 }) => {
-  const activeModel = models.find((m) => m.id === settings.active_asr_model_id);
-  const filteredDevices = devices.filter((d) =>
-    sourceMode === 'system' ? d.kind === 'loopback' : d.kind === 'input'
+  const now = new Date();
+  const [calYear, setCalYear] = useState(now.getFullYear());
+  const [calMonth, setCalMonth] = useState(now.getMonth());
+  const [selectedDateKey, setSelectedDateKey] = useState<string>(
+    now.toISOString().slice(0, 10)
   );
-  const notionConnected = Boolean(secretStatus?.notion_access_token);
-  const recentNotes = notes.slice(0, 6);
+  const [selectedSpaceId, setSelectedSpaceId] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [newSpaceName, setNewSpaceName] = useState('');
+
+  const [chatQuestion, setChatQuestion] = useState('');
+  const [chatAnswer, setChatAnswer] = useState<ChatAnswer | null>(null);
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+
+  const llmConfigured = settings.llm_provider !== 'none' && settings.llm_provider !== '';
+
+  const noteDates = useMemo(() => {
+    const map = new Set<string>();
+    for (const n of notes) {
+      if (n.created_at) map.add(n.created_at.slice(0, 10));
+    }
+    return map;
+  }, [notes]);
+
+  const calendarCells = useMemo(() => {
+    const firstDay = new Date(calYear, calMonth, 1).getDay();
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const cells: (number | null)[] = [];
+    for (let i = 0; i < firstDay; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    return cells;
+  }, [calYear, calMonth]);
+
+  const filteredNotes = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return notes.filter((n) => {
+      if (selectedSpaceId !== 'all' && n.folder_id !== selectedSpaceId) return false;
+      if (q) {
+        const hay = [
+          n.title,
+          n.summary,
+          n.manual_notes,
+          ...n.segments.map((s) => s.text),
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      } else if (selectedDateKey) {
+        if (!n.created_at.startsWith(selectedDateKey)) return false;
+      }
+      return true;
+    });
+  }, [notes, selectedSpaceId, searchQuery, selectedDateKey]);
+
+  const handleAddSpace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSpaceName.trim()) return;
+    await onSaveFolder({
+      id: crypto.randomUUID(),
+      name: newSpaceName.trim(),
+      is_shared: false,
+      permission: 'owner',
+    });
+    setNewSpaceName('');
+  };
+
+  const handleChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatQuestion.trim()) return;
+    setChatBusy(true);
+    setChatError(null);
+    try {
+      const targetSpace = selectedSpaceId === 'all' ? null : selectedSpaceId;
+      const targetIds = notes
+        .filter((n) => !targetSpace || n.folder_id === targetSpace)
+        .map((n) => n.id);
+      const res = await onChatSpace(targetIds, chatQuestion, targetSpace);
+      setChatAnswer(res);
+    } catch (err) {
+      setChatError(String(err));
+    } finally {
+      setChatBusy(false);
+    }
+  };
 
   return (
     <div className="page-container">
+      {/* Header + Search */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-        <div>
-          <h1 className="page-title">録音と文字起こし</h1>
-          <p className="text-secondary" style={{ margin: '4px 0 0' }}>
-            録音ボタンを押して話し、文字起こしを整えて貼り付けや Notion へ保存します
-          </p>
-        </div>
-        <button type="button" className="btn btn-secondary" onClick={onCreateManualNote}>
-          空のノートを作成
-        </button>
-      </div>
-
-      {/* Main Recording Card */}
-      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="btn btn-record"
-              onClick={onStartRecording}
-            >
-              <Mic size={18} strokeWidth={1.5} />
-              録音を開始
-            </button>
-            <span className="kbd-cap">{settings.record_shortcut}</span>
+        <h1 className="page-title">ホーム</h1>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flex: 1, maxWidth: '520px' }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <Search size={15} strokeWidth={1.5} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-muted)' }} />
+            <input
+              type="search"
+              className="input"
+              style={{ paddingLeft: '32px' }}
+              placeholder="ノートを検索（空欄時は選択日のノートを表示）"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span className={`status-chip ${activeModel?.is_compatible && activeModel?.installed ? 'ok' : 'warn'}`}>
-              <span className="status-dot" />
-              {activeModel ? activeModel.name : 'ASRモデル未選択'}
-            </span>
-            <span className={`status-chip ${notionConnected ? 'ok' : ''}`}>
-              <span className="status-dot" />
-              {notionConnected ? 'Notion 接続済み' : 'Notion 未接続'}
-            </span>
-          </div>
-        </div>
-
-        {/* Input Source & Device */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
-          <div>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
-              録音入力
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {(
-                [
-                  { id: 'mic', label: 'マイク', icon: Mic },
-                  { id: 'system', label: 'システム音声', icon: Monitor },
-                  { id: 'both', label: '両方', icon: Layers },
-                ] as const
-              ).map((item) => {
-                const Icon = item.icon;
-                const active = sourceMode === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`btn ${active ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{ flex: 1 }}
-                    onClick={() => onChangeSourceMode(item.id)}
-                  >
-                    <Icon size={16} strokeWidth={1.5} />
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div>
-            <label
-              htmlFor="audio-device-select"
-              style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}
-            >
-              入力デバイス
-            </label>
-            <select
-              id="audio-device-select"
-              className="select"
-              value={selectedDeviceId}
-              onChange={(e) => onChangeDevice(e.target.value)}
-            >
-              <option value="">OSの既定デバイスを使用</option>
-              {filteredDevices.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}{d.is_default ? '（既定）' : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Honest Model & Compliance Status */}
-        <div
-          className="surface-subtle"
-          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)' }}>
-            {activeModel && activeModel.is_compatible && activeModel.installed ? (
-              <CheckCircle2 size={16} strokeWidth={1.5} color="var(--success)" />
-            ) : (
-              <AlertCircle size={16} strokeWidth={1.5} color="var(--warning)" />
-            )}
-            <span>
-              {activeModel
-                ? activeModel.compatibility_reason
-                  ? activeModel.compatibility_reason
-                  : !activeModel.installed
-                    ? `${activeModel.name} は未ダウンロードです（録音と保存は可能、文字起こし前に設定から取得できます）`
-                    : activeModel.data_handling
-                : 'モデル未設定でも録音・メモ・コピーは利用できます'}
-            </span>
-          </div>
-          <button type="button" className="btn btn-ghost" onClick={onGoSettings}>
-            モデルと連携を設定
-            <ArrowRight size={14} strokeWidth={1.5} />
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => onCreateManualNote(selectedSpaceId === 'all' ? 'personal' : selectedSpaceId)}
+          >
+            <Plus size={15} strokeWidth={1.5} />
+            新規ノート
           </button>
         </div>
+      </div>
 
-        <p className="text-muted" style={{ margin: 0 }}>
-          録音前に、会話の相手へ録音・文字起こしの同意を得て、お住まいの地域の法令に従ってください。Botとして会議へ自動参加することはありません。
-        </p>
-      </section>
+      {/* Calendar + Spaces */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+        {/* Calendar */}
+        <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+              <CalendarIcon size={16} strokeWidth={1.5} />
+              <span>{calYear}年 {calMonth + 1}月</span>
+            </div>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button
+                type="button"
+                aria-label="前月"
+                className="btn btn-ghost"
+                onClick={() => {
+                  if (calMonth === 0) {
+                    setCalYear((y) => y - 1);
+                    setCalMonth(11);
+                  } else {
+                    setCalMonth((m) => m - 1);
+                  }
+                }}
+              >
+                <ChevronLeft size={16} strokeWidth={1.5} />
+              </button>
+              <button
+                type="button"
+                aria-label="翌月"
+                className="btn btn-ghost"
+                onClick={() => {
+                  if (calMonth === 11) {
+                    setCalYear((y) => y + 1);
+                    setCalMonth(0);
+                  } else {
+                    setCalMonth((m) => m + 1);
+                  }
+                }}
+              >
+                <ChevronRight size={16} strokeWidth={1.5} />
+              </button>
+            </div>
+          </div>
 
-      {/* Recent Notes */}
+          <div className="calendar-grid">
+            {['日', '月', '火', '水', '木', '金', '土'].map((w) => (
+              <div key={w} className="text-muted" style={{ textAlign: 'center' }}>{w}</div>
+            ))}
+            {calendarCells.map((day, idx) => {
+              if (!day) return <div key={`e-${idx}`} />;
+              const key = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+              const hasNotes = noteDates.has(key);
+              const isSelected = selectedDateKey === key && !searchQuery.trim();
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={`calendar-day ${isSelected ? 'selected' : ''}`}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedDateKey((prev) => (prev === key ? '' : key));
+                  }}
+                >
+                  <span className="mono-num">{day}</span>
+                  {hasNotes && <span className="calendar-day-dot" />}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Spaces */}
+        <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 className="section-title">スペース</h2>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setSelectedSpaceId('all')}
+            >
+              すべて表示
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {folders.map((f) => {
+              const count = notes.filter((n) => n.folder_id === f.id).length;
+              const active = selectedSpaceId === f.id;
+              return (
+                <div
+                  key={f.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '8px',
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                    backgroundColor: active ? 'var(--accent-tint)' : 'var(--bg-subtle)',
+                  }}
+                >
+                  <button
+                    type="button"
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, textAlign: 'left', fontWeight: active ? 600 : 400 }}
+                    onClick={() => setSelectedSpaceId(active ? 'all' : f.id)}
+                  >
+                    <FolderIcon size={15} strokeWidth={1.5} />
+                    <span>{f.name}</span>
+                    <span className="mono-num text-muted">({count})</span>
+                  </button>
+                  {f.id !== 'personal' && (
+                    <button
+                      type="button"
+                      aria-label={`${f.name}を削除`}
+                      className="btn btn-ghost"
+                      onClick={() => onDeleteFolder(f.id)}
+                    >
+                      <Trash2 size={14} strokeWidth={1.5} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <form onSubmit={handleAddSpace} style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+            <input
+              type="text"
+              className="input"
+              placeholder="新しいスペース名"
+              value={newSpaceName}
+              onChange={(e) => setNewSpaceName(e.target.value)}
+            />
+            <button type="submit" className="btn btn-secondary" disabled={!newSpaceName.trim()}>
+              追加
+            </button>
+          </form>
+        </section>
+      </div>
+
+      {/* Filtered Notes List */}
       <section style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <h2 className="section-title">最近のノート</h2>
-        {recentNotes.length === 0 ? (
-          <div className="surface-subtle" style={{ color: 'var(--text-secondary)' }}>
-            ノートはまだありません。上の「録音を開始」を押して最初の記録を作成できます。
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 className="section-title">
+            {searchQuery.trim()
+              ? `検索結果 (${filteredNotes.length})`
+              : selectedDateKey
+                ? `${selectedDateKey} のノート (${filteredNotes.length})`
+                : `すべてのノート (${filteredNotes.length})`}
+          </h2>
+          {selectedDateKey && !searchQuery.trim() && (
+            <button type="button" className="btn btn-ghost" onClick={() => setSelectedDateKey('')}>
+              日付絞り込みを解除
+            </button>
+          )}
+        </div>
+
+        {filteredNotes.length === 0 ? (
+          <div className="surface-subtle text-secondary">
+            表示するノートはありません。
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {recentNotes.map((note) => (
+            {filteredNotes.slice(0, 12).map((note) => (
               <button
                 key={note.id}
                 type="button"
@@ -201,21 +328,64 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   textAlign: 'left',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-                  <FileAudio size={16} strokeWidth={1.5} color="var(--text-muted)" />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {note.title || '無題のノート'}
-                    </div>
-                    <div className="text-muted">
-                      {formatDateTime(note.created_at)} · {note.asr_provider_label}
-                    </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600 }}>{note.title || '無題のノート'}</div>
+                  <div className="text-muted">
+                    {formatDateTime(note.created_at)} · <span className="mono-num">{formatMs(note.duration_sec * 1000)}</span>
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-                  <span className="mono-num text-muted">{formatMs(note.duration_sec * 1000)}</span>
-                  <NotionSyncBadge status={note.notion_sync.status} />
-                </div>
+                <NotionSyncBadge status={note.notion_sync.status} />
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Embedded Quick AI Chat */}
+      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 className="section-title">
+            AIチャット（{selectedSpaceId === 'all' ? '全スペース' : folders.find((f) => f.id === selectedSpaceId)?.name || 'スペース'}）
+          </h2>
+          {!llmConfigured && (
+            <button type="button" className="btn btn-secondary" onClick={onGoSettings}>
+              AI設定を開く
+            </button>
+          )}
+        </div>
+
+        <form onSubmit={handleChat} style={{ display: 'flex', gap: '8px' }}>
+          <input
+            type="text"
+            className="input"
+            placeholder={llmConfigured ? 'スペース内のノートについて質問' : '設定からLLMを登録すると質問できます'}
+            value={chatQuestion}
+            onChange={(e) => setChatQuestion(e.target.value)}
+          />
+          <button type="submit" className="btn btn-primary" disabled={!llmConfigured || chatBusy || notes.length === 0}>
+            <MessageSquare size={15} strokeWidth={1.5} />
+            {chatBusy ? '回答中' : '質問'}
+          </button>
+        </form>
+
+        {chatError && (
+          <div className="surface-subtle" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}>
+            {chatError}
+          </div>
+        )}
+
+        {chatAnswer && (
+          <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ whiteSpace: 'pre-wrap' }}>{chatAnswer.answer}</div>
+            {chatAnswer.citations.map((c, idx) => (
+              <button
+                key={idx}
+                type="button"
+                className="btn btn-ghost"
+                style={{ justifyContent: 'flex-start', height: 'auto', padding: '4px 8px' }}
+                onClick={() => onOpenNote(c.note_id)}
+              >
+                <span className="mono-num">[{c.timestamp}]</span> {c.note_title}: {c.excerpt}
               </button>
             ))}
           </div>
