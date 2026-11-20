@@ -622,7 +622,7 @@ pub async fn pull_notes_from_notion(
             action_items: Vec::new(),
             follow_up_draft: String::new(),
             asr_model_id: settings.active_asr_model_id.clone(),
-            asr_provider_label: settings.active_asr_provider.clone(),
+            asr_provider_label: format!("{:?}", settings.active_asr_provider),
             language: settings.language.clone(),
             diarization_supported: false,
             notion_sync: NotionSyncState {
