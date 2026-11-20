@@ -243,13 +243,33 @@ export const App: React.FC = () => {
     setLiveManualNotes('');
     setLiveSegments([]);
     if (!isTauriRuntime()) {
-      setBannerMessage('ブラウザ単体プレビューのため、ネイティブ録音は Tauri デスクトップ実行時に有効になります。');
+      const note = createEmptyNote();
+      note.title = '';
+      setSnapshot((prev) => ({ ...prev, notes: [note, ...prev.notes] }));
+      setActiveNoteId(note.id);
+      setView('editor');
       return;
     }
     try {
+      const note = createEmptyNote();
+      note.title = '';
+      const nextSnap = await apiSaveNote(note);
+      setSnapshot(nextSnap);
+      setActiveNoteId(note.id);
       const st = await apiStartRecording(sourceMode, selectedDeviceId || null);
       setRecStatus(st);
-      setView('recording');
+      setView('editor');
+    } catch (e) {
+      setBannerMessage(String(e));
+    }
+  };
+
+  const handleStartRecordingInNote = async () => {
+    setTranscribeError(null);
+    if (!isTauriRuntime()) return;
+    try {
+      const st = await apiStartRecording(sourceMode, selectedDeviceId || null);
+      setRecStatus(st);
     } catch (e) {
       setBannerMessage(String(e));
     }
@@ -258,26 +278,44 @@ export const App: React.FC = () => {
   const handleStopAndFinish = async () => {
     const finalStatus = isTauriRuntime() ? await apiStopRecording() : recStatus;
     setRecStatus(INITIAL_RECORDING_STATUS);
-    const newNote = createEmptyNote();
-    newNote.duration_sec = Math.round(finalStatus.elapsed_ms / 1000);
-    newNote.manual_notes = liveManualNotes;
-    newNote.segments = liveSegments;
-    newNote.language = snapshot.settings.language;
+    const existing = snapshot.notes.find((n) => n.id === activeNoteId);
+    const targetNote: Note = existing
+      ? {
+          ...existing,
+          duration_sec: existing.duration_sec + Math.round(finalStatus.elapsed_ms / 1000),
+          manual_notes: liveManualNotes
+            ? [existing.manual_notes, liveManualNotes].filter(Boolean).join('\n')
+            : existing.manual_notes,
+          segments: liveSegments.length > 0 ? [...existing.segments, ...liveSegments] : existing.segments,
+          updated_at: new Date().toISOString(),
+        }
+      : {
+          ...createEmptyNote(),
+          duration_sec: Math.round(finalStatus.elapsed_ms / 1000),
+          manual_notes: liveManualNotes,
+          segments: liveSegments,
+          language: snapshot.settings.language,
+        };
 
     if (isTauriRuntime()) {
-      const nextSnap = await apiSaveNote(newNote);
+      const nextSnap = await apiSaveNote(targetNote);
       setSnapshot(nextSnap);
-      setActiveNoteId(newNote.id);
+      setActiveNoteId(targetNote.id);
       setView('editor');
 
       if (finalStatus.temp_wav_path) {
         setTranscribing(true);
         setTranscribeError(null);
         try {
-          const updatedNote = await apiTranscribeRecording(finalStatus.temp_wav_path, newNote.id);
+          const updatedNote = await apiTranscribeRecording(finalStatus.temp_wav_path, targetNote.id);
+          const mergedSegments =
+            existing && existing.segments.length > 0 && updatedNote.segments.length > 0
+              ? [...existing.segments, ...updatedNote.segments]
+              : updatedNote.segments;
+          const finalNote = { ...updatedNote, segments: mergedSegments };
           setSnapshot((prev) => ({
             ...prev,
-            notes: prev.notes.map((n) => (n.id === updatedNote.id ? updatedNote : n)),
+            notes: prev.notes.map((n) => (n.id === finalNote.id ? finalNote : n)),
           }));
         } catch (err) {
           setTranscribeError(String(err));
@@ -286,8 +324,13 @@ export const App: React.FC = () => {
         }
       }
     } else {
-      setSnapshot((prev) => ({ ...prev, notes: [newNote, ...prev.notes] }));
-      setActiveNoteId(newNote.id);
+      setSnapshot((prev) => ({
+        ...prev,
+        notes: existing
+          ? prev.notes.map((n) => (n.id === targetNote.id ? targetNote : n))
+          : [targetNote, ...prev.notes],
+      }));
+      setActiveNoteId(targetNote.id);
       setView('editor');
     }
   };
@@ -338,6 +381,7 @@ export const App: React.FC = () => {
 
   const handleCreateManualNote = async () => {
     const note = createEmptyNote();
+    note.title = '';
     if (isTauriRuntime()) {
       const next = await apiSaveNote(note);
       setSnapshot(next);
@@ -360,6 +404,115 @@ export const App: React.FC = () => {
     { id: 'dictionary', label: '辞書', icon: BookOpen },
     { id: 'integrations', label: '連携', icon: Link2 },
   ];
+
+  if (view === 'editor' && activeNote) {
+    return (
+      <NoteEditorView
+        note={activeNote}
+        folders={snapshot.folders}
+        settings={snapshot.settings}
+        recipes={snapshot.recipes}
+        secretStatus={secretStatus}
+        transcribing={transcribing}
+        transcribeError={transcribeError}
+        recordingStatus={recStatus}
+        onStartRecording={handleStartRecordingInNote}
+        onStopRecording={handleStopAndFinish}
+        onUpdateNote={handleUpdateNote}
+        onCopyText={async (text) => {
+          if (isTauriRuntime()) {
+            await apiCopyAndPreparePaste(text);
+          } else {
+            await navigator.clipboard.writeText(text);
+          }
+        }}
+        onPastePrepare={async (text) => {
+          if (isTauriRuntime()) {
+            const hint = await apiCopyAndPreparePaste(text);
+            setBannerMessage(hint);
+          } else {
+            await navigator.clipboard.writeText(text);
+            setBannerMessage('クリップボードにコピーしました。貼り付け先で Ctrl+V / Cmd+V を押してください。');
+          }
+        }}
+        onSaveToNotion={async (noteId) => {
+          setSnapshot((prev) => ({
+            ...prev,
+            notes: prev.notes.map((n) =>
+              n.id === noteId
+                ? { ...n, notion_sync: { ...n.notion_sync, status: 'syncing' } }
+                : n
+            ),
+          }));
+          try {
+            const updated = await apiNotionSaveNote(noteId);
+            setSnapshot((prev) => ({
+              ...prev,
+              notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+            }));
+          } catch (err) {
+            setSnapshot((prev) => ({
+              ...prev,
+              notes: prev.notes.map((n) =>
+                n.id === noteId
+                  ? {
+                      ...n,
+                      notion_sync: {
+                        ...n.notion_sync,
+                        status: 'failed',
+                        last_error: String(err),
+                      },
+                    }
+                  : n
+              ),
+            }));
+            throw err;
+          }
+        }}
+        onSummarize={async (noteId) => {
+          const updated = await apiSummarizeNote(noteId);
+          setSnapshot((prev) => ({
+            ...prev,
+            notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+          }));
+        }}
+        onDraftFollowup={async (noteId) => {
+          const updated = await apiDraftFollowup(noteId);
+          setSnapshot((prev) => ({
+            ...prev,
+            notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+          }));
+        }}
+        onRunRecipe={apiRunRecipe}
+        onSaveRecipe={async (recipe) => {
+          if (isTauriRuntime()) {
+            setSnapshot(await apiSaveRecipe(recipe));
+          } else {
+            setSnapshot((prev) => ({ ...prev, recipes: [...prev.recipes, recipe] }));
+          }
+        }}
+        onChatNote={apiChatNotes}
+        onShareSlack={apiShareToSlack}
+        onSendWebhook={apiSendWebhook}
+        onAddDictionaryTerm={async (term) => {
+          const entry: DictionaryEntry = {
+            id: crypto.randomUUID(),
+            term,
+            reading: '',
+            note: '',
+            scope: 'personal',
+          };
+          if (isTauriRuntime()) {
+            setSnapshot(await apiSaveDictionaryEntry(entry));
+          } else {
+            setSnapshot((prev) => ({ ...prev, dictionary: [...prev.dictionary, entry] }));
+          }
+        }}
+        onGoSettings={() => setView('integrations')}
+        onGoHome={() => setView('home')}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">

@@ -1,36 +1,64 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Copy,
-  ClipboardPaste,
-  UploadCloud,
-  Sparkles,
-  Plus,
-  Trash2,
-  Send,
-  BookOpen,
-  MessageSquare,
-  Share2,
+  ArrowDown,
+  ArrowUp,
+  AudioLines,
+  Calendar,
   Check,
-  AlertCircle,
-  Loader2,
+  ChevronDown,
+  ClipboardPaste,
+  Copy,
+  FileText,
+  Folder as FolderIcon,
+  LayoutGrid,
+  Link2,
+  List,
+  Lock,
+  Menu,
+  Mic,
+  Pause,
+  Play,
+  Plus,
+  Send,
+  Shield,
+  Sparkles,
+  Upload,
+  UploadCloud,
+  Users,
+  Video,
+  X,
 } from 'lucide-react';
 import {
   AppSettings,
   ChatAnswer,
+  Folder,
   Note,
   Recipe,
+  RecordingStatus,
   SecretStatus,
   TranscriptSegment,
 } from '../types';
-import { formatDateTime, formatMs, formatNoteForCopy } from '../lib/format';
+import {
+  formatDateTime,
+  formatMonthDay,
+  formatNoteForCopy,
+  formatNoteTimer,
+} from '../lib/format';
+import { NoteWaveform } from './NoteWaveform';
+
+export type NotePhase = 'idle' | 'recording' | 'processing' | 'completed';
 
 interface NoteEditorViewProps {
   note: Note;
+  folders?: Folder[];
   settings: AppSettings;
   recipes: Recipe[];
   secretStatus: SecretStatus | null;
   transcribing: boolean;
   transcribeError: string | null;
+  recordingStatus?: RecordingStatus;
+  onStartRecording?: () => Promise<void> | void;
+  onStopRecording?: () => Promise<void> | void;
   onUpdateNote: (note: Note) => void;
   onCopyText: (text: string, label: string) => Promise<void>;
   onPastePrepare: (text: string) => Promise<void>;
@@ -44,145 +72,334 @@ interface NoteEditorViewProps {
   onSendWebhook: (noteId: string) => Promise<void>;
   onAddDictionaryTerm: (term: string) => Promise<void>;
   onGoSettings: () => void;
+  onGoHome?: () => void;
 }
 
 export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   note,
+  folders = [{ id: 'personal', name: '個人', is_shared: false, permission: 'owner' }],
   settings,
-  recipes,
   secretStatus,
   transcribing,
   transcribeError,
+  recordingStatus,
+  onStartRecording,
+  onStopRecording,
   onUpdateNote,
   onCopyText,
   onPastePrepare,
   onSaveToNotion,
   onSummarize,
-  onDraftFollowup,
-  onRunRecipe,
-  onSaveRecipe,
   onChatNote,
   onShareSlack,
   onSendWebhook,
-  onAddDictionaryTerm,
   onGoSettings,
+  onGoHome,
 }) => {
-  const [copyFormat, setCopyFormat] = useState<'markdown' | 'plain'>(settings.copy_format || 'markdown');
+  // Sidebar & responsive drawer
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedNav, setSelectedNav] = useState<'private' | 'personal' | 'note' | 'meeting' | 'video'>('note');
+
+  // Inline title editing with Enter confirm / Esc cancel
+  const [titleDraft, setTitleDraft] = useState(note.title);
+  const titleSnapshotRef = useRef(note.title);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setTitleDraft(note.title);
+    titleSnapshotRef.current = note.title;
+  }, [note.id, note.title]);
+
+  // Tabs
+  const [activeTab, setActiveTab] = useState<'transcript' | 'notes'>('transcript');
+  const [hasUnreadTranscript, setHasUnreadTranscript] = useState(false);
+  const transcriptTabRef = useRef<HTMLButtonElement>(null);
+  const notesTabRef = useRef<HTMLButtonElement>(null);
+
+  // Popovers & dialogs
+  const [participantsOpen, setParticipantsOpen] = useState(false);
+  const [newParticipant, setNewParticipant] = useState('');
+  const [folderMenuOpen, setFolderMenuOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [notionPreviewOpen, setNotionPreviewOpen] = useState(false);
   const [notionBusy, setNotionBusy] = useState(false);
-  const [auxTab, setAuxTab] = useState<'summary' | 'recipes' | 'chat' | 'share'>('summary');
+  const [rerecordConfirmOpen, setRerecordConfirmOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Recording / processing / playback state
+  const [localRecording, setLocalRecording] = useState(false);
+  const [localProcessing, setLocalProcessing] = useState(false);
+  const [localElapsedMs, setLocalElapsedMs] = useState(0);
+  const [localRms, setLocalRms] = useState(0);
+  const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackMs, setPlaybackMs] = useState(0);
+
+  // Notes tab inline editing
+  const [editingManualNotes, setEditingManualNotes] = useState(false);
+  const manualNotesRef = useRef<HTMLTextAreaElement>(null);
+
+  // AI / Q&A
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [recipeOutput, setRecipeOutput] = useState<string>('');
-  const [newRecipeName, setNewRecipeName] = useState('');
-  const [newRecipePrompt, setNewRecipePrompt] = useState('');
-  const [chatQuestion, setChatQuestion] = useState('');
-  const [chatAnswer, setChatAnswer] = useState<ChatAnswer | null>(null);
-  const [newDictTerm, setNewDictTerm] = useState('');
-  const [actionToast, setActionToast] = useState<string | null>(null);
+  const [question, setQuestion] = useState('');
+  const [qaAnswer, setQaAnswer] = useState<ChatAnswer | null>(null);
 
-  const llmConfigured = settings.llm_provider !== 'none' && settings.llm_provider !== '';
-  const notionReady = Boolean(secretStatus?.notion_access_token) && Boolean(settings.notion_target_id);
+  // Scroll tracking
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [liveAnnouncement, setLiveAnnouncement] = useState('');
 
   const notify = (msg: string) => {
-    setActionToast(msg);
-    setTimeout(() => setActionToast(null), 3500);
+    setToast(msg);
+    setTimeout(() => setToast(null), 2600);
   };
 
-  const updateSegment = (segId: string, patch: Partial<TranscriptSegment>) => {
-    const next = note.segments.map((s) => (s.id === segId ? { ...s, ...patch } : s));
-    onUpdateNote({ ...note, segments: next, updated_at: new Date().toISOString() });
+  // Determine effective recording state (external Tauri or local fallback)
+  const isExternalRecording =
+    recordingStatus?.state === 'recording' || recordingStatus?.state === 'paused';
+  const isRecording = isExternalRecording || localRecording;
+  const isProcessing = transcribing || localProcessing;
+
+  const displayedSegments = useMemo(() => {
+    if (isRecording && liveSegments.length > 0) {
+      return [...note.segments, ...liveSegments];
+    }
+    return note.segments;
+  }, [isRecording, liveSegments, note.segments]);
+
+  const totalDurationMs = useMemo(() => {
+    if (note.duration_sec > 0) return note.duration_sec * 1000;
+    const lastSeg = note.segments[note.segments.length - 1];
+    return lastSeg ? lastSeg.end_ms : 0;
+  }, [note.duration_sec, note.segments]);
+
+  const phase: NotePhase = useMemo(() => {
+    if (isRecording) return 'recording';
+    if (isProcessing) return 'processing';
+    if (note.segments.length > 0 || note.duration_sec > 0) return 'completed';
+    return 'idle';
+  }, [isRecording, isProcessing, note.segments.length, note.duration_sec]);
+
+  // Announce phase transitions politely
+  const prevPhaseRef = useRef<NotePhase>(phase);
+  useEffect(() => {
+    if (prevPhaseRef.current === phase) return;
+    prevPhaseRef.current = phase;
+    if (phase === 'recording') {
+      setLiveAnnouncement('録音を開始しました');
+    } else if (phase === 'processing') {
+      setLiveAnnouncement('文字起こし中です');
+    } else if (phase === 'completed') {
+      setLiveAnnouncement('文字起こしが完了しました');
+    }
+  }, [phase]);
+
+  // Local timer + simulated RMS when recording without Tauri runtime
+  useEffect(() => {
+    if (!localRecording) return;
+    const startAt = Date.now();
+    const id = setInterval(() => {
+      const elapsed = Date.now() - startAt;
+      setLocalElapsedMs(elapsed);
+      setLocalRms(0.18 + Math.abs(Math.sin(elapsed / 240)) * 0.45);
+    }, 200);
+    return () => clearInterval(id);
+  }, [localRecording]);
+
+  // Playback simulation for completed state
+  useEffect(() => {
+    if (!isPlaying || phase !== 'completed') return;
+    const dur = Math.max(totalDurationMs, 10000);
+    const id = setInterval(() => {
+      setPlaybackMs((prev) => {
+        if (prev + 250 >= dur) {
+          setIsPlaying(false);
+          return 0;
+        }
+        return prev + 250;
+      });
+    }, 250);
+    return () => clearInterval(id);
+  }, [isPlaying, phase, totalDurationMs]);
+
+  // Auto-scroll & unread dot when segments grow during recording
+  const prevSegCountRef = useRef(displayedSegments.length);
+  useEffect(() => {
+    const count = displayedSegments.length;
+    if (count > prevSegCountRef.current) {
+      if (activeTab === 'notes' && phase === 'recording') {
+        setHasUnreadTranscript(true);
+      }
+      if (isAtBottom && scrollRef.current) {
+        const el = scrollRef.current;
+        const reduced =
+          typeof window !== 'undefined' &&
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (typeof el.scrollTo === 'function') {
+          el.scrollTo({
+            top: el.scrollHeight,
+            behavior: reduced ? 'auto' : 'smooth',
+          });
+        } else {
+          el.scrollTop = el.scrollHeight;
+        }
+      }
+    }
+    prevSegCountRef.current = count;
+  }, [displayedSegments.length, activeTab, phase, isAtBottom]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+    setIsAtBottom(nearBottom);
   };
 
-  const addSegment = () => {
-    const lastEnd = note.segments[note.segments.length - 1]?.end_ms ?? 0;
-    const seg: TranscriptSegment = {
-      id: crypto.randomUUID(),
-      start_ms: lastEnd,
-      end_ms: lastEnd + 5000,
-      speaker: '話者1',
-      text: '',
-    };
-    onUpdateNote({ ...note, segments: [...note.segments, seg], updated_at: new Date().toISOString() });
+  const scrollToLatest = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const reduced =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (typeof el.scrollTo === 'function') {
+      el.scrollTo({ top: el.scrollHeight, behavior: reduced ? 'auto' : 'smooth' });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+    setIsAtBottom(true);
   };
 
-  const removeSegment = (segId: string) => {
-    onUpdateNote({
-      ...note,
-      segments: note.segments.filter((s) => s.id !== segId),
-      updated_at: new Date().toISOString(),
-    });
-  };
+  const beginRecording = async () => {
+    setIsPlaying(false);
+    setLiveSegments([]);
+    setLocalElapsedMs(0);
+    setIsAtBottom(true);
 
-  const handleCopy = async () => {
-    const text = formatNoteForCopy(note, copyFormat);
-    await onCopyText(text, copyFormat === 'markdown' ? 'Markdown' : 'プレーンテキスト');
-    notify(`${copyFormat === 'markdown' ? 'Markdown' : 'プレーンテキスト'}でコピーしました`);
-  };
-
-  const handlePaste = async () => {
-    const text = formatNoteForCopy(note, copyFormat);
-    await onPastePrepare(text);
-  };
-
-  const handleConfirmNotionSave = async () => {
-    setNotionBusy(true);
-    try {
-      await onSaveToNotion(note.id);
-      setNotionPreviewOpen(false);
-      notify('Notion に保存しました');
-    } catch {
-      // エラーは note.notion_sync.last_error に記録される
-    } finally {
-      setNotionBusy(false);
+    if (onStartRecording) {
+      await onStartRecording();
+      // If external runtime didn't switch to recording (e.g. browser preview), start local timer
+      if (!recordingStatus || recordingStatus.state === 'idle') {
+        setLocalRecording(true);
+      }
+    } else {
+      setLocalRecording(true);
     }
   };
 
-  const handleSummarize = async () => {
-    setAiBusy(true);
-    setAiError(null);
-    try {
-      await onSummarize(note.id);
-    } catch (e) {
-      setAiError(String(e));
-    } finally {
-      setAiBusy(false);
+  const stopRecording = async () => {
+    if (isExternalRecording && onStopRecording) {
+      await onStopRecording();
+      return;
+    }
+
+    const elapsedSec = Math.max(1, Math.round(localElapsedMs / 1000));
+    setLocalRecording(false);
+    setLocalRms(0);
+    setLocalProcessing(true);
+
+    setTimeout(() => {
+      const baseOffsetMs =
+        note.segments.length > 0
+          ? note.segments[note.segments.length - 1].end_ms + 1000
+          : 0;
+      const appended: TranscriptSegment[] =
+        liveSegments.length > 0
+          ? liveSegments
+          : [
+              {
+                id: crypto.randomUUID(),
+                start_ms: baseOffsetMs,
+                end_ms: baseOffsetMs + Math.max(2000, elapsedSec * 1000),
+                speaker: 'あなた',
+                text: '本日の議題と次のアクションを確認しましょう。',
+              },
+            ];
+
+      onUpdateNote({
+        ...note,
+        duration_sec: note.duration_sec + elapsedSec,
+        segments: [...note.segments, ...appended],
+        updated_at: new Date().toISOString(),
+      });
+      setLiveSegments([]);
+      setLocalProcessing(false);
+    }, 600);
+  };
+
+  const handleRecordButtonClick = () => {
+    if (phase === 'recording') {
+      void stopRecording();
+    } else if (phase === 'completed') {
+      setRerecordConfirmOpen(true);
+    } else if (phase === 'idle') {
+      void beginRecording();
     }
   };
 
-  const handleDraftFollowup = async () => {
-    setAiBusy(true);
-    setAiError(null);
-    try {
-      await onDraftFollowup(note.id);
-    } catch (e) {
-      setAiError(String(e));
-    } finally {
-      setAiBusy(false);
+  const handleTabKeyDown = (e: React.KeyboardEvent, current: 'transcript' | 'notes') => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const next = current === 'transcript' ? 'notes' : 'transcript';
+      setActiveTab(next);
+      if (next === 'transcript') {
+        setHasUnreadTranscript(false);
+        transcriptTabRef.current?.focus();
+      } else {
+        notesTabRef.current?.focus();
+      }
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setActiveTab('transcript');
+      setHasUnreadTranscript(false);
+      transcriptTabRef.current?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setActiveTab('notes');
+      notesTabRef.current?.focus();
     }
   };
 
-  const handleRunRecipe = async (recipe: Recipe) => {
-    setAiBusy(true);
-    setAiError(null);
-    try {
-      const res = await onRunRecipe(note.id, recipe.prompt);
-      setRecipeOutput(res);
-    } catch (e) {
-      setAiError(String(e));
-    } finally {
-      setAiBusy(false);
+  const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const trimmed = titleDraft.trim();
+      titleSnapshotRef.current = trimmed;
+      onUpdateNote({ ...note, title: trimmed, updated_at: new Date().toISOString() });
+      titleInputRef.current?.blur();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setTitleDraft(titleSnapshotRef.current);
+      onUpdateNote({ ...note, title: titleSnapshotRef.current });
+      titleInputRef.current?.blur();
     }
   };
 
-  const handleAskChat = async (e: React.FormEvent) => {
+  const handleAddParticipant = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatQuestion.trim()) return;
+    const name = newParticipant.trim();
+    if (!name) return;
+    if (!note.participants.includes(name)) {
+      onUpdateNote({
+        ...note,
+        participants: [...note.participants, name],
+        updated_at: new Date().toISOString(),
+      });
+    }
+    setNewParticipant('');
+  };
+
+  const handleAskQuestion = async () => {
+    const q = question.trim();
+    if (!q || aiBusy) return;
     setAiBusy(true);
     setAiError(null);
     try {
-      const res = await onChatNote([note.id], chatQuestion);
-      setChatAnswer(res);
+      const res = await onChatNote([note.id], q);
+      setQaAnswer(res);
+      setQuestion('');
     } catch (err) {
       setAiError(String(err));
     } finally {
@@ -190,523 +407,878 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     }
   };
 
+  const handleQuestionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      void handleAskQuestion();
+    }
+  };
+
+  const handleCopyMarkdown = async () => {
+    const text = formatNoteForCopy(note, settings.copy_format || 'markdown');
+    await onCopyText(text, 'ノート');
+    notify('コピーしました');
+    setShareOpen(false);
+  };
+
+  const handleCopyLink = async () => {
+    const linkText = `${note.title.trim() || '無題のノート'}\n${formatDateTime(note.created_at)}`;
+    await onCopyText(linkText, 'リンク');
+    notify('リンクをコピーしました');
+  };
+
+  const handleConfirmNotionSave = async () => {
+    setNotionBusy(true);
+    try {
+      await onSaveToNotion(note.id);
+      setNotionPreviewOpen(false);
+      setShareOpen(false);
+      notify('Notion に保存しました');
+    } finally {
+      setNotionBusy(false);
+    }
+  };
+
+  const activeFolder =
+    folders.find((f) => f.id === note.folder_id) ||
+    folders[0] || { id: 'personal', name: '個人', is_shared: false, permission: 'owner' as const };
+  const folderDisplayName =
+    activeFolder.id === 'personal' ? '個人' : activeFolder.name;
+
+  const llmConfigured = settings.llm_provider !== 'none' && settings.llm_provider !== '';
+  const notionReady = Boolean(secretStatus?.notion_access_token) && Boolean(settings.notion_target_id);
+  const timerMs = isExternalRecording
+    ? recordingStatus?.elapsed_ms ?? 0
+    : localRecording
+      ? localElapsedMs
+      : phase === 'completed'
+        ? totalDurationMs
+        : 0;
+  const playbackProgress =
+    phase === 'completed' && totalDurationMs > 0
+      ? Math.min(1, playbackMs / totalDurationMs)
+      : 0;
+
+  const hasNotesContent =
+    Boolean(note.summary.trim()) ||
+    Boolean(note.manual_notes.trim()) ||
+    note.decisions.length > 0 ||
+    note.action_items.length > 0;
+
   return (
-    <div className="page-container">
-      {/* Header & Primary Actions */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: '280px' }}>
-            <input
-              type="text"
-              aria-label="ノートタイトル"
-              className="input"
-              style={{ fontSize: '20px', fontWeight: 600, height: '44px', borderColor: 'transparent', paddingLeft: 0 }}
-              value={note.title}
-              onChange={(e) => onUpdateNote({ ...note, title: e.target.value, updated_at: new Date().toISOString() })}
-              placeholder="ノートのタイトル"
-            />
-            <div className="text-muted" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '4px' }}>
-              <span>{formatDateTime(note.created_at)}</span>
-              <span className="mono-num">録音時間 {formatMs(note.duration_sec * 1000)}</span>
-              <span>ASR: {note.asr_provider_label}</span>
-              <span>
-                {note.diarization_supported
-                  ? '自動話者識別: 対応'
-                  : '自動話者識別: 未対応（手動で話者名を変更できます）'}
-              </span>
-            </div>
-          </div>
+    <div className="note-shell">
+      {/* Mobile drawer backdrop */}
+      <div
+        className={`note-sidebar-backdrop ${drawerOpen ? 'open' : ''}`}
+        onClick={() => setDrawerOpen(false)}
+        aria-hidden="true"
+      />
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <select
-              aria-label="コピー形式"
-              className="select"
-              style={{ width: 'auto' }}
-              value={copyFormat}
-              onChange={(e) => setCopyFormat(e.target.value as 'markdown' | 'plain')}
-            >
-              <option value="markdown">Markdown</option>
-              <option value="plain">プレーンテキスト</option>
-            </select>
-
-            <button type="button" className="btn btn-secondary" onClick={handleCopy}>
-              <Copy size={16} strokeWidth={1.5} />
-              コピー
-            </button>
-
-            <button type="button" className="btn btn-secondary" onClick={handlePaste}>
-              <ClipboardPaste size={16} strokeWidth={1.5} />
-              貼り付け
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => setNotionPreviewOpen(true)}
-            >
-              <UploadCloud size={16} strokeWidth={1.5} />
-              {note.notion_sync.status === 'synced'
-                ? 'Notion を更新'
-                : note.notion_sync.status === 'failed'
-                  ? 'Notion 再試行'
-                  : 'Notion に保存'}
-            </button>
-          </div>
+      {/* Sidebar (272px) */}
+      <aside
+        className={`note-sidebar ${drawerOpen ? 'drawer-open' : ''}`}
+        aria-label="テンプレートとアクション"
+      >
+        <div className="note-sidebar-heading">
+          <LayoutGrid size={16} strokeWidth={1.75} aria-hidden="true" />
+          <span className="note-sidebar-heading-text">テンプレートとアクション</span>
         </div>
 
-        {actionToast && (
-          <div className="status-chip ok" style={{ alignSelf: 'flex-start' }}>
-            <Check size={14} strokeWidth={1.5} />
-            {actionToast}
+        <nav className="note-sidebar-list" aria-label="ノート階層">
+          <button
+            type="button"
+            className={`note-sidebar-item ${selectedNav === 'private' ? 'selected' : ''}`}
+            onClick={() => {
+              setSelectedNav('private');
+              setDrawerOpen(false);
+            }}
+            title="プライベート"
+          >
+            <Lock size={18} strokeWidth={1.75} aria-hidden="true" />
+            <span className="note-sidebar-item-label">プライベート</span>
+          </button>
+
+          <button
+            type="button"
+            className={`note-sidebar-item ${selectedNav === 'personal' ? 'selected' : ''}`}
+            onClick={() => {
+              setSelectedNav('personal');
+              setDrawerOpen(false);
+            }}
+            title="個人"
+          >
+            <FolderIcon size={18} strokeWidth={1.75} aria-hidden="true" />
+            <span className="note-sidebar-item-label">個人</span>
+          </button>
+
+          <button
+            type="button"
+            className={`note-sidebar-item indent ${selectedNav === 'note' ? 'selected' : ''}`}
+            onClick={() => {
+              setSelectedNav('note');
+              setDrawerOpen(false);
+            }}
+            aria-current="page"
+            title={note.title.trim() || '無題のノート'}
+          >
+            <FileText size={18} strokeWidth={1.75} aria-hidden="true" />
+            <span className="note-sidebar-item-label">
+              {note.title.trim() || '無題のノート'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className={`note-sidebar-item ${selectedNav === 'meeting' ? 'selected' : ''}`}
+            onClick={() => {
+              setSelectedNav('meeting');
+              setDrawerOpen(false);
+            }}
+            title="ミーティング"
+          >
+            <Users size={18} strokeWidth={1.75} aria-hidden="true" />
+            <span className="note-sidebar-item-label">ミーティング</span>
+          </button>
+
+          <button
+            type="button"
+            className={`note-sidebar-item ${selectedNav === 'video' ? 'selected' : ''}`}
+            onClick={() => {
+              setSelectedNav('video');
+              setDrawerOpen(false);
+            }}
+            title="ビデオ"
+          >
+            <Video size={18} strokeWidth={1.75} aria-hidden="true" />
+            <span className="note-sidebar-item-label">ビデオ</span>
+          </button>
+        </nav>
+
+        {onGoHome && (
+          <div className="note-sidebar-footer">
+            <button
+              type="button"
+              className="note-sidebar-item"
+              onClick={onGoHome}
+              title="ホームに戻る"
+            >
+              <ArrowDown size={18} strokeWidth={1.75} style={{ transform: 'rotate(90deg)' }} aria-hidden="true" />
+              <span className="note-sidebar-item-label">ホーム</span>
+            </button>
           </div>
         )}
+      </aside>
 
-        {transcribing && (
-          <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <Loader2 size={16} strokeWidth={1.5} />
-            <span>録音後の文字起こしを実行しています（選択中のモデルはリアルタイム非対応のため録音後処理です）</span>
-          </div>
-        )}
+      {/* Main Content */}
+      <div className="note-main">
+        {/* Mobile Drawer Trigger */}
+        <div className="note-mobile-bar">
+          <button
+            type="button"
+            className="note-meta-pill"
+            aria-label="サイドバーを開く"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <Menu size={16} strokeWidth={1.75} />
+          </button>
+        </div>
 
-        {transcribeError && (
-          <div className="surface-subtle" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}>
-            <div style={{ fontWeight: 600 }}>文字起こしを実行できませんでした</div>
-            <div style={{ fontSize: '14px', marginTop: '4px' }}>{transcribeError}</div>
-          </div>
-        )}
+        {/* Polite status announcer */}
+        <div className="sr-only" aria-live="polite">
+          {liveAnnouncement}
+        </div>
 
-        {note.notion_sync.status === 'failed' && note.notion_sync.last_error && (
-          <div className="surface-subtle" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}>
-            <div style={{ fontWeight: 600 }}>Notion 保存エラー（内容はローカルに保持されています）</div>
-            <div style={{ fontSize: '14px', marginTop: '4px' }}>{note.notion_sync.last_error}</div>
-          </div>
-        )}
-      </div>
+        {/* Header */}
+        <header className="note-header">
+          <input
+            ref={titleInputRef}
+            type="text"
+            aria-label="ノートタイトル"
+            className="note-title-input"
+            value={titleDraft}
+            placeholder="無題のノート"
+            onFocus={() => {
+              titleSnapshotRef.current = titleDraft;
+            }}
+            onChange={(e) => {
+              setTitleDraft(e.target.value);
+              onUpdateNote({
+                ...note,
+                title: e.target.value,
+                updated_at: new Date().toISOString(),
+              });
+            }}
+            onBlur={() => {
+              const trimmed = titleDraft.trim();
+              titleSnapshotRef.current = trimmed;
+              if (trimmed !== note.title) {
+                onUpdateNote({
+                  ...note,
+                  title: trimmed,
+                  updated_at: new Date().toISOString(),
+                });
+              }
+            }}
+            onKeyDown={handleTitleKeyDown}
+          />
 
-      {/* Main Two-Column Content: Transcript/Notes + Auxiliary AI/Share */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(300px, 1fr)', gap: '20px', alignItems: 'start' }}>
-        {/* Left: Transcript & Manual Notes */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 className="section-title">文字起こし</h2>
-              <button type="button" className="btn btn-secondary" style={{ height: '30px', fontSize: '12px' }} onClick={addSegment}>
-                <Plus size={14} strokeWidth={1.5} />
-                行を追加
-              </button>
-            </div>
+          {/* Metadata Pills */}
+          <div className="note-meta-pills">
+            <span className="note-meta-pill" style={{ cursor: 'default' }}>
+              <Calendar size={15} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
+              <span>{formatMonthDay(note.created_at)}</span>
+            </span>
 
-            {note.segments.length === 0 ? (
-              <p className="text-muted" style={{ margin: 0 }}>
-                文字起こし行がありません。「行を追加」から手動で入力するか、録音後に文字起こしを実行してください。
-              </p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {note.segments.map((seg) => (
-                  <div
-                    key={seg.id}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '76px 110px minmax(0, 1fr) 32px',
-                      gap: '8px',
-                      alignItems: 'start',
-                      paddingBottom: '12px',
-                      borderBottom: '1px solid var(--border-subtle)',
-                    }}
-                  >
-                    <input
-                      type="text"
-                      aria-label="開始時刻(秒)"
-                      className="input mono-num"
-                      style={{ height: '32px', fontSize: '12px', padding: '0 8px' }}
-                      value={formatMs(seg.start_ms)}
-                      onChange={(e) => {
-                        const parts = e.target.value.split(':').map(Number);
-                        if (parts.length === 2 && !Number.isNaN(parts[0]) && !Number.isNaN(parts[1])) {
-                          updateSegment(seg.id, { start_ms: (parts[0] * 60 + parts[1]) * 1000 });
-                        }
-                      }}
-                    />
-                    <input
-                      type="text"
-                      aria-label="話者名"
-                      className="input"
-                      style={{ height: '32px', fontSize: '12px', padding: '0 8px' }}
-                      value={seg.speaker}
-                      onChange={(e) => updateSegment(seg.id, { speaker: e.target.value })}
-                    />
-                    <textarea
-                      aria-label="発話内容"
-                      className="textarea"
-                      style={{ minHeight: '56px', padding: '8px 12px' }}
-                      value={seg.text}
-                      onChange={(e) => updateSegment(seg.id, { text: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      aria-label="行を削除"
-                      className="btn btn-ghost"
-                      onClick={() => removeSegment(seg.id)}
-                    >
-                      <Trash2 size={14} strokeWidth={1.5} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Quick User Dictionary Add */}
-            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-              <input
-                type="text"
-                className="input"
-                style={{ height: '32px' }}
-                placeholder="固有名詞をユーザー辞書へ登録"
-                value={newDictTerm}
-                onChange={(e) => setNewDictTerm(e.target.value)}
-              />
+            <div className="note-meta-pill-wrap">
               <button
                 type="button"
-                className="btn btn-secondary"
-                style={{ height: '32px', flexShrink: 0 }}
-                disabled={!newDictTerm.trim()}
-                onClick={async () => {
-                  await onAddDictionaryTerm(newDictTerm.trim());
-                  setNewDictTerm('');
-                  notify('ユーザー辞書に登録しました');
+                className="note-meta-pill"
+                aria-expanded={participantsOpen}
+                onClick={() => {
+                  setParticipantsOpen((o) => !o);
+                  setFolderMenuOpen(false);
                 }}
               >
-                辞書に追加
+                <Users size={15} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
+                <span>
+                  {note.participants.length > 0
+                    ? note.participants.join(', ')
+                    : '参加者を追加'}
+                </span>
+                <span className="note-meta-pill-divider" aria-hidden="true" />
+                <ChevronDown size={14} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
               </button>
-            </div>
-          </section>
 
-          <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <label htmlFor="editor-manual-notes" className="section-title">
-              手入力メモ
-            </label>
-            <textarea
-              id="editor-manual-notes"
-              className="textarea"
-              value={note.manual_notes}
-              onChange={(e) => onUpdateNote({ ...note, manual_notes: e.target.value, updated_at: new Date().toISOString() })}
-              placeholder="補足メモを入力"
-            />
-          </section>
-        </div>
-
-        {/* Right: Auxiliary AI & Sharing */}
-        <aside className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div className="tabs-row">
-            <button
-              type="button"
-              className={`tab-btn ${auxTab === 'summary' ? 'active' : ''}`}
-              onClick={() => setAuxTab('summary')}
-            >
-              要約・タスク
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${auxTab === 'recipes' ? 'active' : ''}`}
-              onClick={() => setAuxTab('recipes')}
-            >
-              Recipes
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${auxTab === 'chat' ? 'active' : ''}`}
-              onClick={() => setAuxTab('chat')}
-            >
-              AIチャット
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${auxTab === 'share' ? 'active' : ''}`}
-              onClick={() => setAuxTab('share')}
-            >
-              共有
-            </button>
-          </div>
-
-          {!llmConfigured && auxTab !== 'share' && (
-            <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, color: 'var(--warning)' }}>
-                <AlertCircle size={15} strokeWidth={1.5} />
-                LLMが未設定です
-              </div>
-              <p className="text-muted" style={{ margin: 0 }}>
-                要約・Recipes・AIチャットを使うには、設定画面で OpenAI / Anthropic / Gemini / ローカル Ollama を設定してください。文字起こし・編集・コピー・Notion保存は設定なしで利用できます。
-              </p>
-              <button type="button" className="btn btn-secondary" style={{ alignSelf: 'flex-start', height: '30px' }} onClick={onGoSettings}>
-                AI設定を開く
-              </button>
-            </div>
-          )}
-
-          {aiError && (
-            <div className="surface-subtle" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}>
-              {aiError}
-            </div>
-          )}
-
-          {auxTab === 'summary' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={!llmConfigured || aiBusy}
-                  onClick={handleSummarize}
-                >
-                  <Sparkles size={15} strokeWidth={1.5} />
-                  {aiBusy ? '生成中' : '要約とアクション抽出'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={!llmConfigured || aiBusy}
-                  onClick={handleDraftFollowup}
-                >
-                  メール下書き
-                </button>
-              </div>
-
-              <div>
-                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>要約</div>
-                <textarea
-                  className="textarea"
-                  value={note.summary}
-                  onChange={(e) => onUpdateNote({ ...note, summary: e.target.value })}
-                  placeholder="要約がここに入ります（手動編集も可能）"
-                />
-              </div>
-
-              {note.decisions.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>決定事項</div>
-                  <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                    {note.decisions.map((d, i) => (
-                      <li key={i} style={{ fontSize: '14px' }}>{d}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {note.action_items.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>アクション項目</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {note.action_items.map((a) => (
-                      <label key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input
-                          type="checkbox"
-                          checked={a.done}
-                          onChange={(e) =>
-                            onUpdateNote({
-                              ...note,
-                              action_items: note.action_items.map((x) =>
-                                x.id === a.id ? { ...x, done: e.target.checked } : x
-                              ),
-                            })
-                          }
-                        />
-                        <span>{a.text}{a.assignee ? `（${a.assignee}）` : ''}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {note.follow_up_draft && (
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                    フォローアップメール下書き（確認のうえ手動送信）
-                  </div>
-                  <textarea
-                    className="textarea"
-                    value={note.follow_up_draft}
-                    onChange={(e) => onUpdateNote({ ...note, follow_up_draft: e.target.value })}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-
-          {auxTab === 'recipes' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {recipes.map((r) => (
-                <div key={r.id} className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <BookOpen size={14} strokeWidth={1.5} />
-                      {r.name}
-                    </div>
-                    <div className="text-muted">{r.description}</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ height: '30px', flexShrink: 0 }}
-                    disabled={!llmConfigured || aiBusy}
-                    onClick={() => handleRunRecipe(r)}
-                  >
-                    実行
-                  </button>
-                </div>
-              ))}
-              {recipeOutput && (
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>実行結果</div>
-                  <textarea className="textarea" style={{ minHeight: '140px' }} value={recipeOutput} readOnly />
-                </div>
-              )}
-
-              <details className="surface-subtle">
-                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>新しい Recipe を作成</summary>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="Recipe 名（例: 営業日報用まとめ）"
-                    value={newRecipeName}
-                    onChange={(e) => setNewRecipeName(e.target.value)}
-                  />
-                  <textarea
-                    className="textarea"
-                    style={{ minHeight: '72px' }}
-                    placeholder="AIへの指示プロンプト"
-                    value={newRecipePrompt}
-                    onChange={(e) => setNewRecipePrompt(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={!newRecipeName.trim() || !newRecipePrompt.trim()}
-                    onClick={async () => {
-                      await onSaveRecipe({
-                        id: crypto.randomUUID(),
-                        name: newRecipeName.trim(),
-                        description: 'カスタム Recipe',
-                        prompt: newRecipePrompt.trim(),
-                        is_builtin: false,
-                      });
-                      setNewRecipeName('');
-                      setNewRecipePrompt('');
-                      notify('Recipe を保存しました');
-                    }}
-                  >
-                    Recipe を保存
-                  </button>
-                </div>
-              </details>
-            </div>
-          )}
-
-          {auxTab === 'chat' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <form onSubmit={handleAskChat} style={{ display: 'flex', gap: '8px' }}>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="この会議について質問"
-                  value={chatQuestion}
-                  onChange={(e) => setChatQuestion(e.target.value)}
-                />
-                <button type="submit" className="btn btn-primary" disabled={!llmConfigured || aiBusy}>
-                  <MessageSquare size={15} strokeWidth={1.5} />
-                </button>
-              </form>
-              {chatAnswer && (
-                <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ fontSize: '14px', whiteSpace: 'pre-wrap' }}>{chatAnswer.answer}</div>
-                  {chatAnswer.citations.length > 0 && (
-                    <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '8px' }}>
-                      <div className="text-muted" style={{ marginBottom: '4px' }}>参照箇所</div>
-                      {chatAnswer.citations.map((c, idx) => (
-                        <div key={idx} className="text-muted">
-                          <span className="mono-num">[{c.timestamp}]</span> {c.excerpt}
-                        </div>
+              {participantsOpen && (
+                <div className="note-popover" role="dialog" aria-label="参加者を編集">
+                  <form onSubmit={handleAddParticipant} style={{ display: 'flex', gap: '6px' }}>
+                    <input
+                      type="text"
+                      className="input"
+                      style={{ height: '32px', fontSize: '13px' }}
+                      placeholder="参加者名を入力"
+                      value={newParticipant}
+                      onChange={(e) => setNewParticipant(e.target.value)}
+                    />
+                    <button
+                      type="submit"
+                      className="btn btn-secondary"
+                      style={{ height: '32px', padding: '0 10px' }}
+                    >
+                      追加
+                    </button>
+                  </form>
+                  {note.participants.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {note.participants.map((p) => (
+                        <span
+                          key={p}
+                          className="note-meta-pill"
+                          style={{ height: '28px', padding: '0 10px', fontSize: '12px' }}
+                        >
+                          {p}
+                          <button
+                            type="button"
+                            aria-label={`${p}を削除`}
+                            onClick={() =>
+                              onUpdateNote({
+                                ...note,
+                                participants: note.participants.filter((x) => x !== p),
+                                updated_at: new Date().toISOString(),
+                              })
+                            }
+                            style={{ display: 'inline-flex', padding: 0 }}
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
                       ))}
                     </div>
                   )}
                 </div>
               )}
             </div>
-          )}
 
-          {auxTab === 'share' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div className="note-meta-pill-wrap">
               <button
                 type="button"
-                className="btn btn-secondary"
-                disabled={!secretStatus?.slack_webhook_url}
-                onClick={async () => {
-                  await onShareSlack(note.id);
-                  notify('Slack へ共有しました');
+                className="note-meta-pill"
+                aria-expanded={folderMenuOpen}
+                onClick={() => {
+                  setFolderMenuOpen((o) => !o);
+                  setParticipantsOpen(false);
                 }}
               >
-                <Share2 size={15} strokeWidth={1.5} />
-                Slack へ共有{!secretStatus?.slack_webhook_url ? '（Webhook未設定）' : ''}
+                <FolderIcon size={15} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
+                <span>{folderDisplayName}</span>
               </button>
+
+              {folderMenuOpen && folders.length > 0 && (
+                <div className="note-popover" role="menu" aria-label="フォルダ選択">
+                  {folders.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      className={`note-sidebar-item ${f.id === note.folder_id ? 'selected' : ''}`}
+                      onClick={() => {
+                        onUpdateNote({
+                          ...note,
+                          folder_id: f.id,
+                          updated_at: new Date().toISOString(),
+                        });
+                        setFolderMenuOpen(false);
+                      }}
+                    >
+                      <FolderIcon size={15} strokeWidth={1.75} />
+                      <span>{f.id === 'personal' ? '個人' : f.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Toolbar */}
+        <div className="note-toolbar">
+          <div className="note-tablist" role="tablist" aria-label="ノート表示切り替え">
+            <button
+              ref={transcriptTabRef}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'transcript'}
+              className={`note-tab ${activeTab === 'transcript' ? 'active' : ''}`}
+              onClick={() => {
+                setActiveTab('transcript');
+                setHasUnreadTranscript(false);
+              }}
+              onKeyDown={(e) => handleTabKeyDown(e, 'transcript')}
+            >
+              <AudioLines size={15} strokeWidth={1.75} aria-hidden="true" />
+              <span>文字起こし</span>
+              {hasUnreadTranscript && (
+                <span className="note-tab-unread-dot" aria-label="未読の文字起こし" />
+              )}
+            </button>
+
+            <button
+              ref={notesTabRef}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'notes'}
+              className={`note-tab ${activeTab === 'notes' ? 'active' : ''}`}
+              onClick={() => setActiveTab('notes')}
+              onKeyDown={(e) => handleTabKeyDown(e, 'notes')}
+            >
+              <List size={15} strokeWidth={1.75} aria-hidden="true" />
+              <span>あなたのノート</span>
+            </button>
+          </div>
+
+          <div className="note-toolbar-right">
+            {/* Recording / Processing / Completed Pill */}
+            {(phase === 'idle' || phase === 'recording') && (
+              <div className="note-rec-pill">
+                <button
+                  type="button"
+                  className="note-rec-btn"
+                  aria-pressed={phase === 'recording'}
+                  aria-label={phase === 'recording' ? '録音を停止' : '録音を開始'}
+                  onClick={handleRecordButtonClick}
+                >
+                  {phase === 'recording' ? (
+                    <span className="note-rec-btn-square" />
+                  ) : (
+                    <span className="note-rec-btn-dot" />
+                  )}
+                </button>
+
+                <NoteWaveform
+                  mode={phase === 'recording' ? 'recording' : 'idle'}
+                  levelRms={
+                    isExternalRecording
+                      ? recordingStatus?.level_rms ?? 0
+                      : localRms
+                  }
+                  waveform={recordingStatus?.waveform ?? []}
+                />
+
+                <span
+                  className={`note-timer ${phase === 'idle' ? 'muted' : ''}`}
+                  aria-hidden="true"
+                >
+                  {formatNoteTimer(timerMs)}
+                </span>
+              </div>
+            )}
+
+            {phase === 'processing' && (
+              <div className="note-rec-pill">
+                <NoteWaveform mode="processing" />
+                <span className="note-status-label">文字起こし中…</span>
+              </div>
+            )}
+
+            {phase === 'completed' && (
+              <div className="note-rec-pill">
+                <button
+                  type="button"
+                  className="note-play-btn"
+                  aria-label={isPlaying ? '再生を一時停止' : '録音を再生'}
+                  onClick={() => setIsPlaying((p) => !p)}
+                >
+                  {isPlaying ? (
+                    <Pause size={20} strokeWidth={1.75} />
+                  ) : (
+                    <Play size={20} strokeWidth={1.75} />
+                  )}
+                </button>
+
+                <NoteWaveform mode="completed" playbackProgress={playbackProgress} />
+
+                <span className="note-timer" aria-hidden="true">
+                  {formatNoteTimer(timerMs)}
+                </span>
+
+                <span className="note-pill-divider" aria-hidden="true" />
+
+                <span className="note-status-label">文字起こし済み</span>
+
+                <button
+                  type="button"
+                  className="note-rerecord-btn"
+                  aria-label="再録音"
+                  onClick={handleRecordButtonClick}
+                >
+                  <Mic size={12} strokeWidth={1.75} />
+                </button>
+              </div>
+            )}
+
+            {/* Share Pill */}
+            <div className="note-share-wrap">
+              <div className="note-share-pill">
+                <button
+                  type="button"
+                  className="note-share-action"
+                  aria-expanded={shareOpen}
+                  aria-label="共有"
+                  onClick={() => setShareOpen((o) => !o)}
+                >
+                  <Upload size={15} strokeWidth={1.75} aria-hidden="true" />
+                  <span className="note-share-label">共有</span>
+                </button>
+                <span className="note-pill-divider" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="note-share-action"
+                  aria-label="リンクをコピー"
+                  onClick={handleCopyLink}
+                >
+                  <Link2 size={15} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+              </div>
+
+              {shareOpen && (
+                <div className="note-popover right" role="dialog" aria-label="共有オプション">
+                  <button
+                    type="button"
+                    className="note-sidebar-item"
+                    onClick={handleCopyMarkdown}
+                  >
+                    <Copy size={15} strokeWidth={1.75} />
+                    <span>ノートをコピー</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="note-sidebar-item"
+                    onClick={async () => {
+                      await onPastePrepare(formatNoteForCopy(note, settings.copy_format || 'markdown'));
+                      setShareOpen(false);
+                    }}
+                  >
+                    <ClipboardPaste size={15} strokeWidth={1.75} />
+                    <span>貼り付け準備</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="note-sidebar-item"
+                    onClick={() => setNotionPreviewOpen(true)}
+                  >
+                    <UploadCloud size={15} strokeWidth={1.75} />
+                    <span>
+                      {note.notion_sync.status === 'synced'
+                        ? 'Notion を更新'
+                        : note.notion_sync.status === 'failed'
+                          ? 'Notion 再試行'
+                          : 'Notion に保存'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="note-sidebar-item"
+                    onClick={async () => {
+                      await onShareSlack(note.id);
+                      notify('Slack に送信しました');
+                      setShareOpen(false);
+                    }}
+                  >
+                    <Send size={15} strokeWidth={1.75} />
+                    <span>Slack に共有</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="note-sidebar-item"
+                    onClick={async () => {
+                      await onSendWebhook(note.id);
+                      notify('Webhook を送信しました');
+                      setShareOpen(false);
+                    }}
+                  >
+                    <Link2 size={15} strokeWidth={1.75} />
+                    <span>Webhook 送信</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Status Toast / Errors */}
+        {toast && (
+          <div
+            style={{
+              marginTop: '10px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '13px',
+              color: 'var(--ns-text-secondary)',
+            }}
+          >
+            <Check size={14} strokeWidth={1.75} />
+            <span>{toast}</span>
+          </div>
+        )}
+
+        {transcribeError && (
+          <div
+            style={{
+              marginTop: '10px',
+              fontSize: '13px',
+              color: 'var(--danger)',
+            }}
+          >
+            {transcribeError}
+          </div>
+        )}
+
+        {/* Body (Scrollable, flex: 1, min-height: 0) */}
+        <div className="note-body-area">
+          <div
+            ref={scrollRef}
+            className="note-body-scroll"
+            onScroll={handleScroll}
+          >
+            {activeTab === 'transcript' && (
+              <div aria-live="polite" aria-relevant="additions">
+                {displayedSegments.length === 0 ? (
+                  <div className="note-empty-state">
+                    会話がここに表示されます...
+                  </div>
+                ) : (
+                  <div
+                    className={`note-transcript-list ${
+                      phase === 'completed' ? 'completed' : ''
+                    }`}
+                  >
+                    {displayedSegments.map((seg) => (
+                      <article key={seg.id} className="note-turn">
+                        <div className="note-turn-meta">
+                          <span className="note-turn-time">
+                            {formatNoteTimer(seg.start_ms)}
+                          </span>
+                          <span className="note-turn-speaker">
+                            {seg.speaker || '参加者'}
+                          </span>
+                        </div>
+                        <p className="note-turn-text">{seg.text}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'notes' && (
+              <div className="note-notes-tab">
+                {!hasNotesContent && !editingManualNotes ? (
+                  <div className="note-empty-state" style={{ flexDirection: 'column', gap: '8px' }}>
+                    <span>メモはまだありません</span>
+                    <button
+                      type="button"
+                      className="note-inline-link"
+                      onClick={() => {
+                        setEditingManualNotes(true);
+                        setTimeout(() => manualNotesRef.current?.focus(), 0);
+                      }}
+                    >
+                      メモを追記
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {(note.summary.trim() || llmConfigured) && (
+                      <section className="note-card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h2 className="note-card-title">要約</h2>
+                          {llmConfigured && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              style={{ height: '30px', fontSize: '12px' }}
+                              disabled={aiBusy}
+                              onClick={async () => {
+                                setAiBusy(true);
+                                setAiError(null);
+                                try {
+                                  await onSummarize(note.id);
+                                } catch (err) {
+                                  setAiError(String(err));
+                                } finally {
+                                  setAiBusy(false);
+                                }
+                              }}
+                            >
+                              <Sparkles size={13} strokeWidth={1.75} />
+                              {aiBusy ? '生成中' : '要約を生成'}
+                            </button>
+                          )}
+                        </div>
+                        {note.summary.trim() ? (
+                          <p style={{ margin: 0, fontSize: '15px', lineHeight: '26px' }}>
+                            {note.summary}
+                          </p>
+                        ) : (
+                          <p style={{ margin: 0, fontSize: '13px', color: 'var(--ns-text-muted)' }}>
+                            要約はまだ生成されていません。
+                          </p>
+                        )}
+                      </section>
+                    )}
+
+                    {(note.decisions.length > 0 || note.action_items.length > 0) && (
+                      <section className="note-card">
+                        <h2 className="note-card-title">メモ・アクション</h2>
+                        <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '15px', lineHeight: '26px' }}>
+                          {note.decisions.map((d, i) => (
+                            <li key={`d-${i}`}>{d}</li>
+                          ))}
+                          {note.action_items.map((a) => (
+                            <li key={a.id}>
+                              {a.text}
+                              {a.assignee ? `（${a.assignee}）` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+
+                    <section className="note-card">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h2 className="note-card-title">手入力メモ</h2>
+                        {!editingManualNotes && (
+                          <button
+                            type="button"
+                            className="note-inline-link"
+                            onClick={() => {
+                              setEditingManualNotes(true);
+                              setTimeout(() => manualNotesRef.current?.focus(), 0);
+                            }}
+                          >
+                            <Plus size={13} style={{ verticalAlign: 'middle', marginRight: '2px' }} />
+                            編集
+                          </button>
+                        )}
+                      </div>
+                      <textarea
+                        ref={manualNotesRef}
+                        aria-label="手入力メモ"
+                        className="textarea"
+                        value={note.manual_notes}
+                        onChange={(e) =>
+                          onUpdateNote({
+                            ...note,
+                            manual_notes: e.target.value,
+                            updated_at: new Date().toISOString(),
+                          })
+                        }
+                        placeholder="メモを入力..."
+                      />
+                    </section>
+                  </>
+                )}
+
+                {!llmConfigured && (
+                  <section className="note-card" style={{ backgroundColor: 'var(--ns-bg-sidebar)' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>LLMが未設定です</div>
+                    <p style={{ margin: 0, fontSize: '13px', color: 'var(--ns-text-secondary)' }}>
+                      AI要約や質問応答を使うには設定画面でプロバイダを設定してください。
+                    </p>
+                    <button
+                      type="button"
+                      className="note-inline-link"
+                      style={{ alignSelf: 'flex-start' }}
+                      onClick={onGoSettings}
+                    >
+                      AI設定を開く
+                    </button>
+                  </section>
+                )}
+
+                {aiError && (
+                  <div style={{ fontSize: '13px', color: 'var(--danger)' }}>{aiError}</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {activeTab === 'transcript' && !isAtBottom && displayedSegments.length > 0 && (
+            <button
+              type="button"
+              className="note-jump-latest"
+              onClick={scrollToLatest}
+            >
+              <ArrowDown size={13} strokeWidth={1.75} aria-hidden="true" />
+              <span>最新へ</span>
+            </button>
+          )}
+        </div>
+
+        {/* Q&A Answer Card (when answered) */}
+        {qaAnswer && (
+          <div className="note-qa-card" role="region" aria-label="質問への回答">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+              <div style={{ whiteSpace: 'pre-wrap' }}>{qaAnswer.answer}</div>
               <button
                 type="button"
-                className="btn btn-secondary"
-                disabled={!settings.generic_webhook_url}
-                onClick={async () => {
-                  await onSendWebhook(note.id);
-                  notify('Webhook へ送信しました');
-                }}
+                aria-label="回答を閉じる"
+                onClick={() => setQaAnswer(null)}
+                style={{ padding: '2px', color: 'var(--ns-text-muted)' }}
               >
-                <Send size={15} strokeWidth={1.5} />
-                汎用 Webhook 送信{!settings.generic_webhook_url ? '（URL未設定）' : ''}
+                <X size={14} />
               </button>
             </div>
-          )}
-        </aside>
+          </div>
+        )}
+
+        {/* Bottom Question Input + Consent Notice */}
+        <div className="note-composer-wrap">
+          <div className="note-composer-box">
+            <textarea
+              aria-label="ノートについて何でも質問"
+              className="note-composer-input"
+              rows={1}
+              placeholder="ノートについて何でも質問"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={handleQuestionKeyDown}
+            />
+            <button
+              type="button"
+              className="note-send-btn"
+              aria-label="質問を送信"
+              disabled={!question.trim() || aiBusy}
+              onClick={handleAskQuestion}
+            >
+              <ArrowUp size={18} strokeWidth={2} aria-hidden="true" />
+            </button>
+          </div>
+
+          <div className="note-consent-note">
+            <Shield size={13} strokeWidth={1.75} aria-hidden="true" />
+            <span>他の人を録音するときは必ず同意を得てください</span>
+          </div>
+        </div>
       </div>
 
-      {/* Notion Preview Modal */}
+      {/* Re-record Confirmation Dialog */}
+      {rerecordConfirmOpen && (
+        <div
+          className="note-dialog-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rerecord-dialog-title"
+        >
+          <div className="note-dialog">
+            <h2 id="rerecord-dialog-title" className="section-title">
+              録音をやり直しますか？
+            </h2>
+            <p style={{ margin: 0, fontSize: '14px', color: 'var(--ns-text-secondary)' }}>
+              既存の文字起こしは保持したまま、新しい録音内容を末尾に追記します。
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setRerecordConfirmOpen(false)}
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  setRerecordConfirmOpen(false);
+                  void beginRecording();
+                }}
+              >
+                やり直す
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notion Duplicate-Prevention Preview Dialog */}
       {notionPreviewOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="notion-modal-title">
-          <div className="modal-panel">
-            <h2 id="notion-modal-title" className="section-title">Notion 保存前の確認</h2>
-            {!notionReady ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <p className="text-secondary" style={{ margin: 0 }}>
-                  Notion の接続または保存先データベース／ページが未設定です。設定画面で接続を完了してください。
-                </p>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                  <button type="button" className="btn btn-secondary" onClick={() => setNotionPreviewOpen(false)}>
-                    閉じる
-                  </button>
-                  <button type="button" className="btn btn-primary" onClick={() => { setNotionPreviewOpen(false); onGoSettings(); }}>
-                    Notion設定へ
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="surface-subtle" style={{ fontSize: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div>保存先: <strong>{settings.notion_target_name || settings.notion_target_id}</strong>（{settings.notion_target_type}）</div>
-                  <div>タイトル: <strong>{note.title}</strong></div>
-                  <div>要約文字数: {note.summary.length} 文字 / 文字起こし行数: {note.segments.length} 行</div>
-                  {note.notion_sync.page_id && (
-                    <div className="status-chip accent" style={{ alignSelf: 'flex-start' }}>
-                      既存ページを更新（重複ページを作成しません）
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                  <button type="button" className="btn btn-secondary" onClick={() => setNotionPreviewOpen(false)}>
-                    キャンセル
-                  </button>
-                  <button type="button" className="btn btn-primary" disabled={notionBusy} onClick={handleConfirmNotionSave}>
-                    {notionBusy ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <UploadCloud size={15} strokeWidth={1.5} />}
-                    {notionBusy ? '同期中' : 'Notion へ保存'}
-                  </button>
-                </div>
-              </>
+        <div
+          className="note-dialog-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="notion-dialog-title"
+        >
+          <div className="note-dialog">
+            <h2 id="notion-dialog-title" className="section-title">
+              Notion 保存前の確認
+            </h2>
+            <p style={{ margin: 0, fontSize: '13px', color: 'var(--ns-text-secondary)' }}>
+              {note.notion_sync.page_id
+                ? '既存ページを更新（重複ページを作成しません）'
+                : '新規ページを作成'}
+            </p>
+            {!notionReady && (
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--danger)' }}>
+                Notion 連携が未設定です。連携設定からトークンと保存先を設定してください。
+              </p>
             )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setNotionPreviewOpen(false)}
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!notionReady || notionBusy}
+                onClick={handleConfirmNotionSave}
+              >
+                {notionBusy ? '保存中...' : '保存を実行'}
+              </button>
+            </div>
           </div>
         </div>
       )}

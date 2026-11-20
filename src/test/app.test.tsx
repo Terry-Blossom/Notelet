@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { formatMs, formatNoteForCopy, createEmptyNote } from '../lib/format';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+import { formatMs, formatNoteTimer, formatNoteForCopy, createEmptyNote } from '../lib/format';
 import { App } from '../App';
 import { NoteEditorView } from '../components/NoteEditorView';
 import { HistoryView } from '../components/HistoryView';
@@ -85,7 +85,13 @@ describe('App & Views', () => {
     expect(screen.getByLabelText('ノートタイトル')).toBeInTheDocument();
   });
 
-  it('shows LLM unconfigured reason and Notion duplicate-prevention preview', () => {
+  it('formats note timer into MM:SS and H:MM:SS', () => {
+    expect(formatNoteTimer(0)).toBe('00:00');
+    expect(formatNoteTimer(18_000)).toBe('00:18');
+    expect(formatNoteTimer(3_723_000)).toBe('1:02:03');
+  });
+
+  it('shows idle state, tabs, LLM notice, and Notion duplicate-prevention preview', () => {
     const note: Note = {
       ...createEmptyNote(),
       title: '設計レビュー',
@@ -131,12 +137,107 @@ describe('App & Views', () => {
         onGoSettings={vi.fn()}
       />
     );
-    expect(screen.getByText('LLMが未設定です')).toBeInTheDocument();
-    expect(screen.getByText(/自動話者識別: 未対応/)).toBeInTheDocument();
 
+    expect(screen.getByText('会話がここに表示されます...')).toBeInTheDocument();
+    expect(screen.getByText('他の人を録音するときは必ず同意を得てください')).toBeInTheDocument();
+
+    // Switch to あなたのノート tab via keyboard
+    const transcriptTab = screen.getByRole('tab', { name: '文字起こし' });
+    fireEvent.keyDown(transcriptTab, { key: 'ArrowRight' });
+    expect(screen.getByText('メモはまだありません')).toBeInTheDocument();
+    expect(screen.getByText('LLMが未設定です')).toBeInTheDocument();
+
+    // Open share popover and Notion preview
+    fireEvent.click(screen.getByRole('button', { name: '共有' }));
     fireEvent.click(screen.getByRole('button', { name: /Notion を更新/ }));
     expect(screen.getByText('Notion 保存前の確認')).toBeInTheDocument();
     expect(screen.getByText(/既存ページを更新（重複ページを作成しません）/)).toBeInTheDocument();
+  });
+
+  it('transitions idle -> recording -> processing -> completed and confirms re-record', async () => {
+    vi.useFakeTimers();
+    const note: Note = {
+      ...createEmptyNote(),
+      title: '',
+    };
+    const onUpdateNote = vi.fn();
+    const { rerender } = render(
+      <NoteEditorView
+        note={note}
+        settings={baseSettings}
+        recipes={[]}
+        secretStatus={null}
+        transcribing={false}
+        transcribeError={null}
+        onUpdateNote={onUpdateNote}
+        onCopyText={vi.fn()}
+        onPastePrepare={vi.fn()}
+        onSaveToNotion={vi.fn()}
+        onSummarize={vi.fn()}
+        onDraftFollowup={vi.fn()}
+        onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
+        onChatNote={vi.fn()}
+        onShareSlack={vi.fn()}
+        onSendWebhook={vi.fn()}
+        onAddDictionaryTerm={vi.fn()}
+        onGoSettings={vi.fn()}
+      />
+    );
+
+    // Start recording
+    const startBtn = screen.getByRole('button', { name: '録音を開始' });
+    expect(startBtn).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(startBtn);
+
+    const stopBtn = screen.getByRole('button', { name: '録音を停止' });
+    expect(stopBtn).toHaveAttribute('aria-pressed', 'true');
+
+    // Stop recording -> processing -> completed
+    fireEvent.click(stopBtn);
+    expect(screen.getByText('文字起こし中…')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(onUpdateNote).toHaveBeenCalled();
+    const updatedNote = onUpdateNote.mock.calls[0][0] as Note;
+    expect(updatedNote.segments.length).toBeGreaterThan(0);
+
+    rerender(
+      <NoteEditorView
+        note={updatedNote}
+        settings={baseSettings}
+        recipes={[]}
+        secretStatus={null}
+        transcribing={false}
+        transcribeError={null}
+        onUpdateNote={onUpdateNote}
+        onCopyText={vi.fn()}
+        onPastePrepare={vi.fn()}
+        onSaveToNotion={vi.fn()}
+        onSummarize={vi.fn()}
+        onDraftFollowup={vi.fn()}
+        onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
+        onChatNote={vi.fn()}
+        onShareSlack={vi.fn()}
+        onSendWebhook={vi.fn()}
+        onAddDictionaryTerm={vi.fn()}
+        onGoSettings={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('文字起こし済み')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '録音を再生' })).toBeInTheDocument();
+
+    // Re-record opens confirmation dialog
+    fireEvent.click(screen.getByRole('button', { name: '再録音' }));
+    expect(screen.getByText('録音をやり直しますか？')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'キャンセル' }));
+    expect(screen.queryByText('録音をやり直しますか？')).not.toBeInTheDocument();
+
+    vi.useRealTimers();
   });
 
   it('shows all notes and Notion sync status indicators', () => {
