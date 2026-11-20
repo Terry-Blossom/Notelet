@@ -29,12 +29,29 @@ fn get_snapshot(state: State<AppState>) -> AppDataSnapshot {
 }
 
 #[tauri::command]
-fn save_settings(state: State<AppState>, settings: AppSettings) -> Result<AppDataSnapshot, String> {
+fn save_settings(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    settings: AppSettings,
+) -> Result<AppDataSnapshot, String> {
     let mut data = state.data.lock().unwrap();
-    data.settings = settings;
+    data.settings = settings.clone();
     storage::append_audit(&mut data, "settings_updated", "アプリ設定を更新");
     storage::save_snapshot(&data)?;
-    Ok(data.clone())
+    drop(data);
+
+    let _ = app.global_shortcut().unregister_all();
+    if !settings.record_shortcut.trim().is_empty() {
+        let _ = app.global_shortcut().register(settings.record_shortcut.trim());
+    }
+    if !settings.voice_typing_shortcut.trim().is_empty()
+        && settings.voice_typing_shortcut.trim() != settings.record_shortcut.trim()
+    {
+        let _ = app
+            .global_shortcut()
+            .register(settings.voice_typing_shortcut.trim());
+    }
+    Ok(state.data.lock().unwrap().clone())
 }
 
 #[tauri::command]

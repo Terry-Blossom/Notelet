@@ -528,6 +528,38 @@ pub async fn install_runtime_binary(
     }
 }
 
+fn ensure_local_wav(input_path: &Path) -> Result<(PathBuf, bool), String> {
+    let ext = input_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if ext == "wav" {
+        return Ok((input_path.to_path_buf(), false));
+    }
+    let converted = input_path.with_extension("converted_16k.wav");
+    let status = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-i",
+            &input_path.to_string_lossy(),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
+            &converted.to_string_lossy(),
+        ])
+        .status();
+    match status {
+        Ok(st) if st.success() && converted.exists() => Ok((converted, true)),
+        _ => Err(format!(
+            "ローカルASRモデルは 16kHz WAV 形式が必要です（.{ext} を変換するための ffmpeg が見つかりませんでした）。WAV に変換してアップロードするか、クラウドASRをご利用ください。"
+        )),
+    }
+}
+
 pub async fn transcribe_wav(
     wav_path: &Path,
     settings: &AppSettings,
@@ -555,23 +587,30 @@ pub async fn transcribe_wav(
 
     match model.provider {
         AsrProviderKind::LocalWhisper => {
+            let (local_wav, should_cleanup) = ensure_local_wav(wav_path)?;
             let cli = resolve_whisper_cli(&settings.whisper_cli_path).ok_or_else(|| {
-                "ローカルWhisperランタイム（whisper-cli）が見つかりません。設定＞ASRモデルからパスを指定してください。クラウドへの自動切替は行いません。"
+                if should_cleanup {
+                    let _ = fs::remove_file(&local_wav);
+                }
+                "ローカルWhisperランタイム（whisper-cli）が見つかりません。設定＞ASRモデルから導入してください。クラウドへの自動切替は行いません。"
                     .to_string()
             })?;
             let model_path = storage::models_dir().join(&model.filename);
             if !model_path.exists() {
+                if should_cleanup {
+                    let _ = fs::remove_file(&local_wav);
+                }
                 return Err(format!(
                     "モデルファイル（{}）が未取得です。設定＞ASRモデルからダウンロードしてください。",
                     model.filename
                 ));
             }
-            let out_base = wav_path.with_extension("whisper_out");
+            let out_base = local_wav.with_extension("whisper_out");
             let mut cmd = Command::new(cli);
             cmd.arg("-m")
                 .arg(&model_path)
                 .arg("-f")
-                .arg(wav_path)
+                .arg(&local_wav)
                 .arg("-oj")
                 .arg("-of")
                 .arg(&out_base)
@@ -587,6 +626,9 @@ pub async fn transcribe_wav(
             let output = cmd
                 .output()
                 .map_err(|e| format!("whisper-cli の実行に失敗しました: {e}"))?;
+            if should_cleanup {
+                let _ = fs::remove_file(&local_wav);
+            }
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(format!("Whisper 文字起こしエラー: {stderr}"));
@@ -631,14 +673,21 @@ pub async fn transcribe_wav(
             Ok((segs, false, model.name))
         }
         AsrProviderKind::LocalParakeet => {
+            let (local_wav, should_cleanup) = ensure_local_wav(wav_path)?;
             let cli = resolve_parakeet_cli(&settings.parakeet_cli_path).ok_or_else(|| {
-                "Parakeet ランタイム（sherpa-onnx-offline）が未設定です。設定＞ASRモデルで実行ファイルのパスを指定してください。"
+                if should_cleanup {
+                    let _ = fs::remove_file(&local_wav);
+                }
+                "Parakeet ランタイム（sherpa-onnx-offline）が未設定です。設定＞ASRモデルから導入してください。"
                     .to_string()
             })?;
             let model_dir = storage::models_dir().join(&model.filename);
             if !model_dir.exists() {
+                if should_cleanup {
+                    let _ = fs::remove_file(&local_wav);
+                }
                 return Err(format!(
-                    "Parakeet モデルフォルダ（{}）が見つかりません。ONNXモデルをモデルディレクトリへ配置してください。",
+                    "Parakeet モデルフォルダ（{}）が見つかりません。設定＞ASRモデルからモデルを取得してください。",
                     model_dir.display()
                 ));
             }
@@ -648,7 +697,7 @@ pub async fn transcribe_wav(
             if ctc_model.exists() {
                 cmd.arg(format!("--nemo-ctc-model={}", ctc_model.display()))
                     .arg(format!("--tokens={}", tokens.display()))
-                    .arg(wav_path);
+                    .arg(&local_wav);
             } else {
                 let encoder = model_dir.join("encoder.int8.onnx");
                 let decoder = model_dir.join("decoder.int8.onnx");
@@ -658,11 +707,14 @@ pub async fn transcribe_wav(
                     .arg(format!("--joiner={}", joiner.display()))
                     .arg(format!("--tokens={}", tokens.display()))
                     .arg("--model-type=nemo_transducer")
-                    .arg(wav_path);
+                    .arg(&local_wav);
             }
             let output = cmd
                 .output()
                 .map_err(|e| format!("Parakeet ランタイム実行失敗: {e}"))?;
+            if should_cleanup {
+                let _ = fs::remove_file(&local_wav);
+            }
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(format!("Parakeet 文字起こしエラー: {stderr}"));

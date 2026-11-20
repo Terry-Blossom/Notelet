@@ -255,28 +255,60 @@ pub async fn save_note_to_notion(
         }
     });
 
-    if settings.notion_target_type == "database" && !settings.notion_mapping.summary_prop.is_empty() {
-        if !note.summary.is_empty() {
+    if settings.notion_target_type == "database" {
+        if !settings.notion_mapping.summary_prop.is_empty() && !note.summary.is_empty() {
             properties[&settings.notion_mapping.summary_prop] = json!({
                 "rich_text": [{ "text": { "content": note.summary.chars().take(1900).collect::<String>() } }]
             });
         }
+        if !settings.notion_mapping.date_prop.is_empty() && !note.created_at.is_empty() {
+            properties[&settings.notion_mapping.date_prop] = json!({
+                "date": { "start": note.created_at }
+            });
+        }
+        if !settings.notion_mapping.participants_prop.is_empty() && !note.participants.is_empty() {
+            properties[&settings.notion_mapping.participants_prop] = json!({
+                "rich_text": [{ "text": { "content": note.participants.join(", ") } }]
+            });
+        }
     }
 
+    let children = build_children_blocks(note);
     let payload = json!({
         "parent": parent,
         "properties": properties,
-        "children": build_children_blocks(note)
+        "children": children
     });
 
-    let resp = client
+    let mut resp = client
         .post("https://api.notion.com/v1/pages")
-        .bearer_auth(token)
+        .bearer_auth(&token)
         .header("Notion-Version", NOTION_VERSION)
         .json(&payload)
         .send()
         .await
         .map_err(|e| format!("Notion 保存通信エラー（ノートはローカルに安全に保持されています）: {e}"))?;
+
+    // DB側のプロパティ名が一致しない(400)場合はタイトルのみでフォールバック再試行
+    if resp.status() == reqwest::StatusCode::BAD_REQUEST && settings.notion_target_type == "database" {
+        let fallback_payload = json!({
+            "parent": parent,
+            "properties": {
+                &settings.notion_mapping.title_prop: {
+                    "title": [{ "text": { "content": title_text } }]
+                }
+            },
+            "children": children
+        });
+        resp = client
+            .post("https://api.notion.com/v1/pages")
+            .bearer_auth(&token)
+            .header("Notion-Version", NOTION_VERSION)
+            .json(&fallback_payload)
+            .send()
+            .await
+            .map_err(|e| format!("Notion 保存通信エラー: {e}"))?;
+    }
 
     if !resp.status().is_success() {
         let s = resp.status();

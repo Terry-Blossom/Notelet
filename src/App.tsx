@@ -48,6 +48,7 @@ import {
   apiPurgeAllData,
   apiResumeRecording,
   apiRunRecipe,
+  apiSaveRecipe,
   apiSaveDictionaryEntry,
   apiSaveNote,
   apiSaveSettings,
@@ -659,6 +660,13 @@ export const App: React.FC = () => {
               }));
             }}
             onRunRecipe={apiRunRecipe}
+            onSaveRecipe={async (recipe) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiSaveRecipe(recipe));
+              } else {
+                setSnapshot((prev) => ({ ...prev, recipes: [...prev.recipes, recipe] }));
+              }
+            }}
             onChatNote={apiChatNotes}
             onShareSlack={apiShareToSlack}
             onSendWebhook={apiSendWebhook}

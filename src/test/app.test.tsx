@@ -123,6 +123,7 @@ describe('App & Views', () => {
         onSummarize={vi.fn()}
         onDraftFollowup={vi.fn()}
         onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
         onChatNote={vi.fn()}
         onShareSlack={vi.fn()}
         onSendWebhook={vi.fn()}

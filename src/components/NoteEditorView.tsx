@@ -38,6 +38,7 @@ interface NoteEditorViewProps {
   onSummarize: (noteId: string) => Promise<void>;
   onDraftFollowup: (noteId: string) => Promise<void>;
   onRunRecipe: (noteId: string, prompt: string) => Promise<string>;
+  onSaveRecipe: (recipe: Recipe) => Promise<void>;
   onChatNote: (noteIds: string[], question: string) => Promise<ChatAnswer>;
   onShareSlack: (noteId: string) => Promise<void>;
   onSendWebhook: (noteId: string) => Promise<void>;
@@ -59,6 +60,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   onSummarize,
   onDraftFollowup,
   onRunRecipe,
+  onSaveRecipe,
   onChatNote,
   onShareSlack,
   onSendWebhook,
@@ -72,6 +74,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [recipeOutput, setRecipeOutput] = useState<string>('');
+  const [newRecipeName, setNewRecipeName] = useState('');
+  const [newRecipePrompt, setNewRecipePrompt] = useState('');
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatAnswer, setChatAnswer] = useState<ChatAnswer | null>(null);
   const [newDictTerm, setNewDictTerm] = useState('');
@@ -556,6 +560,45 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   <textarea className="textarea" style={{ minHeight: '140px' }} value={recipeOutput} readOnly />
                 </div>
               )}
+
+              <details className="surface-subtle">
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>新しい Recipe を作成</summary>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="Recipe 名（例: 営業日報用まとめ）"
+                    value={newRecipeName}
+                    onChange={(e) => setNewRecipeName(e.target.value)}
+                  />
+                  <textarea
+                    className="textarea"
+                    style={{ minHeight: '72px' }}
+                    placeholder="AIへの指示プロンプト"
+                    value={newRecipePrompt}
+                    onChange={(e) => setNewRecipePrompt(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={!newRecipeName.trim() || !newRecipePrompt.trim()}
+                    onClick={async () => {
+                      await onSaveRecipe({
+                        id: crypto.randomUUID(),
+                        name: newRecipeName.trim(),
+                        description: 'カスタム Recipe',
+                        prompt: newRecipePrompt.trim(),
+                        is_builtin: false,
+                      });
+                      setNewRecipeName('');
+                      setNewRecipePrompt('');
+                      notify('Recipe を保存しました');
+                    }}
+                  >
+                    Recipe を保存
+                  </button>
+                </div>
+              </details>
             </div>
           )}
 
