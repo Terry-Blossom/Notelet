@@ -358,12 +358,32 @@ pub async fn save_note_to_notion(
         .await
         .map_err(|e| format!("Notion 保存通信エラー（ノートはローカルに安全に保持されています）: {e}"))?;
 
-    // DB側のプロパティ名が一致しない(400)場合はタイトルのみでフォールバック再試行
+    // DB側のプロパティ名が一致しない(400)場合は、DBスキーマから実際のtitleプロパティ名（例: 名前 / Name）を取得して再試行
     if resp.status() == reqwest::StatusCode::BAD_REQUEST && settings.notion_target_type == "database" {
+        let mut resolved_title_prop = settings.notion_mapping.title_prop.clone();
+        let db_url = format!("https://api.notion.com/v1/databases/{}", settings.notion_target_id);
+        if let Ok(db_resp) = client
+            .get(&db_url)
+            .bearer_auth(&token)
+            .header("Notion-Version", NOTION_VERSION)
+            .send()
+            .await
+        {
+            if let Ok(db_json) = db_resp.json::<Value>().await {
+                if let Some(props) = db_json["properties"].as_object() {
+                    for (prop_name, prop_val) in props {
+                        if prop_val["type"].as_str() == Some("title") {
+                            resolved_title_prop = prop_name.clone();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         let fallback_payload = json!({
             "parent": parent,
             "properties": {
-                &settings.notion_mapping.title_prop: {
+                resolved_title_prop: {
                     "title": [{ "text": { "content": title_text } }]
                 }
             },
