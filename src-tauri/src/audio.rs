@@ -162,6 +162,17 @@ impl AudioManager {
         source_mode: AudioSourceMode,
         device_id: Option<String>,
     ) -> Result<RecordingStatus, String> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.start_inner(source_mode, device_id)
+        }))
+        .unwrap_or_else(|_| Err("録音デバイスの初期化中に予期しないエラーが発生しました。入力デバイスを確認してください。".to_string()))
+    }
+
+    fn start_inner(
+        &mut self,
+        source_mode: AudioSourceMode,
+        device_id: Option<String>,
+    ) -> Result<RecordingStatus, String> {
         if let Some(handle) = self.worker.take() {
             self.stop_flag.store(true, Ordering::SeqCst);
             let _ = handle.join();

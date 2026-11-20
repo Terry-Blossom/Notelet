@@ -127,7 +127,7 @@ fn start_recording(
     };
 
     let app_handle = app.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(800)).await;
             let st_ref = app_handle.state::<AppState>();
