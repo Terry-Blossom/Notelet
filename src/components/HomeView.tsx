@@ -3,7 +3,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Cpu,
-  MessageSquare,
   Plus,
   Search,
   Settings,
@@ -11,7 +10,6 @@ import {
 import { AppSettings, ChatAnswer, Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
 import { NotionSyncBadge } from './NotionSyncBadge';
-import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 
 interface HomeViewProps {
   settings: AppSettings;
@@ -31,7 +29,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
   folders,
   onOpenNote,
   onCreateManualNote,
-  onChatSpace,
   onGoSettings,
 }) => {
   const now = new Date();
@@ -40,13 +37,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [selectedDateKey, setSelectedDateKey] = useState<string>('');
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-
-  const [chatQuestion, setChatQuestion] = useState('');
-  const [chatAnswer, setChatAnswer] = useState<ChatAnswer | null>(null);
-  const [chatBusy, setChatBusy] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
-
-  const llmConfigured = settings.llm_provider !== 'none' && settings.llm_provider !== '';
 
   const noteDates = useMemo(() => {
     const map = new Set<string>();
@@ -85,28 +75,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
       return true;
     });
   }, [notes, selectedSpaceId, searchQuery, selectedDateKey]);
-
-  const handleChatSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatQuestion.trim()) return;
-    setChatBusy(true);
-    setChatError(null);
-    try {
-      const targetIds = notes
-        .filter((n) => selectedSpaceId === 'all' || n.folder_id === selectedSpaceId)
-        .map((n) => n.id);
-      const res = await onChatSpace(
-        targetIds,
-        chatQuestion.trim(),
-        selectedSpaceId === 'all' ? null : selectedSpaceId
-      );
-      setChatAnswer(res);
-    } catch (err) {
-      setChatError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setChatBusy(false);
-    }
-  };
 
   const shiftMonth = (delta: number) => {
     const d = new Date(calYear, calMonth + delta, 1);
@@ -233,83 +201,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     </button>
                   );
                 })}
-              </div>
-            )}
-          </section>
-
-          <section
-            style={{
-              paddingTop: '20px',
-              borderTop: '1px solid var(--border-subtle)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '12px',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <MessageSquare size={15} strokeWidth={1.5} />
-                <h2 className="section-title">AI チャット（{activeSpaceName}）</h2>
-              </div>
-              {!llmConfigured && (
-                <button type="button" className="btn btn-secondary" style={{ height: '28px', fontSize: '12px' }} onClick={onGoSettings}>
-                  AIを設定
-                </button>
-              )}
-            </div>
-
-            <form onSubmit={handleChatSubmit} style={{ display: 'flex', gap: '8px' }}>
-              <input
-                className="input"
-                placeholder={`${activeSpaceName} のノートをもとに質問...`}
-                value={chatQuestion}
-                onChange={(e) => setChatQuestion(e.target.value)}
-                disabled={chatBusy}
-              />
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={chatBusy || !chatQuestion.trim()}
-              >
-                {chatBusy ? '送信中' : '送信'}
-              </button>
-            </form>
-
-            {chatError && (
-              <p style={{ color: 'var(--danger)', margin: '0px' }}>{chatError}</p>
-            )}
-
-            {(chatBusy || chatAnswer) && (
-              <div
-                style={{
-                  padding: '12px 16px',
-                  borderRadius: '8px',
-                  backgroundColor: 'var(--bg-subtle)',
-                  border: '1px solid var(--border-subtle)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
-                }}
-              >
-                <StreamingMarkdownArticle
-                  content={chatBusy ? '' : chatAnswer?.answer || ''}
-                  isGenerating={chatBusy}
-                  animateOnChange
-                />
-                {!chatBusy && chatAnswer && chatAnswer.citations.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    {chatAnswer.citations.map((c, idx) => (
-                      <button
-                        key={`${c.note_id}-${idx}`}
-                        type="button"
-                        className="chip-filter"
-                        onClick={() => onOpenNote(c.note_id)}
-                      >
-                        {c.note_title}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
           </section>

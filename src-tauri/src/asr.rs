@@ -117,6 +117,25 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
 
     vec![
         AsrModelInfo {
+            id: "whisper-tiny-q5".to_string(),
+            name: "Whisper Tiny Q5_1 (超軽量・低メモリ)".to_string(),
+            provider: AsrProviderKind::LocalWhisper,
+            is_local: true,
+            languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
+            environment: "ローカル CPU (whisper.cpp)".into(),
+            memory_mb: 250,
+            license: "MIT (OpenAI Whisper / whisper.cpp)".into(),
+            size_mb: 32,
+            download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin".into(),
+            filename: "ggml-tiny-q5_1.bin".into(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: whisper_cli_ok,
+            compatibility_reason: whisper_reason.clone(),
+            installed: models_dir.join("ggml-tiny-q5_1.bin").exists(),
+            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
+        },
+        AsrModelInfo {
             id: "whisper-base".to_string(),
             name: "Whisper Base (GGML)".to_string(),
             provider: AsrProviderKind::LocalWhisper,
@@ -155,6 +174,25 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
         },
         AsrModelInfo {
+            id: "kotoba-whisper-v2-q5".to_string(),
+            name: "Kotoba-Whisper v2.0 Q5_0 (日本語特化チューニング)".to_string(),
+            provider: AsrProviderKind::LocalWhisper,
+            is_local: true,
+            languages: vec!["日本語".into()],
+            environment: "ローカル CPU / GPU (whisper.cpp)".into(),
+            memory_mb: 1500,
+            license: "Apache-2.0 (kotoba-tech)".into(),
+            size_mb: 538,
+            download_url: "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-ggml/resolve/main/ggml-kotoba-whisper-v2.0-q5_0.bin".into(),
+            filename: "ggml-kotoba-whisper-v2.0-q5_0.bin".into(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: whisper_cli_ok,
+            compatibility_reason: whisper_reason.clone(),
+            installed: models_dir.join("ggml-kotoba-whisper-v2.0-q5_0.bin").exists(),
+            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
+        },
+        AsrModelInfo {
             id: "whisper-large-v3-turbo-q5".to_string(),
             name: "Whisper Large v3 Turbo Q5_0 (高精度)".to_string(),
             provider: AsrProviderKind::LocalWhisper,
@@ -166,7 +204,7 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             size_mb: 547,
             download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin".into(),
             filename: "ggml-large-v3-turbo-q5_0.bin".into(),
-            supports_realtime: false,
+            supports_realtime: true,
             supports_diarization: false,
             is_compatible: whisper_cli_ok,
             compatibility_reason: whisper_reason,
@@ -205,7 +243,7 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             size_mb: 625,
             download_url: "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8/resolve/main".into(),
             filename: "parakeet-tdt_ctc-0.6b-ja".into(),
-            supports_realtime: false,
+            supports_realtime: true,
             supports_diarization: false,
             is_compatible: parakeet_arch_ok && parakeet_cli_ok,
             compatibility_reason: parakeet_reason.clone(),
@@ -214,23 +252,41 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
         },
         AsrModelInfo {
-            id: "parakeet-tdt-0.6b-v3".to_string(),
-            name: "NVIDIA Parakeet TDT 0.6B v3 (英語・欧州 INT8 ONNX)".to_string(),
-            provider: AsrProviderKind::LocalParakeet,
+            id: "qwen3-asr-0.6b".to_string(),
+            name: "Qwen3-ASR 0.6B (軽量・多言語リアルタイム)".to_string(),
+            provider: AsrProviderKind::LocalQwen,
             is_local: true,
-            languages: vec!["英語".into(), "欧州25言語".into()],
-            environment: "ローカル ONNX Runtime / sherpa-onnx (x86_64 / arm64)".into(),
-            memory_mb: 1800,
-            license: "CC-BY-4.0 (NVIDIA) / Apache-2.0 (sherpa-onnx)".into(),
-            size_mb: 650,
-            download_url: "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main".into(),
-            filename: "parakeet-tdt-0.6b-v3".into(),
-            supports_realtime: false,
+            languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
+            environment: "ローカル (Qwen3-ASR / HuggingFace)".into(),
+            memory_mb: 1500,
+            license: "Apache-2.0 (Alibaba Qwen)".into(),
+            size_mb: 600,
+            download_url: "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/main/config.json".into(),
+            filename: "qwen3-asr-0.6b-config.json".into(),
+            supports_realtime: true,
             supports_diarization: false,
-            is_compatible: parakeet_arch_ok && parakeet_cli_ok,
-            compatibility_reason: parakeet_reason,
-            installed: models_dir.join("parakeet-tdt-0.6b-v3").join("encoder.int8.onnx").exists()
-                && models_dir.join("parakeet-tdt-0.6b-v3").join("tokens.txt").exists(),
+            is_compatible: true,
+            compatibility_reason: None,
+            installed: models_dir.join("qwen3-asr-0.6b-config.json").exists(),
+            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
+        },
+        AsrModelInfo {
+            id: "qwen3-asr-1.7b".to_string(),
+            name: "Qwen3-ASR 1.7B (最高精度・52言語/方言対応)".to_string(),
+            provider: AsrProviderKind::LocalQwen,
+            is_local: true,
+            languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
+            environment: "ローカル (Qwen3-ASR / HuggingFace)".into(),
+            memory_mb: 3600,
+            license: "Apache-2.0 (Alibaba Qwen)".into(),
+            size_mb: 1700,
+            download_url: "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/main/config.json".into(),
+            filename: "qwen3-asr-1.7b-config.json".into(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: true,
+            compatibility_reason: None,
+            installed: models_dir.join("qwen3-asr-1.7b-config.json").exists(),
             data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
         },
         AsrModelInfo {
@@ -245,7 +301,7 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             size_mb: 0,
             download_url: String::new(),
             filename: String::new(),
-            supports_realtime: false,
+            supports_realtime: true,
             supports_diarization: false,
             is_compatible: secrets::has_secret("openai_api_key"),
             compatibility_reason: if secrets::has_secret("openai_api_key") {
@@ -268,7 +324,7 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             size_mb: 0,
             download_url: String::new(),
             filename: String::new(),
-            supports_realtime: false,
+            supports_realtime: true,
             supports_diarization: true,
             is_compatible: secrets::has_secret("deepgram_api_key"),
             compatibility_reason: if secrets::has_secret("deepgram_api_key") {
@@ -291,7 +347,7 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             size_mb: 0,
             download_url: String::new(),
             filename: String::new(),
-            supports_realtime: false,
+            supports_realtime: true,
             supports_diarization: false,
             is_compatible: secrets::has_secret("groq_api_key"),
             compatibility_reason: if secrets::has_secret("groq_api_key") {
@@ -712,7 +768,7 @@ pub async fn transcribe_wav(
             }
             Ok((segs, false, model.name))
         }
-        AsrProviderKind::LocalParakeet => {
+        AsrProviderKind::LocalParakeet | AsrProviderKind::LocalQwen => {
             let (local_wav, should_cleanup) = ensure_local_wav(wav_path)?;
             let cli = resolve_parakeet_cli(&settings.parakeet_cli_path).ok_or_else(|| {
                 if should_cleanup {
@@ -994,7 +1050,7 @@ pub fn transcribe_chunk_sync(
             };
             Ok(text.trim().to_string())
         }
-        AsrProviderKind::LocalParakeet => {
+        AsrProviderKind::LocalParakeet | AsrProviderKind::LocalQwen => {
             let cli = resolve_parakeet_cli(&settings.parakeet_cli_path)
                 .ok_or_else(|| "sherpa-onnx-offline 未設定".to_string())?;
             let model_dir = storage::models_dir().join(&model.filename);

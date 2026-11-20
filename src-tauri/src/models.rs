@@ -55,6 +55,7 @@ pub struct RecordingStatus {
 pub enum AsrProviderKind {
     LocalWhisper,
     LocalParakeet,
+    LocalQwen,
     CloudOpenAi,
     CloudDeepgram,
     CloudGroq,

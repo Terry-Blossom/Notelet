@@ -830,6 +830,8 @@ button:disabled {
   padding: 0 var(--sp-4);
   border-radius: var(--radius-sm);
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
   font-size: 13px;
   transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }

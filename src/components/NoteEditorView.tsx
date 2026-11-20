@@ -884,13 +884,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         スペースを削除
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => setViewingFolderId(null)}
-                    >
-                      開いていたノートへ戻る
-                    </button>
                   </div>
                 </div>
 

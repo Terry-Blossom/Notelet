@@ -3,6 +3,7 @@ export type AudioSourceMode = 'mic' | 'system' | 'both';
 export type AsrProviderKind =
   | 'local_whisper'
   | 'local_parakeet'
+  | 'local_qwen'
   | 'cloud_openai'
   | 'cloud_deepgram'
   | 'cloud_groq';

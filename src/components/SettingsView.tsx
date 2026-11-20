@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   Check,
   Cloud,
-  Cpu,
   Download,
   Key,
   Keyboard,
@@ -11,7 +10,6 @@ import {
   RefreshCw,
   Shield,
   Sparkles,
-  Zap,
 } from 'lucide-react';
 import { AppSettings, AsrModelInfo, SecretStatus, UpdateCheckResult } from '../types';
 
@@ -32,7 +30,27 @@ interface SettingsViewProps {
 }
 
 type SettingsTab = 'asr' | 'llm' | 'shortcuts' | 'privacy' | 'update';
-type AsrCategory = 'whisper' | 'parakeet' | 'cloud';
+type AsrCategory = 'whisper' | 'parakeet' | 'qwen' | 'cloud';
+
+const OpenAILogo: React.FC = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M22.28 9.82a5.98 5.98 0 0 0-.52-4.91 6.05 6.05 0 0 0-6.51-2.9A6.07 6.07 0 0 0 4.98 4.18a5.98 5.98 0 0 0-4 2.9 6.05 6.05 0 0 0 .74 7.1 5.98 5.98 0 0 0 .51 4.91 6.05 6.05 0 0 0 6.51 2.9A5.98 5.98 0 0 0 13.26 24a6.06 6.06 0 0 0 5.77-4.21 5.99 5.99 0 0 0 4-2.9 6.06 6.06 0 0 0-.75-7.07ZM13.26 22.43a4.48 4.48 0 0 1-2.88-1.04l.14-.08 4.78-2.76a.8.8 0 0 0 .39-.68v-6.74l2.02 1.17a.07.07 0 0 1 .04.05v5.58a4.5 4.5 0 0 1-4.49 4.5Zm-9.66-4.13a4.47 4.47 0 0 1-.54-3.01l.14.08 4.78 2.76a.77.77 0 0 0 .78 0l5.84-3.37v2.33a.08.08 0 0 1-.03.06L9.74 19.95a4.5 4.5 0 0 1-6.14-1.65ZM2.34 7.9A4.49 4.49 0 0 1 4.68 5.93V11.6a.77.77 0 0 0 .39.67l5.81 3.35-2.02 1.17a.08.08 0 0 1-.07 0L3.98 14a4.5 4.5 0 0 1-1.64-6.1Zm16.6 3.86L13.1 8.36l2.02-1.16a.08.08 0 0 1 .07 0l4.83 2.79a4.49 4.49 0 0 1-.68 8.1v-5.68a.79.79 0 0 0-.4-.65Zm2.01-3.02-.14-.09-4.77-2.78a.78.78 0 0 0-.79 0L9.41 9.23V6.9a.07.07 0 0 1 .03-.06l4.83-2.79a4.5 4.5 0 0 1 6.68 4.69ZM8.31 13.5l-2.02-1.16a.08.08 0 0 1-.04-.06V6.7a4.5 4.5 0 0 1 7.38-3.45l-.14.08-4.78 2.76a.8.8 0 0 0-.4.68v6.73Zm1.1-2.37 2.6-1.5 2.6 1.5v3l-2.6 1.5-2.6-1.5v-3Z" />
+  </svg>
+);
+
+const NvidiaLogo: React.FC = () => (
+  <svg width="15" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M8.95 8.72V6.9c.14-.01.29-.02.43-.02 3.98-.13 6.59 3.42 6.59 3.42s-2.82 3.92-5.84 3.92c-.43 0-.82-.07-1.18-.2v-5.3c1.55.19 1.86.88 2.79 2.43l2.07-1.74s-1.51-1.98-4.05-1.98c-.28 0-.55.02-.81.04v1.25zm0-4.43v1.69l.43-.03c5.54-.19 9.16 4.55 9.16 4.55s-4.15 5.05-8.48 5.05c-.38 0-.75-.04-1.11-.1v1.04c.3.04.61.06.93.06 4.03 0 6.95-2.06 9.77-4.49.47.37 2.38 1.29 2.77 1.69-2.68 2.24-8.92 4.05-12.46 4.05-.34 0-.67-.02-1-.06v2.11H24V4.29H8.95zm0 11.15v-1.23c-2.61-.46-3.33-3.17-3.33-3.17s1.25-1.39 3.33-1.61V8.05c-.12.01-.24.02-.36.04-2.55.31-4.38 2.58-4.38 2.58s1.17 3.94 4.74 4.77zM2.32 10.71s2.15-3.17 6.63-3.51V5.8C3.92 6.2 0 10.46 0 10.46s2.35 6.8 8.95 7.42v-1.46C4.07 15.81 2.32 10.71 2.32 10.71z" />
+  </svg>
+);
+
+const QwenLogo: React.FC = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polygon points="12 2 20.66 7 20.66 17 12 22 3.34 17 3.34 7 12 2" />
+    <circle cx="12" cy="12" r="3.5" />
+    <line x1="14.5" y1="14.5" x2="18" y2="18" />
+  </svg>
+);
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
@@ -52,6 +70,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [tab, setTab] = useState<SettingsTab>('asr');
   const [asrCategory, setAsrCategory] = useState<AsrCategory>(() => {
     if (settings.active_asr_provider === 'local_parakeet') return 'parakeet';
+    if (settings.active_asr_provider === 'local_qwen') return 'qwen';
     if (settings.active_asr_provider.startsWith('cloud_')) return 'cloud';
     return 'whisper';
   });
@@ -83,9 +102,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     flash('APIキーを暗号化して保存しました');
   };
 
-  const whisperModels = models.filter((m) => m.provider === 'local_whisper');
-  const parakeetModels = models.filter((m) => m.provider === 'local_parakeet');
-  const cloudModels = models.filter((m) => !m.is_local);
+  const realtimeModels = models.filter((m) => m.supports_realtime);
+  const whisperModels = realtimeModels.filter((m) => m.provider === 'local_whisper');
+  const parakeetModels = realtimeModels.filter((m) => m.provider === 'local_parakeet');
+  const qwenModels = realtimeModels.filter((m) => m.provider === 'local_qwen');
+  const cloudModels = realtimeModels.filter((m) => !m.is_local);
 
   const renderModelRow = (m: AsrModelInfo) => {
     const selected = settings.active_asr_model_id === m.id;
@@ -121,12 +142,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 }}
               />
               <strong style={{ fontWeight: 600 }}>{m.name}</strong>
-              {m.is_local && (
-                <span className="status-chip mono-num">{m.size_mb} MB</span>
-              )}
-              {m.supports_realtime && (
-                <span className="status-chip accent">リアルタイム対応</span>
-              )}
               {m.id === 'whisper-large-v3-turbo-q5' && (
                 <span className="status-chip ok">高精度・推奨</span>
               )}
@@ -134,9 +149,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <span className="status-chip">軽量・標準</span>
               )}
             </div>
-            <div className="text-muted">
-              {m.environment} ・ 言語: {m.languages.join(', ')}
-              {m.is_local ? ` ・ メモリ目安 ${m.memory_mb} MB` : ' ・ クラウドAPI'}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+              {m.languages.map((lang) => {
+                const label =
+                  lang === '多言語(自動判定)' ? '多言語対応・自動判定' : lang;
+                return (
+                  <span key={lang} className="status-chip" style={{ height: '20px', fontSize: '11px' }}>
+                    {label}
+                  </span>
+                );
+              })}
+              {m.is_local ? (
+                <>
+                  <span className="status-chip mono-num" style={{ height: '20px', fontSize: '11px' }}>
+                    モデル容量 {m.size_mb}MB
+                  </span>
+                  <span className="status-chip mono-num" style={{ height: '20px', fontSize: '11px' }}>
+                    メモリ目安 {m.memory_mb}MB
+                  </span>
+                </>
+              ) : (
+                <span className="status-chip" style={{ height: '20px', fontSize: '11px' }}>
+                  クラウドAPI
+                </span>
+              )}
+              <span className="status-chip accent" style={{ height: '20px', fontSize: '11px' }}>
+                リアルタイム対応
+              </span>
             </div>
           </div>
 
@@ -310,16 +349,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 className={`category-tab ${asrCategory === 'whisper' ? 'active' : ''}`}
                 onClick={() => setAsrCategory('whisper')}
               >
-                <Cpu size={14} strokeWidth={1.5} />
-                ローカル Whisper ({whisperModels.length})
+                <OpenAILogo />
+                Whisper ({whisperModels.length})
               </button>
               <button
                 type="button"
                 className={`category-tab ${asrCategory === 'parakeet' ? 'active' : ''}`}
                 onClick={() => setAsrCategory('parakeet')}
               >
-                <Zap size={14} strokeWidth={1.5} />
-                ローカル Parakeet ({parakeetModels.length})
+                <NvidiaLogo />
+                Parakeet ({parakeetModels.length})
+              </button>
+              <button
+                type="button"
+                className={`category-tab ${asrCategory === 'qwen' ? 'active' : ''}`}
+                onClick={() => setAsrCategory('qwen')}
+              >
+                <QwenLogo />
+                Qwen ({qwenModels.length})
               </button>
               <button
                 type="button"
@@ -338,7 +385,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <strong style={{ fontSize: '12px' }}>whisper.cpp 実行エンジン</strong>
                     <span className={`status-chip ${settings.whisper_cli_path ? 'ok' : ''}`}>
-                      {settings.whisper_cli_path ? '導入済み' : '自動検出 / 未設定'}
+                      {settings.whisper_cli_path ? '導入済み' : '未導入'}
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -346,11 +393,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       type="button"
                       className="btn btn-secondary"
                       style={{ height: '28px', fontSize: '12px' }}
-                      disabled={downloadProgress['runtime:whisper'] !== undefined}
+                      disabled={Boolean(settings.whisper_cli_path) || downloadProgress['runtime:whisper'] !== undefined}
                       onClick={() => onInstallRuntime('whisper')}
                     >
-                      <Download size={13} strokeWidth={1.5} />
-                      {downloadProgress['runtime:whisper'] !== undefined
+                      {settings.whisper_cli_path ? (
+                        <Check size={13} strokeWidth={1.5} />
+                      ) : (
+                        <Download size={13} strokeWidth={1.5} />
+                      )}
+                      {settings.whisper_cli_path
+                        ? '導入済み'
+                        : downloadProgress['runtime:whisper'] !== undefined
                         ? `導入中 (${downloadProgress['runtime:whisper']}%)`
                         : 'ワンクリック導入'}
                     </button>
@@ -383,18 +436,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <strong style={{ fontSize: '12px' }}>sherpa-onnx 実行エンジン</strong>
                     <span className={`status-chip ${settings.parakeet_cli_path ? 'ok' : ''}`}>
-                      {settings.parakeet_cli_path ? '導入済み' : '自動検出 / 未設定'}
+                      {settings.parakeet_cli_path ? '導入済み' : '未導入'}
                     </span>
                   </div>
                   <button
                     type="button"
                     className="btn btn-secondary"
                     style={{ height: '28px', fontSize: '12px' }}
-                    disabled={downloadProgress['runtime:parakeet'] !== undefined}
+                    disabled={Boolean(settings.parakeet_cli_path) || downloadProgress['runtime:parakeet'] !== undefined}
                     onClick={() => onInstallRuntime('parakeet')}
                   >
-                    <Download size={13} strokeWidth={1.5} />
-                    {downloadProgress['runtime:parakeet'] !== undefined
+                    {settings.parakeet_cli_path ? (
+                      <Check size={13} strokeWidth={1.5} />
+                    ) : (
+                      <Download size={13} strokeWidth={1.5} />
+                    )}
+                    {settings.parakeet_cli_path
+                      ? '導入済み'
+                      : downloadProgress['runtime:parakeet'] !== undefined
                       ? `導入中 (${downloadProgress['runtime:parakeet']}%)`
                       : 'ワンクリック導入'}
                   </button>
@@ -416,6 +475,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     />
                   </div>
                 </details>
+              </div>
+            )}
+
+            {/* Category 3: Local Qwen */}
+            {asrCategory === 'qwen' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {qwenModels.map(renderModelRow)}
+                </div>
               </div>
             )}
 
@@ -732,7 +800,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.7.0'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.8.0'}</strong>
                 </div>
                 <button
                   type="button"
