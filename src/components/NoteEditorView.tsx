@@ -13,8 +13,10 @@ import {
   Link2,
   List,
   Menu,
+  MessageSquare,
   Mic,
   Pause,
+  Pencil,
   Play,
   Plus,
   Send,
@@ -23,7 +25,6 @@ import {
   Trash2,
   Upload,
   UploadCloud,
-  Users,
   X,
 } from 'lucide-react';
 import {
@@ -117,6 +118,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [chatScope, setChatScope] = useState<'note' | 'space'>('note');
   const [viewingFolderId, setViewingFolderId] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [editingSpaceName, setEditingSpaceName] = useState(false);
+  const [spaceNameDraft, setSpaceNameDraft] = useState('');
+  const [spaceChatQuestion, setSpaceChatQuestion] = useState('');
+  const [spaceChatAnswer, setSpaceChatAnswer] = useState<ChatAnswer | null>(null);
+  const [spaceChatBusy, setSpaceChatBusy] = useState(false);
 
   const notesList = useMemo(
     () => (allNotes && allNotes.length > 0 ? allNotes : [note]),
@@ -143,8 +149,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const memoEditorRef = useRef<HTMLDivElement>(null);
 
   // Popovers & dialogs
-  const [participantsOpen, setParticipantsOpen] = useState(false);
-  const [newParticipant, setNewParticipant] = useState('');
   const [folderMenuOpen, setFolderMenuOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [notionPreviewOpen, setNotionPreviewOpen] = useState(false);
@@ -461,20 +465,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       onUpdateNote({ ...note, title: titleSnapshotRef.current });
       titleInputRef.current?.blur();
     }
-  };
-
-  const handleAddParticipant = (e: React.FormEvent) => {
-    e.preventDefault();
-    const name = newParticipant.trim();
-    if (!name) return;
-    if (!note.participants.includes(name)) {
-      onUpdateNote({
-        ...note,
-        participants: [...note.participants, name],
-        updated_at: new Date().toISOString(),
-      });
-    }
-    setNewParticipant('');
   };
 
   const handleAskQuestion = async () => {
@@ -850,11 +840,61 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               folders.find((f) => f.id === viewingFolderId) || activeFolder;
             const folderNotes = notesList.filter((n) => n.folder_id === targetFolder.id);
             return (
-              <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto', flex: 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <FolderIcon size={20} strokeWidth={1.75} />
-                    <h2 className="page-title">{targetFolder.name}</h2>
+                    {editingSpaceName && onSaveFolder ? (
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          if (!spaceNameDraft.trim()) return;
+                          await onSaveFolder({ ...targetFolder, name: spaceNameDraft.trim() });
+                          setEditingSpaceName(false);
+                          notify('スペース名を変更しました');
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                      >
+                        <input
+                          type="text"
+                          className="input"
+                          style={{ height: '32px', width: '200px' }}
+                          value={spaceNameDraft}
+                          onChange={(e) => setSpaceNameDraft(e.target.value)}
+                          autoFocus
+                        />
+                        <button type="submit" className="btn btn-primary" style={{ height: '32px' }}>
+                          保存
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ height: '32px' }}
+                          onClick={() => setEditingSpaceName(false)}
+                        >
+                          キャンセル
+                        </button>
+                      </form>
+                    ) : (
+                      <>
+                        <h2 className="page-title">{targetFolder.name}</h2>
+                        {onSaveFolder && (
+                          <button
+                            type="button"
+                            aria-label="スペース名を変更"
+                            title="スペース名を変更"
+                            className="btn btn-ghost"
+                            style={{ width: '28px', height: '28px', padding: 0 }}
+                            onClick={() => {
+                              setSpaceNameDraft(targetFolder.name);
+                              setEditingSpaceName(true);
+                            }}
+                          >
+                            <Pencil size={14} strokeWidth={1.5} />
+                          </button>
+                        )}
+                      </>
+                    )}
                     <span className="status-chip">{folderNotes.length} 件のノート</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -868,7 +908,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         }}
                       >
                         <Plus size={14} strokeWidth={1.75} />
-                        このスペースに新規ノート
+                        新規ノート
                       </button>
                     )}
                     {onDeleteFolder && targetFolder.id !== 'personal' && (
@@ -888,7 +928,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 </div>
 
                 {folderNotes.length === 0 ? (
-                  <div style={{ padding: '32px 0', borderTop: '1px solid var(--border-subtle)' }}>
+                  <div style={{ padding: '24px 0', borderTop: '1px solid var(--border-subtle)' }}>
                     <p className="text-secondary" style={{ margin: '0px' }}>
                       このスペースにはまだノートがありません。
                     </p>
@@ -946,6 +986,81 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     })}
                   </div>
                 )}
+
+                {/* Space-scoped AI Chat */}
+                <section
+                  style={{
+                    paddingTop: '20px',
+                    borderTop: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <MessageSquare size={15} strokeWidth={1.5} />
+                    <h3 className="section-title">{targetFolder.name} のチャット</h3>
+                  </div>
+
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!spaceChatQuestion.trim() || spaceChatBusy) return;
+                      setSpaceChatBusy(true);
+                      try {
+                        const targetIds = folderNotes.map((n) => n.id);
+                        const res = await (
+                          onChatNote as (
+                            noteIds: string[],
+                            question: string,
+                            spaceId?: string | null
+                          ) => Promise<ChatAnswer>
+                        )(targetIds, spaceChatQuestion.trim(), targetFolder.id);
+                        setSpaceChatAnswer(res);
+                        setSpaceChatQuestion('');
+                      } finally {
+                        setSpaceChatBusy(false);
+                      }
+                    }}
+                    style={{ display: 'flex', gap: '8px' }}
+                  >
+                    <input
+                      type="text"
+                      className="input"
+                      placeholder={`${targetFolder.name} 内のノートをもとに質問...`}
+                      value={spaceChatQuestion}
+                      onChange={(e) => setSpaceChatQuestion(e.target.value)}
+                      disabled={spaceChatBusy}
+                    />
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={spaceChatBusy || !spaceChatQuestion.trim()}
+                    >
+                      <Send size={14} strokeWidth={1.5} />
+                      {spaceChatBusy ? '送信中' : '質問する'}
+                    </button>
+                  </form>
+
+                  {(spaceChatBusy || spaceChatAnswer) && (
+                    <div
+                      style={{
+                        padding: '12px 16px',
+                        borderRadius: '8px',
+                        backgroundColor: 'var(--bg-subtle)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px',
+                      }}
+                    >
+                      <StreamingMarkdownArticle
+                        content={spaceChatBusy ? '' : spaceChatAnswer?.answer || ''}
+                        isGenerating={spaceChatBusy}
+                        animateOnChange
+                      />
+                    </div>
+                  )}
+                </section>
               </div>
             );
           })()
@@ -1017,80 +1132,9 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               <button
                 type="button"
                 className="note-meta-pill"
-                aria-expanded={participantsOpen}
-                onClick={() => {
-                  setParticipantsOpen((o) => !o);
-                  setFolderMenuOpen(false);
-                }}
-              >
-                <Users size={15} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
-                <span>
-                  {note.participants.length > 0
-                    ? note.participants.join(', ')
-                    : '参加者を追加'}
-                </span>
-                <span className="note-meta-pill-divider" aria-hidden="true" />
-                <ChevronDown size={14} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
-              </button>
-
-              {participantsOpen && (
-                <div className="note-popover" role="dialog" aria-label="参加者を編集">
-                  <form onSubmit={handleAddParticipant} style={{ display: 'flex', gap: '8px' }}>
-                    <input
-                      type="text"
-                      className="input"
-                      style={{ height: '32px' }}
-                      placeholder="参加者名を入力"
-                      value={newParticipant}
-                      onChange={(e) => setNewParticipant(e.target.value)}
-                    />
-                    <button
-                      type="submit"
-                      className="btn btn-secondary"
-                      style={{ height: '32px', padding: '0 12px' }}
-                    >
-                      追加
-                    </button>
-                  </form>
-                  {note.participants.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                      {note.participants.map((p) => (
-                        <span
-                          key={p}
-                          className="note-meta-pill"
-                          style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
-                        >
-                          {p}
-                          <button
-                            type="button"
-                            aria-label={`${p}を削除`}
-                            onClick={() =>
-                              onUpdateNote({
-                                ...note,
-                                participants: note.participants.filter((x) => x !== p),
-                                updated_at: new Date().toISOString(),
-                              })
-                            }
-                            style={{ display: 'inline-flex', padding: 0 }}
-                          >
-                            <X size={12} />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="note-meta-pill-wrap">
-              <button
-                type="button"
-                className="note-meta-pill"
                 aria-expanded={folderMenuOpen}
                 onClick={() => {
                   setFolderMenuOpen((o) => !o);
-                  setParticipantsOpen(false);
                 }}
               >
                 <FolderIcon size={15} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
@@ -1423,9 +1467,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         <div className="note-turn-meta">
                           <span className="note-turn-time">
                             {formatNoteTimer(seg.start_ms)}
-                          </span>
-                          <span className="note-turn-speaker">
-                            {seg.speaker || '参加者'}
                           </span>
                         </div>
                         <p className="note-turn-text">{seg.text}</p>

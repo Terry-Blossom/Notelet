@@ -48,6 +48,7 @@ import {
   apiListIntegrationAdapters,
   apiNotionExchangeCode,
   apiNotionOAuthUrl,
+  apiNotionPullNotes,
   apiNotionSaveNote,
   apiNotionSearchTargets,
   apiPauseRecording,
@@ -145,7 +146,101 @@ const INITIAL_RECORDING_STATUS: RecordingStatus = {
   temp_wav_path: null,
 };
 
+const RecordingOverlay: React.FC = () => {
+  const [status, setStatus] = useState<RecordingStatus>(INITIAL_RECORDING_STATUS);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const st = await apiGetRecordingStatus();
+        if (active) setStatus(st);
+      } catch {
+        // ignore transient polling error
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 250);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  return (
+    <div
+      data-tauri-drag-region
+      style={{
+        width: '100vw',
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '8px',
+        padding: '0 12px',
+        backgroundColor: '#141414',
+        color: '#FFFFFF',
+        fontSize: '12px',
+        fontWeight: 500,
+        userSelect: 'none',
+        boxSizing: 'border-box',
+      }}
+    >
+      <div data-tauri-drag-region style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+        <span
+          style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            backgroundColor: '#EF4444',
+            flexShrink: 0,
+          }}
+        />
+        <span data-tauri-drag-region style={{ whiteSpace: 'nowrap' }}>録音中</span>
+        <span data-tauri-drag-region style={{ fontVariantNumeric: 'tabular-nums', color: '#D4D4D4' }}>
+          {formatMs(status.elapsed_ms)}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={async () => {
+          if (isTauriRuntime()) {
+            const { emit } = await import('@tauri-apps/api/event');
+            await emit('overlay-stop-recording');
+          }
+        }}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '4px',
+          height: '28px',
+          padding: '0 8px',
+          borderRadius: '8px',
+          border: 'none',
+          backgroundColor: '#DC2626',
+          color: '#FFFFFF',
+          fontSize: '12px',
+          fontWeight: 600,
+          cursor: 'pointer',
+          flexShrink: 0,
+        }}
+      >
+        <Square size={12} strokeWidth={2} />
+        <span>停止</span>
+      </button>
+    </div>
+  );
+};
+
 export const App: React.FC = () => {
+  const isOverlay =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('overlay') === 'recording';
+  return isOverlay ? <RecordingOverlay /> : <MainApp />;
+};
+
+const MainApp: React.FC = () => {
   const [view, setView] = useState<NavView>('home');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [commandSearchOpen, setCommandSearchOpen] = useState(false);
@@ -180,6 +275,7 @@ export const App: React.FC = () => {
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const notionDebounceTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const notionCatchupStartedRef = React.useRef(false);
+  const notionPullStartedRef = React.useRef(false);
 
   const syncNoteToNotion = useCallback(
     async (noteId: string, silent = false) => {
@@ -254,6 +350,19 @@ export const App: React.FC = () => {
     })();
   }, [secretStatus?.notion_access_token, snapshot.settings.notion_target_id, snapshot.notes, syncNoteToNotion]);
 
+  // Auto-pull notes and spaces from Notion on startup when configured
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!secretStatus?.notion_access_token || !snapshot.settings.notion_target_id) return;
+    if (notionPullStartedRef.current) return;
+    notionPullStartedRef.current = true;
+    void apiNotionPullNotes()
+      .then((snap) => setSnapshot(snap))
+      .catch(() => {
+        // ignore transient startup pull error
+      });
+  }, [secretStatus?.notion_access_token, snapshot.settings.notion_target_id]);
+
   const refreshAll = useCallback(async () => {
     if (!isTauriRuntime()) return;
     const [snap, mdl, devs, sec, adp, mcp] = await Promise.all([
@@ -282,6 +391,7 @@ export const App: React.FC = () => {
     let unlistenSc: (() => void) | undefined;
     let unlistenUpd: (() => void) | undefined;
     let unlistenLive: (() => void) | undefined;
+    let unlistenOverlayStop: (() => void) | undefined;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       unlistenDl = await listen<{ model_id: string; progress: number }>('asr-download-progress', (ev) => {
         setDownloadProgress((prev) => ({ ...prev, [ev.payload.model_id]: ev.payload.progress }));
@@ -302,12 +412,16 @@ export const App: React.FC = () => {
           void handleStartRecording();
         }
       });
+      unlistenOverlayStop = await listen('overlay-stop-recording', () => {
+        void handleStopAndFinish();
+      });
     });
     return () => {
       unlistenDl?.();
       unlistenUpd?.();
       unlistenLive?.();
       unlistenSc?.();
+      unlistenOverlayStop?.();
     };
   }, [recStatus.state, refreshAll]);
 
@@ -653,16 +767,7 @@ export const App: React.FC = () => {
   return (
     <div className="app-shell">
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-        <div className="brand-row">
-          <div className="brand-mark">
-            <span className="brand-dot">
-              <Mic size={14} strokeWidth={1.75} />
-            </span>
-            {!sidebarCollapsed && <span>KoeNote</span>}
-          </div>
-        </div>
-
-        <nav className="nav-list" aria-label="メインメニュー">
+        <nav className="nav-list" aria-label="メインメニュー" style={{ marginTop: '8px' }}>
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive =
@@ -682,6 +787,53 @@ export const App: React.FC = () => {
             );
           })}
         </nav>
+
+        {!sidebarCollapsed && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '0 4px', marginBottom: '8px' }}>
+            <select
+              aria-label="使用中のASRモデル"
+              title="使用中のASRモデル"
+              className="input"
+              style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
+              value={snapshot.settings.active_asr_model_id}
+              onChange={async (e) => {
+                const chosen = models.find((m) => m.id === e.target.value);
+                if (!chosen) return;
+                const nextSettings: AppSettings = {
+                  ...snapshot.settings,
+                  active_asr_model_id: chosen.id,
+                  active_asr_provider: chosen.provider,
+                };
+                if (isTauriRuntime()) {
+                  setSnapshot(await apiSaveSettings(nextSettings));
+                  await refreshAll();
+                } else {
+                  setSnapshot((prev) => ({ ...prev, settings: nextSettings }));
+                }
+              }}
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id} disabled={m.is_local && !m.installed}>
+                  {m.name}{m.is_local && !m.installed ? ' (未導入)' : ''}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="録音先のスペース"
+              title="録音先のスペース"
+              className="input"
+              style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
+              value={recordingSpaceId}
+              onChange={(e) => setRecordingSpaceId(e.target.value)}
+            >
+              {snapshot.folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  スペース: {f.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="sidebar-footer">
           <button
@@ -704,18 +856,6 @@ export const App: React.FC = () => {
                 {isRecordingActive ? <Square size={14} strokeWidth={1.5} /> : <Mic size={14} strokeWidth={1.5} />}
                 <span>{isRecordingActive ? '停止' : '録音'}</span>
               </button>
-              <select
-                aria-label="録音先のスペース"
-                className="record-split-select"
-                value={recordingSpaceId}
-                onChange={(e) => setRecordingSpaceId(e.target.value)}
-              >
-                {snapshot.folders.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name}
-                  </option>
-                ))}
-              </select>
             </div>
           )}
         </div>
@@ -934,6 +1074,12 @@ export const App: React.FC = () => {
             onNotionSearchTargets={apiNotionSearchTargets}
             onNotionOAuthUrl={apiNotionOAuthUrl}
             onNotionExchangeCode={apiNotionExchangeCode}
+            onNotionPullNotes={async () => {
+              if (!isTauriRuntime()) return;
+              const snap = await apiNotionPullNotes();
+              setSnapshot(snap);
+              setBannerMessage('Notionからノートとスペースを同期しました');
+            }}
           />
         )}
 

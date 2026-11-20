@@ -6,20 +6,26 @@ interface NotionSyncBadgeProps {
   status: NotionSyncState['status'];
 }
 
-const NotionLogoSvg: React.FC = () => (
+// Official Notion 3D cube "N" mark
+const OfficialNotionLogo: React.FC = () => (
   <svg
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
+    width="17"
+    height="17"
+    viewBox="0 0 100 100"
     fill="none"
-    stroke="currentColor"
-    strokeWidth="1.85"
-    strokeLinecap="round"
-    strokeLinejoin="round"
     aria-hidden="true"
   >
-    <rect x="3" y="3" width="18" height="18" rx="3" />
-    <path d="M8.5 16.5V7.5l7 9V7.5" />
+    <path
+      d="M6.017 4.313l55.333-4.087c6.797-.583 8.543-.19 12.817 2.917l17.663 12.443c2.913 2.14 3.883 2.723 3.883 5.053v68.243c0 4.277-1.553 6.807-6.99 7.193L24.467 99.967c-4.08.193-6.023-.39-8.16-3.113L3.3 79.94c-2.333-3.113-3.3-5.443-3.3-8.167V11.113c0-3.497 1.553-6.413 6.017-6.8z"
+      fill="currentColor"
+      fillOpacity="0.1"
+    />
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M61.35.226L6.017 4.313C1.553 4.7 0 7.617 0 11.113v60.66c0 2.723.967 5.053 3.3 8.167l13.007 16.913c2.137 2.723 4.08 3.307 8.16 3.113l64.257-3.89c5.433-.387 6.99-2.917 6.99-7.193V20.64c0-2.21-.873-2.847-3.443-4.733L74.167 3.143C69.893.037 68.147-.357 61.35.226zM25.727 19.226c-5.227.347-6.417.427-9.4-1.99L8.747 11.21c-.773-.773-.387-1.747 1.553-1.94l52.8-3.89c4.467-.387 6.797 1.167 8.543 2.527l9.123 6.61c.387.193 1.36 1.36.193 1.36l-54.26 3.257-.972.092zM19.327 88.627V30.367c0-2.527.777-3.693 3.107-3.887l62.313-3.693c2.137-.193 3.107 1.167 3.107 3.693v57.873c0 2.527-.387 4.667-3.883 4.86l-59.597 3.5c-3.497.193-5.047-.97-5.047-4.086zm58.843-54.99c.387 1.75 0 3.5-1.75 3.693l-2.913.583v42.77c-2.527 1.36-4.853 2.137-6.797 2.137-3.107 0-3.883-.973-6.213-3.887L41.437 48.88v29.157l6.023 1.36s0 3.5-4.857 3.5l-13.39.777c-.387-.777 0-2.723 1.357-3.11l3.497-.973V40.917l-4.857-.39c-.387-1.75.583-4.277 3.3-4.47l14.367-.97 19.6 30.13V38.193l-5.05-.583c-.387-2.14 1.167-3.693 3.107-3.887l13.597-.086z"
+      fill="currentColor"
+    />
   </svg>
 );
 
@@ -39,7 +45,7 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status }) => {
           flexShrink: 0,
         }}
       >
-        <NotionLogoSvg />
+        <OfficialNotionLogo />
       </span>
     );
   }
@@ -79,7 +85,7 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status }) => {
         flexShrink: 0,
       }}
     >
-      <NotionLogoSvg />
+      <OfficialNotionLogo />
       <span>{status === 'failed' ? '同期失敗' : '未同期'}</span>
     </span>
   );

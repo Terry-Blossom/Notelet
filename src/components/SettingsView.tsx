@@ -159,56 +159,60 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </span>
                 );
               })}
-              {m.is_local ? (
-                <>
-                  <span className="status-chip mono-num" style={{ height: '20px', fontSize: '11px' }}>
-                    モデル容量 {m.size_mb}MB
-                  </span>
-                  <span className="status-chip mono-num" style={{ height: '20px', fontSize: '11px' }}>
-                    メモリ目安 {m.memory_mb}MB
-                  </span>
-                </>
-              ) : (
+              {!m.is_local && (
                 <span className="status-chip" style={{ height: '20px', fontSize: '11px' }}>
                   クラウドAPI
                 </span>
               )}
-              <span className="status-chip accent" style={{ height: '20px', fontSize: '11px' }}>
-                リアルタイム対応
-              </span>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-            {m.is_local && !m.installed && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {m.is_local && !m.installed && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ height: '32px' }}
+                  disabled={progress !== undefined && progress < 100}
+                  onClick={() => onDownloadModel(m.id)}
+                >
+                  <Download size={14} strokeWidth={1.5} />
+                  {progress !== undefined && progress < 100
+                    ? `${progress}%`
+                    : 'ダウンロード'}
+                </button>
+              )}
+
               <button
                 type="button"
-                className="btn btn-secondary"
+                className={`btn ${selected ? 'btn-primary' : 'btn-secondary'}`}
                 style={{ height: '32px' }}
-                disabled={progress !== undefined && progress < 100}
-                onClick={() => onDownloadModel(m.id)}
+                disabled={
+                  !m.is_compatible ||
+                  (m.is_local && !m.installed) ||
+                  (!m.is_local && !settings.allow_cloud_asr)
+                }
+                onClick={() =>
+                  update({
+                    active_asr_model_id: m.id,
+                    active_asr_provider: m.provider,
+                  })
+                }
               >
-                <Download size={14} strokeWidth={1.5} />
-                {progress !== undefined && progress < 100
-                  ? `${progress}%`
-                  : 'ダウンロード'}
+                {selected ? '使用中' : '選択する'}
               </button>
+            </div>
+            {m.is_local && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <span className="status-chip mono-num" style={{ height: '20px', fontSize: '11px' }}>
+                  モデル容量 {m.size_mb}MB
+                </span>
+                <span className="status-chip mono-num" style={{ height: '20px', fontSize: '11px' }}>
+                  メモリ目安 {m.memory_mb}MB
+                </span>
+              </div>
             )}
-
-            <button
-              type="button"
-              className={`btn ${selected ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ height: '32px' }}
-              disabled={!m.is_compatible || (!m.is_local && !settings.allow_cloud_asr)}
-              onClick={() =>
-                update({
-                  active_asr_model_id: m.id,
-                  active_asr_provider: m.provider,
-                })
-              }
-            >
-              {selected ? '使用中' : '選択する'}
-            </button>
           </div>
         </div>
 
@@ -331,7 +335,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <span className="text-muted">認識言語</span>
                 <select
                   className="select"
-                  style={{ width: '128px', height: '32px' }}
+                  style={{ width: '148px', height: '36px', padding: '0 12px', lineHeight: '1.2' }}
                   value={settings.language}
                   onChange={(e) => update({ language: e.target.value })}
                 >
@@ -800,7 +804,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.8.2'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.0'}</strong>
                 </div>
                 <button
                   type="button"
@@ -842,7 +846,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         ? `新しいバージョン v${updateInfo.latest_version} が利用可能です`
                         : `最新の状態です (v${updateInfo.current_version})`}
                     </span>
-                    {updateInfo.download_url && (
+                    {updateInfo.has_update && updateInfo.download_url && (
                       <button
                         type="button"
                         className="btn btn-primary"

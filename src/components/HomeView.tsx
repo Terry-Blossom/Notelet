@@ -284,7 +284,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Cpu size={14} strokeWidth={1.5} />
-                <strong style={{ fontSize: '12px' }}>現在のエンジン</strong>
+                <strong style={{ fontSize: '12px' }}>エンジン</strong>
               </div>
               <button
                 type="button"
@@ -298,11 +298,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                <span className="text-muted">音声認識</span>
+                <span className="text-muted">ASR</span>
                 <span className="mono-num" style={{ fontWeight: 500 }}>{settings.active_asr_model_id}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                <span className="text-muted">AI / LLM</span>
+                <span className="text-muted">LLM</span>
                 <span className="mono-num" style={{ fontWeight: 500 }}>
                   {settings.llm_provider === 'none' ? '未設定' : settings.llm_model || settings.llm_provider}
                 </span>

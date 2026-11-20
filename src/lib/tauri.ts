@@ -165,6 +165,10 @@ export async function apiNotionSaveNote(noteId: string): Promise<Note> {
   return invoke<Note>('notion_save_note', { noteId });
 }
 
+export async function apiNotionPullNotes(): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>('notion_pull_notes');
+}
+
 export async function apiListIntegrationAdapters(): Promise<IntegrationAdapterInfo[]> {
   return invoke<IntegrationAdapterInfo[]>('list_integration_adapters');
 }

@@ -117,44 +117,6 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
 
     vec![
         AsrModelInfo {
-            id: "whisper-tiny-q5".to_string(),
-            name: "Whisper Tiny Q5_1 (超軽量・低メモリ)".to_string(),
-            provider: AsrProviderKind::LocalWhisper,
-            is_local: true,
-            languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
-            environment: "ローカル CPU (whisper.cpp)".into(),
-            memory_mb: 250,
-            license: "MIT (OpenAI Whisper / whisper.cpp)".into(),
-            size_mb: 32,
-            download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin".into(),
-            filename: "ggml-tiny-q5_1.bin".into(),
-            supports_realtime: true,
-            supports_diarization: false,
-            is_compatible: whisper_cli_ok,
-            compatibility_reason: whisper_reason.clone(),
-            installed: models_dir.join("ggml-tiny-q5_1.bin").exists(),
-            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
-        },
-        AsrModelInfo {
-            id: "whisper-base".to_string(),
-            name: "Whisper Base (GGML)".to_string(),
-            provider: AsrProviderKind::LocalWhisper,
-            is_local: true,
-            languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
-            environment: "ローカル CPU (whisper.cpp)".into(),
-            memory_mb: 500,
-            license: "MIT (OpenAI Whisper / whisper.cpp)".into(),
-            size_mb: 142,
-            download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin".into(),
-            filename: "ggml-base.bin".into(),
-            supports_realtime: true,
-            supports_diarization: false,
-            is_compatible: whisper_cli_ok,
-            compatibility_reason: whisper_reason.clone(),
-            installed: models_dir.join("ggml-base.bin").exists(),
-            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
-        },
-        AsrModelInfo {
             id: "whisper-small-q5".to_string(),
             name: "Whisper Small Q5_1 (推奨・軽量日本語)".to_string(),
             provider: AsrProviderKind::LocalWhisper,
@@ -257,17 +219,20 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             provider: AsrProviderKind::LocalQwen,
             is_local: true,
             languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
-            environment: "ローカル (Qwen3-ASR / HuggingFace)".into(),
+            environment: "ローカル ONNX Runtime / sherpa-onnx (x86_64 / arm64)".into(),
             memory_mb: 1500,
-            license: "Apache-2.0 (Alibaba Qwen)".into(),
-            size_mb: 600,
-            download_url: "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/main/config.json".into(),
-            filename: "qwen3-asr-0.6b-config.json".into(),
+            license: "Apache-2.0 (Alibaba Qwen / sherpa-onnx)".into(),
+            size_mb: 850,
+            download_url: "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/main".into(),
+            filename: "sherpa-onnx-qwen3-asr-0.6B-int8".into(),
             supports_realtime: true,
             supports_diarization: false,
-            is_compatible: true,
-            compatibility_reason: None,
-            installed: models_dir.join("qwen3-asr-0.6b-config.json").exists(),
+            is_compatible: parakeet_arch_ok && parakeet_cli_ok,
+            compatibility_reason: parakeet_reason.clone(),
+            installed: models_dir.join("sherpa-onnx-qwen3-asr-0.6B-int8").join("conv_frontend.onnx").exists()
+                && models_dir.join("sherpa-onnx-qwen3-asr-0.6B-int8").join("encoder.int8.onnx").exists()
+                && models_dir.join("sherpa-onnx-qwen3-asr-0.6B-int8").join("decoder.int8.onnx").exists()
+                && models_dir.join("sherpa-onnx-qwen3-asr-0.6B-int8").join("tokenizer").join("vocab.json").exists(),
             data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
         },
         AsrModelInfo {
@@ -276,17 +241,20 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             provider: AsrProviderKind::LocalQwen,
             is_local: true,
             languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
-            environment: "ローカル (Qwen3-ASR / HuggingFace)".into(),
+            environment: "ローカル ONNX Runtime / sherpa-onnx (x86_64 / arm64)".into(),
             memory_mb: 3600,
-            license: "Apache-2.0 (Alibaba Qwen)".into(),
-            size_mb: 1700,
-            download_url: "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/resolve/main/config.json".into(),
-            filename: "qwen3-asr-1.7b-config.json".into(),
+            license: "Apache-2.0 (Alibaba Qwen / sherpa-onnx)".into(),
+            size_mb: 1900,
+            download_url: "https://huggingface.co/thieunv-asilla/sherpa-onnx-qwen3-asr-1.7B-int8/resolve/main".into(),
+            filename: "sherpa-onnx-qwen3-asr-1.7B-int8".into(),
             supports_realtime: true,
             supports_diarization: false,
-            is_compatible: true,
-            compatibility_reason: None,
-            installed: models_dir.join("qwen3-asr-1.7b-config.json").exists(),
+            is_compatible: parakeet_arch_ok && parakeet_cli_ok,
+            compatibility_reason: parakeet_reason,
+            installed: models_dir.join("sherpa-onnx-qwen3-asr-1.7B-int8").join("conv_frontend.onnx").exists()
+                && models_dir.join("sherpa-onnx-qwen3-asr-1.7B-int8").join("encoder.int8.onnx").exists()
+                && models_dir.join("sherpa-onnx-qwen3-asr-1.7B-int8").join("decoder.int8.onnx").exists()
+                && models_dir.join("sherpa-onnx-qwen3-asr-1.7B-int8").join("tokenizer").join("vocab.json").exists(),
             data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
         },
         AsrModelInfo {
@@ -422,7 +390,7 @@ pub async fn download_whisper_model(
         return Err("クラウドモデルはダウンロード不要です。APIキーを設定して利用してください。".to_string());
     }
 
-    if model.provider == AsrProviderKind::LocalWhisper || model.provider == AsrProviderKind::LocalQwen {
+    if model.provider == AsrProviderKind::LocalWhisper {
         let dest = storage::models_dir().join(&model.filename);
         download_single_file(
             app,
@@ -435,6 +403,25 @@ pub async fn download_whisper_model(
         )
         .await?;
         return Ok(dest.to_string_lossy().to_string());
+    }
+
+    if model.provider == AsrProviderKind::LocalQwen {
+        let dir = storage::models_dir().join(&model.filename);
+        let tok_dir = dir.join("tokenizer");
+        fs::create_dir_all(&tok_dir).map_err(|e| format!("モデルディレクトリ作成失敗: {e}"))?;
+        let base_url = model.download_url.trim_end_matches('/');
+        let qwen_files = [
+            ("tokenizer/vocab.json", tok_dir.join("vocab.json"), 0.0, 2.0, 2 * 1024 * 1024),
+            ("tokenizer/merges.txt", tok_dir.join("merges.txt"), 2.0, 2.0, 2 * 1024 * 1024),
+            ("tokenizer/tokenizer_config.json", tok_dir.join("tokenizer_config.json"), 4.0, 1.0, 64 * 1024),
+            ("conv_frontend.onnx", dir.join("conv_frontend.onnx"), 5.0, 10.0, 100 * 1024 * 1024),
+            ("encoder.int8.onnx", dir.join("encoder.int8.onnx"), 15.0, 45.0, (model.size_mb as u64 * 1024 * 1024) / 2),
+            ("decoder.int8.onnx", dir.join("decoder.int8.onnx"), 60.0, 40.0, (model.size_mb as u64 * 1024 * 1024) / 2),
+        ];
+        for (remote, local, b, s, est) in qwen_files {
+            download_single_file(app, model_id, &format!("{base_url}/{remote}"), &local, b, s, est).await?;
+        }
+        return Ok(dir.to_string_lossy().to_string());
     }
 
     // Parakeet ONNX モデルを直接ダウンロード
@@ -621,7 +608,94 @@ pub async fn install_runtime_binary(
     }
 }
 
-fn ensure_local_wav(input_path: &Path) -> Result<(PathBuf, bool), String> {
+async fn resolve_or_install_ffmpeg() -> Result<PathBuf, String> {
+    let bin_name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let bin_dir = storage::app_data_dir().join("bin");
+    let _ = fs::create_dir_all(&bin_dir);
+    if let Some(found) = find_file_recursive(&bin_dir, bin_name) {
+        return Ok(found);
+    }
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let cand = dir.join(bin_name);
+            if cand.exists() {
+                return Ok(cand);
+            }
+        }
+    }
+
+    // Auto-download portable ffmpeg binary into app_data_dir/bin
+    let url = if cfg!(windows) {
+        "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffmpeg-6.1-win-64.zip"
+    } else if cfg!(target_os = "macos") {
+        "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffmpeg-6.1-macos-64.zip"
+    } else {
+        "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffmpeg-6.1-linux-64.zip"
+    };
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("ffmpeg の自動取得に失敗しました: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("ffmpeg の自動取得に失敗しました ({})", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("ffmpeg データの読み込みに失敗しました: {e}"))?;
+    let zip_path = bin_dir.join("ffmpeg.zip");
+    fs::write(&zip_path, &bytes).map_err(|e| format!("ffmpeg.zip の保存に失敗しました: {e}"))?;
+
+    let ffmpeg_dest_dir = bin_dir.join("ffmpeg");
+    let _ = fs::create_dir_all(&ffmpeg_dest_dir);
+
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("powershell");
+        configure_bg_command(&mut cmd);
+        let st = cmd
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+                    zip_path.display(),
+                    ffmpeg_dest_dir.display()
+                ),
+            ])
+            .status()
+            .map_err(|e| format!("ffmpeg の展開に失敗しました: {e}"))?;
+        let _ = fs::remove_file(&zip_path);
+        if !st.success() {
+            return Err("ffmpeg の展開に失敗しました。".to_string());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new("unzip");
+        let st = cmd
+            .args([
+                "-o",
+                &zip_path.to_string_lossy(),
+                "-d",
+                &ffmpeg_dest_dir.to_string_lossy(),
+            ])
+            .status()
+            .map_err(|e| format!("ffmpeg の展開に失敗しました: {e}"))?;
+        let _ = fs::remove_file(&zip_path);
+        if !st.success() {
+            return Err("ffmpeg の展開に失敗しました。".to_string());
+        }
+    }
+
+    find_file_recursive(&ffmpeg_dest_dir, bin_name)
+        .ok_or_else(|| "展開後に ffmpeg が見つかりませんでした。".to_string())
+}
+
+async fn ensure_local_wav(input_path: &Path) -> Result<(PathBuf, bool), String> {
     let ext = input_path
         .extension()
         .and_then(|e| e.to_str())
@@ -630,8 +704,9 @@ fn ensure_local_wav(input_path: &Path) -> Result<(PathBuf, bool), String> {
     if ext == "wav" {
         return Ok((input_path.to_path_buf(), false));
     }
+    let ffmpeg_bin = resolve_or_install_ffmpeg().await?;
     let converted = input_path.with_extension("converted_16k.wav");
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = Command::new(ffmpeg_bin);
     configure_bg_command(&mut cmd);
     let status = cmd
         .args([
@@ -650,7 +725,7 @@ fn ensure_local_wav(input_path: &Path) -> Result<(PathBuf, bool), String> {
     match status {
         Ok(st) if st.success() && converted.exists() => Ok((converted, true)),
         _ => Err(format!(
-            "ローカルASRモデルは 16kHz WAV 形式が必要です（.{ext} を変換するための ffmpeg が見つかりませんでした）。WAV に変換してアップロードするか、クラウドASRをご利用ください。"
+            "音声ファイル（.{ext}）の 16kHz WAV 変換に失敗しました。"
         )),
     }
 }
@@ -682,7 +757,7 @@ pub async fn transcribe_wav(
 
     match model.provider {
         AsrProviderKind::LocalWhisper => {
-            let (local_wav, should_cleanup) = ensure_local_wav(wav_path)?;
+            let (local_wav, should_cleanup) = ensure_local_wav(wav_path).await?;
             let cli = resolve_whisper_cli(&settings.whisper_cli_path).ok_or_else(|| {
                 if should_cleanup {
                     let _ = fs::remove_file(&local_wav);
@@ -768,13 +843,13 @@ pub async fn transcribe_wav(
             }
             Ok((segs, false, model.name))
         }
-        AsrProviderKind::LocalParakeet | AsrProviderKind::LocalQwen => {
-            let (local_wav, should_cleanup) = ensure_local_wav(wav_path)?;
+        AsrProviderKind::LocalParakeet => {
+            let (local_wav, should_cleanup) = ensure_local_wav(wav_path).await?;
             let cli = resolve_parakeet_cli(&settings.parakeet_cli_path).ok_or_else(|| {
                 if should_cleanup {
                     let _ = fs::remove_file(&local_wav);
                 }
-                "Parakeet ランタイム（sherpa-onnx-offline）が未設定です。設定＞ASRモデルから導入してください。"
+                "Parakeet ランタイム（sherpa-onnx-offline）が未設定です。設定＞音声認識から導入してください。"
                     .to_string()
             })?;
             let model_dir = storage::models_dir().join(&model.filename);
@@ -783,14 +858,13 @@ pub async fn transcribe_wav(
                     let _ = fs::remove_file(&local_wav);
                 }
                 return Err(format!(
-                    "Parakeet モデルフォルダ（{}）が見つかりません。設定＞ASRモデルからモデルを取得してください。",
+                    "Parakeet モデルフォルダ（{}）が見つかりません。設定＞音声認識からモデルを取得してください。",
                     model_dir.display()
                 ));
             }
             let ctc_model = model_dir.join("model.int8.onnx");
             let tokens = model_dir.join("tokens.txt");
             let mut cmd = Command::new(cli);
-            configure_bg_command(&mut cmd);
             configure_bg_command(&mut cmd);
             if model.id == "sense-voice-int8-ja" {
                 cmd.arg(format!("--sense-voice-model={}", ctc_model.display()))
@@ -822,17 +896,89 @@ pub async fn transcribe_wav(
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(format!("Parakeet 文字起こしエラー: {stderr}"));
             }
-            let raw_out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let raw_out = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             let stdout = strip_sense_voice_tags(&raw_out);
             let seg = TranscriptSegment {
                 id: Uuid::new_v4().to_string(),
                 start_ms: 0,
                 end_ms: 1000,
-                speaker: "話者1".to_string(),
+                speaker: String::new(),
                 text: if stdout.is_empty() {
                     "（発話が検出されませんでした）".to_string()
                 } else {
                     stdout
+                },
+            };
+            Ok((vec![seg], false, model.name))
+        }
+        AsrProviderKind::LocalQwen => {
+            let (local_wav, should_cleanup) = ensure_local_wav(wav_path).await?;
+            let cli = resolve_parakeet_cli(&settings.parakeet_cli_path).ok_or_else(|| {
+                if should_cleanup {
+                    let _ = fs::remove_file(&local_wav);
+                }
+                "Qwen3-ASR 実行ランタイム（sherpa-onnx-offline）が未設定です。設定＞音声認識から導入してください。"
+                    .to_string()
+            })?;
+            let model_dir = storage::models_dir().join(&model.filename);
+            if !model_dir.exists() {
+                if should_cleanup {
+                    let _ = fs::remove_file(&local_wav);
+                }
+                return Err(format!(
+                    "Qwen3-ASR モデルフォルダ（{}）が見つかりません。設定＞音声認識からモデルをダウンロードしてください。",
+                    model_dir.display()
+                ));
+            }
+            let conv_frontend = model_dir.join("conv_frontend.onnx");
+            let encoder = model_dir.join("encoder.int8.onnx");
+            let decoder = model_dir.join("decoder.int8.onnx");
+            let tokenizer = model_dir.join("tokenizer");
+            let mut cmd = Command::new(cli);
+            configure_bg_command(&mut cmd);
+            cmd.arg(format!("--qwen3-asr-conv-frontend={}", conv_frontend.display()))
+                .arg(format!("--qwen3-asr-encoder={}", encoder.display()))
+                .arg(format!("--qwen3-asr-decoder={}", decoder.display()))
+                .arg(format!("--qwen3-asr-tokenizer={}", tokenizer.display()));
+            let hotwords = dictionary
+                .iter()
+                .map(|d| d.term.trim())
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join(",");
+            if !hotwords.is_empty() {
+                cmd.arg(format!("--qwen3-asr-hotwords={hotwords}"));
+            }
+            cmd.arg(&local_wav);
+            let output = cmd
+                .output()
+                .map_err(|e| format!("Qwen3-ASR 実行失敗: {e}"))?;
+            if should_cleanup {
+                let _ = fs::remove_file(&local_wav);
+            }
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("Qwen3-ASR 文字起こしエラー: {stderr}"));
+            }
+            let raw_out = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let text = strip_sense_voice_tags(&raw_out);
+            let seg = TranscriptSegment {
+                id: Uuid::new_v4().to_string(),
+                start_ms: 0,
+                end_ms: 1000,
+                speaker: String::new(),
+                text: if text.is_empty() {
+                    "（発話が検出されませんでした）".to_string()
+                } else {
+                    text
                 },
             };
             Ok((vec![seg], false, model.name))
@@ -968,9 +1114,31 @@ pub async fn transcribe_wav(
 }
 
 fn strip_sense_voice_tags(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
+    // 1. Extract `text` field if sherpa-onnx printed JSON lines (e.g. {"lang": ..., "text": "もしもし。", ...})
+    let mut extracted_parts = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+                if let Some(t) = v["text"].as_str() {
+                    if !t.trim().is_empty() {
+                        extracted_parts.push(t.trim().to_string());
+                    }
+                    continue;
+                }
+            }
+        }
+    }
+    let source = if !extracted_parts.is_empty() {
+        extracted_parts.join(" ")
+    } else {
+        raw.to_string()
+    };
+
+    // 2. Strip SenseVoice <|...|> tags
+    let mut out = String::with_capacity(source.len());
     let mut in_tag = false;
-    let chars: Vec<char> = raw.chars().collect();
+    let chars: Vec<char> = source.chars().collect();
     let mut i = 0;
     while i < chars.len() {
         if i + 1 < chars.len() && chars[i] == '<' && chars[i + 1] == '|' {
@@ -1050,7 +1218,7 @@ pub fn transcribe_chunk_sync(
             };
             Ok(text.trim().to_string())
         }
-        AsrProviderKind::LocalParakeet | AsrProviderKind::LocalQwen => {
+        AsrProviderKind::LocalParakeet => {
             let cli = resolve_parakeet_cli(&settings.parakeet_cli_path)
                 .ok_or_else(|| "sherpa-onnx-offline 未設定".to_string())?;
             let model_dir = storage::models_dir().join(&model.filename);
@@ -1060,7 +1228,6 @@ pub fn transcribe_chunk_sync(
             let ctc_model = model_dir.join("model.int8.onnx");
             let tokens = model_dir.join("tokens.txt");
             let mut cmd = Command::new(cli);
-            configure_bg_command(&mut cmd);
             configure_bg_command(&mut cmd);
             if model.id == "sense-voice-int8-ja" {
                 cmd.arg(format!("--sense-voice-model={}", ctc_model.display()))
@@ -1077,7 +1244,39 @@ pub fn transcribe_chunk_sync(
             let output = cmd
                 .output()
                 .map_err(|e| format!("チャンク推論失敗: {e}"))?;
-            let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let raw = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(strip_sense_voice_tags(&raw))
+        }
+        AsrProviderKind::LocalQwen => {
+            let cli = resolve_parakeet_cli(&settings.parakeet_cli_path)
+                .ok_or_else(|| "sherpa-onnx-offline 未設定".to_string())?;
+            let model_dir = storage::models_dir().join(&model.filename);
+            if !model_dir.exists() {
+                return Ok(String::new());
+            }
+            let conv_frontend = model_dir.join("conv_frontend.onnx");
+            let encoder = model_dir.join("encoder.int8.onnx");
+            let decoder = model_dir.join("decoder.int8.onnx");
+            let tokenizer = model_dir.join("tokenizer");
+            let mut cmd = Command::new(cli);
+            configure_bg_command(&mut cmd);
+            cmd.arg(format!("--qwen3-asr-conv-frontend={}", conv_frontend.display()))
+                .arg(format!("--qwen3-asr-encoder={}", encoder.display()))
+                .arg(format!("--qwen3-asr-decoder={}", decoder.display()))
+                .arg(format!("--qwen3-asr-tokenizer={}", tokenizer.display()))
+                .arg(chunk_wav);
+            let output = cmd
+                .output()
+                .map_err(|e| format!("チャンク推論失敗: {e}"))?;
+            let raw = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             Ok(strip_sense_voice_tags(&raw))
         }
         _ => Ok(String::new()),

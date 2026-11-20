@@ -22,6 +22,7 @@ interface IntegrationsViewProps {
     code: string,
     redirectUri: string
   ) => Promise<string>;
+  onNotionPullNotes?: () => Promise<void>;
 }
 
 export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
@@ -33,6 +34,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   onNotionSearchTargets,
   onNotionOAuthUrl,
   onNotionExchangeCode,
+  onNotionPullNotes,
 }) => {
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
   const [notionClientId, setNotionClientId] = useState('');
@@ -43,6 +45,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   const [notionQuery, setNotionQuery] = useState('');
   const [notionTargets, setNotionTargets] = useState<NotionTarget[]>([]);
   const [notionFetching, setNotionFetching] = useState(false);
+  const [notionPulling, setNotionPulling] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const flash = (msg: string) => {
@@ -159,6 +162,24 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
               {notionFetching && <Loader2 size={15} strokeWidth={1.5} className="spin" />}
               {notionFetching ? '取得中' : '同期先を検索'}
             </button>
+            {onNotionPullNotes && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={notionPulling || !settings.notion_target_id}
+                onClick={async () => {
+                  setNotionPulling(true);
+                  try {
+                    await onNotionPullNotes();
+                  } finally {
+                    setNotionPulling(false);
+                  }
+                }}
+              >
+                {notionPulling && <Loader2 size={15} strokeWidth={1.5} className="spin" />}
+                {notionPulling ? '同期中...' : 'Notionから今すぐ同期'}
+              </button>
+            )}
           </div>
         </div>
 

@@ -167,6 +167,21 @@ fn start_recording(
         audio.start(source_mode, device_id)?
     };
 
+    if app.get_webview_window("recording-overlay").is_none() {
+        let _ = tauri::WebviewWindowBuilder::new(
+            &app,
+            "recording-overlay",
+            tauri::WebviewUrl::App("index.html?overlay=recording".into()),
+        )
+        .title("Notelet 録音中")
+        .inner_size(220.0, 48.0)
+        .always_on_top(true)
+        .decorations(false)
+        .resizable(false)
+        .skip_taskbar(true)
+        .build();
+    }
+
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
@@ -205,7 +220,7 @@ fn start_recording(
                             id: uuid::Uuid::new_v4().to_string(),
                             start_ms,
                             end_ms: elapsed_ms,
-                            speaker: "話者1".to_string(),
+                            speaker: String::new(),
                             text,
                         };
                         let _ = app_handle.emit("live-transcript-segment", seg);
@@ -229,7 +244,10 @@ fn resume_recording(state: State<AppState>) -> RecordingStatus {
 }
 
 #[tauri::command]
-fn stop_recording(state: State<AppState>) -> RecordingStatus {
+fn stop_recording(app: tauri::AppHandle, state: State<AppState>) -> RecordingStatus {
+    if let Some(win) = app.get_webview_window("recording-overlay") {
+        let _ = win.close();
+    }
     state.audio.lock().unwrap().stop()
 }
 
@@ -569,7 +587,7 @@ async fn notion_search_targets(query: String) -> Result<Vec<NotionTarget>, Strin
 
 #[tauri::command]
 async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result<Note, String> {
-    let (settings, mut note) = {
+    let (settings, mut note, folder_name) = {
         let data = state.data.lock().unwrap();
         let n = data
             .notes
@@ -577,10 +595,16 @@ async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result
             .find(|x| x.id == note_id)
             .cloned()
             .ok_or_else(|| "ノートが見つかりません".to_string())?;
-        (data.settings.clone(), n)
+        let fname = data
+            .folders
+            .iter()
+            .find(|f| f.id == n.folder_id)
+            .map(|f| f.name.clone())
+            .unwrap_or_else(|| "一般".to_string());
+        (data.settings.clone(), n, fname)
     };
 
-    match notion::save_note_to_notion(&note, &settings).await {
+    match notion::save_note_to_notion(&note, &folder_name, &settings).await {
         Ok((page_id, page_url, synced_at)) => {
             note.notion_sync.page_id = Some(page_id);
             note.notion_sync.page_url = Some(page_url);
@@ -603,6 +627,60 @@ async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result
             Err(err)
         }
     }
+}
+
+#[tauri::command]
+async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot, String> {
+    let settings = {
+        let data = state.data.lock().unwrap();
+        data.settings.clone()
+    };
+    let pulled = notion::pull_notes_from_notion(&settings).await?;
+    let mut data = state.data.lock().unwrap();
+    for (mut note, space_name) in pulled {
+        // Find or create folder for space_name
+        let folder_id = if let Some(existing_f) = data.folders.iter().find(|f| f.name == space_name) {
+            existing_f.id.clone()
+        } else {
+            let new_f = Folder {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: space_name,
+                is_shared: false,
+                permission: "owner".to_string(),
+            };
+            let id = new_f.id.clone();
+            data.folders.push(new_f);
+            id
+        };
+        note.folder_id = folder_id;
+
+        if let Some(page_id) = note.notion_sync.page_id.as_ref() {
+            if let Some(existing_n) = data
+                .notes
+                .iter_mut()
+                .find(|n| n.notion_sync.page_id.as_ref() == Some(page_id))
+            {
+                existing_n.title = note.title;
+                existing_n.folder_id = note.folder_id;
+                if !note.summary.is_empty() {
+                    existing_n.summary = note.summary;
+                }
+                if !note.manual_notes.is_empty() {
+                    existing_n.manual_notes = note.manual_notes;
+                }
+                if !note.segments.is_empty() {
+                    existing_n.segments = note.segments;
+                }
+                existing_n.notion_sync.status = "synced".to_string();
+                existing_n.notion_sync.last_error = None;
+                continue;
+            }
+        }
+        data.notes.push(note);
+    }
+    data.notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    storage::save_snapshot(&data)?;
+    Ok(data.clone())
 }
 
 #[tauri::command]
@@ -741,6 +819,7 @@ pub fn run() {
             notion_exchange_code,
             notion_search_targets,
             notion_save_note,
+            notion_pull_notes,
             list_integration_adapters,
             share_to_slack_cmd,
             send_webhook_cmd,
@@ -752,5 +831,5 @@ pub fn run() {
             install_app_update,
         ])
         .run(tauri::generate_context!())
-        .expect("KoeNote の起動中にエラーが発生しました");
+        .expect("Notelet の起動中にエラーが発生しました");
 }
