@@ -157,13 +157,32 @@ declare global {
   }
 }
 
+const getWindowMode = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash.replace(/^#/, '');
+  if (hash === 'recording-overlay' || hash === 'meeting-notify') return hash;
+  return (
+    window.__NOTELET_WINDOW_MODE__ ||
+    new URLSearchParams(window.location.search).get('overlay')
+  );
+};
+
+if (typeof document !== 'undefined') {
+  const initialMode = getWindowMode();
+  if (initialMode === 'recording-overlay' || initialMode === 'recording' || initialMode === 'meeting-notify') {
+    document.documentElement.classList.add('overlay-window');
+  }
+}
+
 const useTransparentWindowBackground = () => {
   useEffect(() => {
+    document.documentElement.classList.add('overlay-window');
     const prevHtmlBg = document.documentElement.style.background;
     const prevBodyBg = document.body.style.background;
     document.documentElement.style.background = 'transparent';
     document.body.style.background = 'transparent';
     return () => {
+      document.documentElement.classList.remove('overlay-window');
       document.documentElement.style.background = prevHtmlBg;
       document.body.style.background = prevBodyBg;
     };
@@ -328,13 +347,27 @@ const RecordingOverlay: React.FC = () => {
 
 const MeetingNotifyOverlay: React.FC = () => {
   useTransparentWindowBackground();
-  const meetingTitle =
-    (typeof window !== 'undefined' && window.__NOTELET_MEETING_TITLE__) || 'オンライン会議';
+  const [meetingTitle, setMeetingTitle] = useState(
+    (typeof window !== 'undefined' && window.__NOTELET_MEETING_TITLE__) || 'オンライン会議'
+  );
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      unlisten = await listen<string>('meeting-detected', (ev) => {
+        if (ev.payload) setMeetingTitle(ev.payload);
+      });
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const closeSelf = async () => {
     if (isTauriRuntime()) {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      await getCurrentWindow().close();
+      await getCurrentWindow().hide();
     }
   };
 
@@ -437,11 +470,7 @@ const MeetingNotifyOverlay: React.FC = () => {
 };
 
 export const App: React.FC = () => {
-  const mode =
-    typeof window !== 'undefined'
-      ? window.__NOTELET_WINDOW_MODE__ ||
-        new URLSearchParams(window.location.search).get('overlay')
-      : null;
+  const mode = getWindowMode();
   if (mode === 'recording-overlay' || mode === 'recording') {
     return <RecordingOverlay />;
   }
@@ -675,9 +704,9 @@ const MainApp: React.FC = () => {
       setSnapshot(nextSnap);
       setRecordingNoteId(note.id);
       setActiveNoteId(note.id);
+      setView('editor');
       const st = await apiStartRecording(sourceMode, selectedDeviceId || null);
       setRecStatus(st);
-      setView('editor');
     } catch (e) {
       setBannerMessage(String(e));
     }

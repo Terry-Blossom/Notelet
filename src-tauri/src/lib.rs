@@ -156,9 +156,9 @@ fn list_audio_devices() -> Vec<AudioDeviceInfo> {
 }
 
 #[tauri::command]
-fn start_recording(
+async fn start_recording(
     app: tauri::AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     source_mode: AudioSourceMode,
     device_id: Option<String>,
 ) -> Result<RecordingStatus, String> {
@@ -168,32 +168,20 @@ fn start_recording(
     };
 
     if let Some(notify_win) = app.get_webview_window("meeting-notify") {
-        let _ = notify_win.close();
+        let _ = notify_win.hide();
     }
 
-    if app.get_webview_window("recording-overlay").is_none() {
-        let mut builder = tauri::WebviewWindowBuilder::new(
-            &app,
-            "recording-overlay",
-            tauri::WebviewUrl::App("index.html".into()),
-        )
-        .initialization_script("window.__NOTELET_WINDOW_MODE__ = 'recording-overlay';")
-        .title("Notelet 録音中")
-        .inner_size(276.0, 52.0)
-        .always_on_top(true)
-        .decorations(false)
-        .transparent(true)
-        .resizable(false)
-        .skip_taskbar(true)
-        .focused(false);
-
+    if let Some(win) = app.get_webview_window("recording-overlay") {
         if let Ok(Some(monitor)) = app.primary_monitor() {
             let scale = monitor.scale_factor();
             let sw = monitor.size().width as f64 / scale;
             let sh = monitor.size().height as f64 / scale;
-            builder = builder.position(((sw - 276.0) / 2.0).max(16.0), (sh - 96.0).max(16.0));
+            let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                ((sw - 276.0) / 2.0).max(16.0),
+                (sh - 96.0).max(16.0),
+            )));
         }
-        let _ = builder.build();
+        let _ = win.show();
     }
 
     let app_handle = app.clone();
@@ -260,7 +248,7 @@ fn resume_recording(state: State<AppState>) -> RecordingStatus {
 #[tauri::command]
 fn stop_recording(app: tauri::AppHandle, state: State<AppState>) -> RecordingStatus {
     if let Some(win) = app.get_webview_window("recording-overlay") {
-        let _ = win.close();
+        let _ = win.hide();
     }
     state.audio.lock().unwrap().stop()
 }
@@ -874,37 +862,22 @@ pub fn run() {
                         .flatten();
                     match detected {
                         Some(meeting_label) => {
-                            if last_notified.as_deref() != Some(meeting_label.as_str())
-                                && app_handle.get_webview_window("meeting-notify").is_none()
-                            {
-                                last_notified = Some(meeting_label.clone());
-                                let title_json = serde_json::to_string(&meeting_label)
-                                    .unwrap_or_else(|_| "\"会議\"".to_string());
-                                let init_script = format!(
-                                    "window.__NOTELET_WINDOW_MODE__ = 'meeting-notify'; window.__NOTELET_MEETING_TITLE__ = {};",
-                                    title_json
-                                );
-                                let mut builder = tauri::WebviewWindowBuilder::new(
-                                    &app_handle,
-                                    "meeting-notify",
-                                    tauri::WebviewUrl::App("index.html".into()),
-                                )
-                                .initialization_script(&init_script)
-                                .title("Notelet 会議を検出")
-                                .inner_size(340.0, 84.0)
-                                .always_on_top(true)
-                                .decorations(false)
-                                .transparent(true)
-                                .resizable(false)
-                                .skip_taskbar(true)
-                                .focused(false);
-
-                                if let Ok(Some(monitor)) = app_handle.primary_monitor() {
-                                    let scale = monitor.scale_factor();
-                                    let sw = monitor.size().width as f64 / scale;
-                                    builder = builder.position((sw - 360.0).max(16.0), 24.0);
+                            if last_notified.as_deref() != Some(meeting_label.as_str()) {
+                                if let Some(win) = app_handle.get_webview_window("meeting-notify") {
+                                    let is_visible = win.is_visible().unwrap_or(false);
+                                    if !is_visible {
+                                        last_notified = Some(meeting_label.clone());
+                                        if let Ok(Some(monitor)) = app_handle.primary_monitor() {
+                                            let scale = monitor.scale_factor();
+                                            let sw = monitor.size().width as f64 / scale;
+                                            let _ = win.set_position(tauri::Position::Logical(
+                                                tauri::LogicalPosition::new((sw - 360.0).max(16.0), 24.0),
+                                            ));
+                                        }
+                                        let _ = app_handle.emit_to("meeting-notify", "meeting-detected", meeting_label);
+                                        let _ = win.show();
+                                    }
                                 }
-                                let _ = builder.build();
                             }
                         }
                         None => {
@@ -915,6 +888,13 @@ pub fn run() {
             });
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    window.app_handle().exit(0);
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,

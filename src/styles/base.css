@@ -19,6 +19,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+html.overlay-window,
+html.overlay-window body {
+  background: transparent !important;
+  background-color: transparent !important;
+  overflow: hidden !important;
+}
+
 ::selection {
   background-color: var(--accent-tint);
   color: var(--text-primary);
