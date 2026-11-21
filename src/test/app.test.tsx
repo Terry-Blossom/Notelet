@@ -230,7 +230,7 @@ describe('App & Views', () => {
       />
     );
 
-    expect(screen.getByText('文字起こし済み')).toBeInTheDocument();
+    expect(screen.queryByText('文字起こし済み')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '録音を再生' })).toBeInTheDocument();
 
     // Re-record starts recording directly without confirmation popup

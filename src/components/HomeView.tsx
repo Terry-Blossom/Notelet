@@ -219,7 +219,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                         </span>
                       </div>
                       <div style={{ flexShrink: 0 }}>
-                        <NotionSyncBadge status={note.notion_sync.status} />
+                        <NotionSyncBadge status={note.notion_sync.status} pageUrl={note.notion_sync.page_url} />
                       </div>
                     </button>
                   );

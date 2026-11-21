@@ -182,7 +182,13 @@ async fn start_recording(
     }
 
     if let Some(win) = app.get_webview_window("recording-overlay") {
-        if let Ok(Some(monitor)) = app.primary_monitor() {
+        let (saved_x, saved_y) = {
+            let data = state.data.lock().unwrap();
+            (data.settings.recording_overlay_x, data.settings.recording_overlay_y)
+        };
+        if let (Some(x), Some(y)) = (saved_x, saved_y) {
+            let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
+        } else if let Ok(Some(monitor)) = app.primary_monitor() {
             let scale = monitor.scale_factor();
             let sw = monitor.size().width as f64 / scale;
             let sh = monitor.size().height as f64 / scale;
@@ -258,9 +264,69 @@ fn resume_recording(state: State<AppState>) -> RecordingStatus {
 #[tauri::command]
 fn stop_recording(app: tauri::AppHandle, state: State<AppState>) -> RecordingStatus {
     if let Some(win) = app.get_webview_window("recording-overlay") {
+        if let (Ok(pos), Ok(scale)) = (win.outer_position(), win.scale_factor()) {
+            let logical = pos.to_logical::<f64>(scale);
+            let mut data = state.data.lock().unwrap();
+            data.settings.recording_overlay_x = Some(logical.x);
+            data.settings.recording_overlay_y = Some(logical.y);
+            let _ = storage::save_snapshot(&data);
+        }
         let _ = win.hide();
     }
     state.audio.lock().unwrap().stop()
+}
+
+#[tauri::command]
+fn read_note_audio(state: State<AppState>, note_id: String) -> Result<String, String> {
+    let (audio_path, encrypted) = {
+        let data = state.data.lock().unwrap();
+        let note = data
+            .notes
+            .iter()
+            .find(|n| n.id == note_id)
+            .ok_or_else(|| "対象ノートが見つかりません".to_string())?;
+        let path = note
+            .audio_path
+            .clone()
+            .ok_or_else(|| "このノートには保存された録音音声がありません".to_string())?;
+        (path, note.audio_encrypted)
+    };
+    let bytes = storage::read_retained_audio_bytes(&audio_path, encrypted)?;
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:audio/wav;base64,{encoded}"))
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+        return Err("http/https の URL のみ開けます".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", trimmed])
+            .creation_flags(0x08000000)
+            .spawn()
+            .map_err(|e| format!("URL を開けませんでした: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("URL を開けませんでした: {e}"))?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("URL を開けませんでした: {e}"))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1011,6 +1077,17 @@ pub fn run() {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
                     window.app_handle().exit(0);
                 }
+            } else if window.label() == "recording-overlay" {
+                if let tauri::WindowEvent::Moved(pos) = event {
+                    if let Ok(scale) = window.scale_factor() {
+                        let logical = pos.to_logical::<f64>(scale);
+                        let st = window.app_handle().state::<AppState>();
+                        if let Ok(mut data) = st.data.lock() {
+                            data.settings.recording_overlay_x = Some(logical.x);
+                            data.settings.recording_overlay_y = Some(logical.y);
+                        }
+                    }
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1029,6 +1106,8 @@ pub fn run() {
             pause_recording,
             resume_recording,
             stop_recording,
+            read_note_audio,
+            open_external_url,
             get_recording_status,
             list_asr_models,
             download_asr_model,

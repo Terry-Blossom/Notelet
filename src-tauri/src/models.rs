@@ -223,6 +223,10 @@ pub struct AppSettings {
     pub mcp_enabled: bool,
     pub mcp_scope: String, // "personal_30d" | "workspace" | "admin_custom"
     pub active_template_id: String,
+    #[serde(default)]
+    pub recording_overlay_x: Option<f64>,
+    #[serde(default)]
+    pub recording_overlay_y: Option<f64>,
 }
 
 impl Default for AppSettings {
@@ -238,7 +242,7 @@ impl Default for AppSettings {
             llm_endpoint: "http://localhost:11434".to_string(),
             record_shortcut: "CommandOrControl+Shift+R".to_string(),
             voice_typing_shortcut: "CommandOrControl+Shift+V".to_string(),
-            delete_audio_after_transcribe: true,
+            delete_audio_after_transcribe: false,
             encrypt_retained_audio: true,
             retention_days: 0,
             participant_notice_enabled: false,
@@ -258,6 +262,8 @@ impl Default for AppSettings {
             mcp_enabled: false,
             mcp_scope: "personal_30d".to_string(),
             active_template_id: "standard".to_string(),
+            recording_overlay_x: None,
+            recording_overlay_y: None,
         }
     }
 }

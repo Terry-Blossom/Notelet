@@ -1,16 +1,18 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
 import { NotionSyncState } from '../types';
+import { apiOpenExternalUrl, isTauriRuntime } from '../lib/tauri';
 
 interface NotionSyncBadgeProps {
   status: NotionSyncState['status'];
+  pageUrl?: string | null;
 }
 
 // Official Notion 3D cube "N" mark
-const OfficialNotionLogo: React.FC = () => (
+export const OfficialNotionLogo: React.FC<{ size?: number }> = ({ size = 17 }) => (
   <svg
-    width="17"
-    height="17"
+    width={size}
+    height={size}
     viewBox="0 0 100 100"
     fill="none"
     aria-hidden="true"
@@ -29,8 +31,42 @@ const OfficialNotionLogo: React.FC = () => (
   </svg>
 );
 
-export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status }) => {
+export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status, pageUrl }) => {
+  const handleOpenPage = (e: React.MouseEvent) => {
+    if (!pageUrl) return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (isTauriRuntime()) {
+      void apiOpenExternalUrl(pageUrl);
+    } else {
+      window.open(pageUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   if (status === 'synced') {
+    if (pageUrl) {
+      return (
+        <button
+          type="button"
+          title="Notion でこのページを開く"
+          aria-label="Notion でこのページを開く"
+          onClick={handleOpenPage}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '24px',
+            height: '24px',
+            borderRadius: '6px',
+            color: 'var(--text-primary)',
+            flexShrink: 0,
+            cursor: 'pointer',
+          }}
+        >
+          <OfficialNotionLogo />
+        </button>
+      );
+    }
     return (
       <span
         title="Notion 同期済み"

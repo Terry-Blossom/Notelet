@@ -32,7 +32,9 @@ export const NoteWaveform: React.FC<NoteWaveformProps> = ({
   playbackProgress = 0,
 }) => {
   const reducedMotion = usePrefersReducedMotion();
-  const hasVoiceSignal = mode === 'recording' && levelRms >= 0.015;
+  const recent = waveform.length > 0 ? waveform.slice(-BAR_COUNT) : [];
+  const hasVoiceSignal =
+    mode === 'recording' && (levelRms >= 0.002 || recent.some((v) => v >= 0.04));
 
   return (
     <div className="note-waveform" aria-hidden="true">
@@ -41,14 +43,12 @@ export const NoteWaveform: React.FC<NoteWaveformProps> = ({
 
         if (mode === 'completed') {
           height = COMPLETED_HEIGHTS[i] ?? 8;
-        } else if (hasVoiceSignal && !reducedMotion) {
+        } else if (mode === 'recording' && !reducedMotion) {
           const sample =
-            waveform.length > 0
-              ? waveform[Math.min(waveform.length - 1, Math.floor((i / BAR_COUNT) * waveform.length))] ?? levelRms
-              : levelRms;
-          const weight = 0.7 + ((i % 3) * 0.2);
-          const scaled = Math.min(1, Math.max(0, sample * 3.5 * weight + levelRms * 1.2));
-          height = Math.round(4 + scaled * 12);
+            recent.length > 0
+              ? recent[Math.min(recent.length - 1, i)] ?? 0
+              : Math.min(1, Math.sqrt(Math.max(0, levelRms) * 14));
+          height = sample >= 0.04 ? Math.max(4, Math.min(18, Math.round(3 + sample * 15))) : 4;
         }
 
         let backgroundColor = 'rgba(17, 17, 17, 0.28)';

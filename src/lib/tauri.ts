@@ -207,3 +207,11 @@ export async function apiInstallAppUpdate(
 ): Promise<string> {
   return invoke<string>('install_app_update', { downloadUrl, assetName });
 }
+
+export async function apiReadNoteAudio(noteId: string): Promise<string> {
+  return invoke<string>('read_note_audio', { noteId });
+}
+
+export async function apiOpenExternalUrl(url: string): Promise<void> {
+  return invoke<void>('open_external_url', { url });
+}

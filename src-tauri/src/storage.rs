@@ -170,6 +170,23 @@ pub fn retain_audio_file(temp_wav: &Path, note_id: &str, encrypt: bool) -> Resul
     }
 }
 
+pub fn read_retained_audio_bytes(path: &str, encrypted: bool) -> Result<Vec<u8>, String> {
+    let raw = fs::read(path).map_err(|e| format!("録音ファイルの読み込みに失敗: {e}"))?;
+    if !encrypted {
+        return Ok(raw);
+    }
+    if raw.len() < 12 {
+        return Err("暗号化音声データが破損しています".to_string());
+    }
+    let key = get_or_create_audio_key()?;
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|e| format!("復号器の初期化に失敗: {e}"))?;
+    let nonce = Nonce::from_slice(&raw[..12]);
+    cipher
+        .decrypt(nonce, &raw[12..])
+        .map_err(|e| format!("音声の復号に失敗しました: {e}"))
+}
+
 pub fn remove_file_if_exists(path: &str) {
     let p = Path::new(path);
     if p.exists() {

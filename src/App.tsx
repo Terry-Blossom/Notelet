@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ChevronDown,
   Home,
+  Loader2,
   MessageSquare,
   FileText,
   Upload,
@@ -80,6 +81,7 @@ import {
 } from './lib/tauri';
 import { createEmptyNote, formatMs } from './lib/format';
 import { HomeView } from './components/HomeView';
+import { OfficialNotionLogo } from './components/NotionSyncBadge';
 import { RecordingView } from './components/RecordingView';
 import { NoteEditorView } from './components/NoteEditorView';
 import { ChatView } from './components/ChatView';
@@ -264,11 +266,12 @@ const RecordingOverlay: React.FC = () => {
         />
         <div
           data-tauri-drag-region
-          style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '20px' }}
+          style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '20px' }}
           aria-hidden="true"
         >
           {bars.map((v, idx) => {
-            const h = Math.max(4, Math.min(18, Math.round(4 + (Number.isFinite(v) ? v : 0.1) * 14)));
+            const val = Number.isFinite(v) ? v : 0;
+            const h = val >= 0.04 ? Math.max(4, Math.min(18, Math.round(3 + val * 15))) : 4;
             return (
               <span
                 key={idx}
@@ -277,7 +280,7 @@ const RecordingOverlay: React.FC = () => {
                   height: `${h}px`,
                   borderRadius: '2px',
                   backgroundColor: isPaused ? '#A1A1AA' : '#F4F4F5',
-                  transition: 'height 120ms ease-out',
+                  transition: 'height 80ms ease-out',
                 }}
               />
             );
@@ -904,8 +907,6 @@ const MainApp: React.FC = () => {
 
   const activeNote =
     snapshot.notes.find((n) => n.id === activeNoteId) || snapshot.notes[0] || null;
-  const fallbackEditorNote = React.useMemo(() => createEmptyNote(recordingSpaceId), [recordingSpaceId]);
-  const editorNote = activeNote || fallbackEditorNote;
   const isRecordingActive = recStatus.state === 'recording' || recStatus.state === 'paused';
 
   const navItems: { id: NavView; label: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number }> }[] = [
@@ -1048,6 +1049,55 @@ const MainApp: React.FC = () => {
             );
           })}
         </nav>
+
+        {!sidebarCollapsed && (() => {
+          const notionConnected = Boolean(secretStatus?.notion_access_token && snapshot.settings.notion_target_id);
+          const syncingCount = snapshot.notes.filter((n) => n.notion_sync.status === 'syncing').length;
+          const unsyncedCount = snapshot.notes.filter(
+            (n) => n.notion_sync.status === 'not_synced' || n.notion_sync.status === 'failed'
+          ).length;
+          return (
+            <button
+              type="button"
+              onClick={() => setView('integrations')}
+              title="Notion 同期ステータス"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px',
+                borderRadius: '8px',
+                backgroundColor: 'var(--bg-canvas)',
+                border: '1px solid var(--border-subtle)',
+                fontSize: '12px',
+                color: !notionConnected
+                  ? 'var(--text-muted)'
+                  : syncingCount > 0
+                  ? 'var(--text-secondary)'
+                  : unsyncedCount > 0
+                  ? 'var(--danger)'
+                  : 'var(--text-primary)',
+                width: '100%',
+                textAlign: 'left',
+              }}
+            >
+              {syncingCount > 0 ? (
+                <Loader2 size={15} strokeWidth={1.75} className="spin" style={{ flexShrink: 0 }} />
+              ) : (
+                <OfficialNotionLogo size={15} />
+              )}
+              <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {!notionConnected
+                  ? 'Notion 未連携'
+                  : syncingCount > 0
+                  ? 'Notion 同期中...'
+                  : unsyncedCount > 0
+                  ? `未同期 ${unsyncedCount}件`
+                  : '最新の状態'}
+              </span>
+            </button>
+          );
+        })()}
 
         <div className="sidebar-footer">
           {recordOptionsOpen && !sidebarCollapsed && (
@@ -1219,40 +1269,6 @@ const MainApp: React.FC = () => {
           </header>
 
           <div className="main-scroll">
-            {isRecordingActive && (
-          <div className="recording-dock" role="status" aria-live="polite">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span className="recording-live-dot" />
-              <strong style={{ fontSize: '14px', color: 'var(--danger)' }}>
-                {recStatus.state === 'paused' ? '録音一時停止中' : '録音中'}
-              </strong>
-              <span className="mono-num" style={{ fontWeight: 600 }}>
-                {formatMs(recStatus.elapsed_ms)}
-              </span>
-              <span className="text-muted">{recStatus.device_name}</span>
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {(view !== 'editor' || (recordingNoteId && activeNoteId !== recordingNoteId)) && (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  style={{ height: '30px' }}
-                  onClick={() => {
-                    if (recordingNoteId) setActiveNoteId(recordingNoteId);
-                    setView('editor');
-                  }}
-                >
-                  録音中のノートへ
-                </button>
-              )}
-              <button type="button" className="btn btn-danger" style={{ height: '30px' }} onClick={handleStopAndFinish}>
-                <Square size={13} strokeWidth={1.5} />
-                停止
-              </button>
-            </div>
-          </div>
-        )}
-
         {bannerMessage && (
           <div
             style={{
@@ -1427,24 +1443,54 @@ const MainApp: React.FC = () => {
           />
         )}
 
-        {(view === 'editor' || view === 'notes') && (
+        {(view === 'editor' || view === 'notes') && !activeNote && (
+          <div className="page-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px', textAlign: 'center' }}>
+            <FileText size={32} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <strong style={{ fontSize: '16px' }}>ノートがありません</strong>
+              <span className="text-muted" style={{ fontSize: '13px' }}>
+                新しいノートを作成するか、録音を開始してください。
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => handleCreateManualNote(recordingSpaceId)}
+              >
+                <Plus size={14} strokeWidth={1.5} />
+                新規ノートを作成
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => void handleStartRecording()}
+              >
+                <Mic size={14} strokeWidth={1.5} />
+                録音を開始
+              </button>
+            </div>
+          </div>
+        )}
+
+        {(view === 'editor' || view === 'notes') && activeNote && (
           <NoteEditorView
-            note={editorNote}
+            note={activeNote}
             allNotes={snapshot.notes}
             folders={snapshot.folders}
             recordingNoteId={isRecordingActive ? recordingNoteId : null}
             settings={snapshot.settings}
             recipes={snapshot.recipes}
             secretStatus={secretStatus}
-            transcribing={transcribing && (!recordingNoteId || editorNote.id === recordingNoteId)}
+            transcribing={transcribing && (!recordingNoteId || activeNote.id === recordingNoteId)}
             transcribeError={transcribeError}
             recordingStatus={
-              isRecordingActive && (!recordingNoteId || editorNote.id === recordingNoteId)
+              isRecordingActive && (!recordingNoteId || activeNote.id === recordingNoteId)
                 ? recStatus
                 : INITIAL_RECORDING_STATUS
             }
             liveSegments={
-              isRecordingActive && (!recordingNoteId || editorNote.id === recordingNoteId)
+              isRecordingActive && (!recordingNoteId || activeNote.id === recordingNoteId)
                 ? liveSegments
                 : []
             }
@@ -1504,7 +1550,28 @@ const MainApp: React.FC = () => {
                 setSnapshot((prev) => ({ ...prev, recipes: [...prev.recipes, recipe] }));
               }
             }}
-            onChatNote={apiChatNotes}
+            onChatNote={async (ids, q, spaceId) => {
+              const res = await apiChatNotes(ids, q, spaceId);
+              if (isTauriRuntime()) {
+                await refreshAll();
+              } else {
+                setSnapshot((prev) => ({
+                  ...prev,
+                  chat_history: [
+                    {
+                      id: crypto.randomUUID(),
+                      timestamp: new Date().toISOString(),
+                      space_id: spaceId ?? null,
+                      question: q,
+                      answer: res.answer,
+                      citations: res.citations,
+                    },
+                    ...(prev.chat_history || []),
+                  ],
+                }));
+              }
+              return res;
+            }}
             onShareSlack={apiShareToSlack}
             onSendWebhook={apiSendWebhook}
             onAddDictionaryTerm={async (term) => {
