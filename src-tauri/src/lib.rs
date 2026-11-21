@@ -781,10 +781,17 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
         let _ = notion::archive_notion_page(&pid).await;
     }
     for (local_note, folder_name) in notes_to_push_to_notion {
-        if let Ok(synced_state) = notion::save_note_to_notion(&settings, &local_note, &folder_name).await {
+        if let Ok((page_id, page_url, synced_at)) =
+            notion::save_note_to_notion(&local_note, &folder_name, &settings).await
+        {
             let mut data = state.data.lock().unwrap();
             if let Some(n) = data.notes.iter_mut().find(|n| n.id == local_note.id) {
-                n.notion_sync = synced_state;
+                n.notion_sync.page_id = Some(page_id);
+                n.notion_sync.page_url = Some(page_url);
+                n.notion_sync.database_id = Some(settings.notion_target_id.clone());
+                n.notion_sync.last_synced_at = Some(synced_at);
+                n.notion_sync.status = "synced".to_string();
+                n.notion_sync.last_error = None;
             }
             let _ = storage::save_snapshot(&data);
         }
