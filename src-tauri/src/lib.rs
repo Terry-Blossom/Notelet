@@ -1085,7 +1085,7 @@ pub fn run() {
                         if let Ok(mut data) = st.data.lock() {
                             data.settings.recording_overlay_x = Some(logical.x);
                             data.settings.recording_overlay_y = Some(logical.y);
-                        }
+                        };
                     }
                 }
             }
