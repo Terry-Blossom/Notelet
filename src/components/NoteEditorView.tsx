@@ -2015,7 +2015,28 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           </div>
         </div>
 
-        {/* Status Toast / Errors */}
+        {/* Status Toast / Errors / Silent Mic Warning */}
+        {isRecording && recordingStatus?.is_silent_warning && (
+          <div
+            role="status"
+            style={{
+              marginTop: '8px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '4px 12px',
+              borderRadius: '999px',
+              backgroundColor: '#FEF3C7',
+              color: '#92400E',
+              fontSize: '12px',
+              fontWeight: 500,
+              alignSelf: 'flex-start',
+            }}
+          >
+            音声が入力されていません（マイクまたは録音ソースを確認してください）
+          </div>
+        )}
+
         {toast && (
           <div
             style={{
@@ -2063,25 +2084,35 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       phase === 'completed' ? 'completed' : ''
                     }`}
                   >
-                    {displayedSegments.map((seg) => (
-                      <article key={seg.id} className="note-turn">
-                        <div className="note-turn-meta" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <button
-                            type="button"
-                            className="note-seg-play-btn"
-                            aria-label={`${formatNoteTimer(seg.start_ms)} から再生`}
-                            title={`${formatNoteTimer(seg.start_ms)} から再生`}
-                            onClick={() => void playNoteAudioFromMs(seg.start_ms)}
-                          >
-                            <Play size={11} strokeWidth={2} />
-                          </button>
-                          <span className="note-turn-time">
-                            {formatNoteTimer(seg.start_ms)}
-                          </span>
-                        </div>
-                        <p className="note-turn-text">{seg.text}</p>
-                      </article>
-                    ))}
+                    {displayedSegments.map((seg) => {
+                      const isActiveSeg =
+                        isPlaying && playbackMs >= seg.start_ms && playbackMs < seg.end_ms;
+                      return (
+                        <article key={seg.id} className={`note-turn ${isActiveSeg ? 'playing' : ''}`}>
+                          <div className="note-turn-meta" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                              type="button"
+                              className={`note-seg-play-btn ${isActiveSeg ? 'active' : ''}`}
+                              aria-label={isActiveSeg ? '一時停止' : `${formatNoteTimer(seg.start_ms)} から再生`}
+                              title={isActiveSeg ? '一時停止' : `${formatNoteTimer(seg.start_ms)} から再生`}
+                              onClick={() => {
+                                if (isActiveSeg) {
+                                  togglePlayback();
+                                } else {
+                                  void playNoteAudioFromMs(seg.start_ms);
+                                }
+                              }}
+                            >
+                              {isActiveSeg ? <Pause size={11} strokeWidth={2} /> : <Play size={11} strokeWidth={2} />}
+                            </button>
+                            <span className="note-turn-time">
+                              {formatNoteTimer(seg.start_ms)}
+                            </span>
+                          </div>
+                          <p className="note-turn-text">{seg.text}</p>
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
               </div>

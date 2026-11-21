@@ -522,6 +522,20 @@ const MainApp: React.FC = () => {
       window.removeEventListener('keydown', onKey);
     };
   }, [recordOptionsOpen]);
+
+  useEffect(() => {
+    const onGlobalKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCommandQuery('');
+        setCommandSearchOpen((v) => !v);
+      } else if (e.key === 'Escape') {
+        setCommandSearchOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onGlobalKey);
+    return () => window.removeEventListener('keydown', onGlobalKey);
+  }, []);
   const [recStatus, setRecStatus] = useState<RecordingStatus>(INITIAL_RECORDING_STATUS);
   const [liveManualNotes, setLiveManualNotes] = useState('');
   const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
@@ -1059,8 +1073,31 @@ const MainApp: React.FC = () => {
           return (
             <button
               type="button"
-              onClick={() => setView('integrations')}
-              title="Notion 同期ステータス"
+              onClick={async () => {
+                if (!notionConnected) {
+                  setView('integrations');
+                  return;
+                }
+                if (unsyncedCount > 0 && isTauriRuntime()) {
+                  const pending = snapshot.notes.filter(
+                    (n) => n.notion_sync.status === 'not_synced' || n.notion_sync.status === 'failed'
+                  );
+                  for (const n of pending) {
+                    await syncNoteToNotion(n.id, true);
+                  }
+                  const snap = await apiNotionPullNotes();
+                  setSnapshot(snap);
+                } else {
+                  setView('integrations');
+                }
+              }}
+              title={
+                !notionConnected
+                  ? 'Notion 連携設定を開く'
+                  : unsyncedCount > 0
+                  ? 'クリックして未同期のノートを今すぐ同期'
+                  : 'Notion 同期設定を開く'
+              }
               style={{
                 display: 'flex',
                 alignItems: 'center',

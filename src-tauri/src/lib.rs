@@ -508,6 +508,17 @@ async fn summarize_note_cmd(
         (data.settings.clone(), n)
     };
     let (summary, decisions, action_items) = llm::summarize_note(&settings, &note).await?;
+    if note.title.trim().is_empty() {
+        let candidate = summary
+            .lines()
+            .map(|l| l.trim().trim_start_matches('#').trim_start_matches('-').trim_start_matches('*').trim())
+            .find(|l| !l.is_empty() && !l.starts_with("```"))
+            .unwrap_or("");
+        if !candidate.is_empty() {
+            let short: String = candidate.chars().take(32).collect();
+            note.title = short;
+        }
+    }
     note.summary = summary;
     note.decisions = decisions;
     note.action_items = action_items;

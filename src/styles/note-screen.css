@@ -649,6 +649,18 @@
   background-color: var(--ns-surface-selected);
 }
 
+.note-seg-play-btn.active {
+  background-color: var(--ns-text-primary);
+  color: #ffffff;
+  border-color: var(--ns-text-primary);
+}
+
+.note-turn.playing {
+  background-color: #f7f7f8;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
 @keyframes notePopUp {
   from {
     opacity: 0;

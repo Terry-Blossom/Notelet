@@ -1,7 +1,6 @@
 use crate::models::{AppSettings, AsrModelInfo, AsrProviderKind, DictionaryEntry, TranscriptSegment};
 use crate::secrets;
 use crate::storage;
-use futures_util_stub::*;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
