@@ -760,13 +760,14 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
                         existing_n.notion_sync.last_error = None;
                     } else if local_ts > notion_ts {
                         // Local is newer -> keep local and push back to Notion
+                        let existing_clone = existing_n.clone();
                         let folder_name = data
                             .folders
                             .iter()
-                            .find(|f| f.id == existing_n.folder_id)
+                            .find(|f| f.id == existing_clone.folder_id)
                             .map(|f| f.name.clone())
                             .unwrap_or_else(|| "一般".to_string());
-                        notes_to_push_to_notion.push((existing_n.clone(), folder_name));
+                        notes_to_push_to_notion.push((existing_clone, folder_name));
                     }
                     continue;
                 }
