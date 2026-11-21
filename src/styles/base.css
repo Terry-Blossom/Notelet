@@ -166,7 +166,8 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-1) 0;
+  padding: var(--sp-2) 0 0;
+  position: relative;
 }
 
 .sidebar.collapsed .sidebar-footer {
@@ -244,20 +245,53 @@ button:disabled {
 }
 
 .record-split-btn {
+  flex: 1;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 8px;
   height: 100%;
   padding: 0 12px;
   color: var(--text-inverse);
   font-weight: 600;
   font-size: 13px;
-  flex-shrink: 0;
 }
 
 .record-split-btn:hover {
   background-color: rgba(255, 255, 255, 0.12);
+}
+
+.record-split-chevron {
+  width: 32px;
+  height: 100%;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+  color: var(--text-inverse);
+}
+
+.record-split-chevron:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.record-options-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 248px;
+  padding: 12px;
+  border-radius: 12px;
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-md);
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text-primary);
 }
 
 .record-split-select {

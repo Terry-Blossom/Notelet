@@ -306,6 +306,13 @@ pub struct ChatHistoryItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeletedNoteRecord {
+    pub note_id: String,
+    pub notion_page_id: Option<String>,
+    pub deleted_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppDataSnapshot {
     pub notes: Vec<Note>,
     pub folders: Vec<Folder>,
@@ -315,4 +322,6 @@ pub struct AppDataSnapshot {
     pub audit_logs: Vec<AuditEvent>,
     #[serde(default)]
     pub chat_history: Vec<ChatHistoryItem>,
+    #[serde(default)]
+    pub deleted_notes: Vec<DeletedNoteRecord>,
 }

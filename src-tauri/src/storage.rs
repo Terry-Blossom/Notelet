@@ -99,6 +99,7 @@ pub fn load_snapshot() -> AppDataSnapshot {
         settings: AppSettings::default(),
         audit_logs: Vec::new(),
         chat_history: Vec::new(),
+        deleted_notes: Vec::new(),
     }
 }
 
@@ -181,6 +182,7 @@ pub fn export_all_json(snapshot: &AppDataSnapshot) -> Result<String, String> {
 }
 
 pub fn upsert_note(snapshot: &mut AppDataSnapshot, note: Note) {
+    snapshot.deleted_notes.retain(|d| d.note_id != note.id);
     if let Some(existing) = snapshot.notes.iter_mut().find(|n| n.id == note.id) {
         *existing = note;
     } else {
@@ -190,13 +192,26 @@ pub fn upsert_note(snapshot: &mut AppDataSnapshot, note: Note) {
 
 pub fn delete_note(snapshot: &mut AppDataSnapshot, note_id: &str) -> bool {
     let before = snapshot.notes.len();
+    let mut notion_page_id: Option<String> = None;
     if let Some(n) = snapshot.notes.iter().find(|n| n.id == note_id) {
         if let Some(ref p) = n.audio_path {
             remove_file_if_exists(p);
         }
+        notion_page_id = n.notion_sync.page_id.clone();
     }
     snapshot.notes.retain(|n| n.id != note_id);
-    snapshot.notes.len() < before
+    if snapshot.notes.len() < before {
+        let now = chrono::Utc::now().to_rfc3339();
+        snapshot.deleted_notes.retain(|d| d.note_id != note_id);
+        snapshot.deleted_notes.push(crate::models::DeletedNoteRecord {
+            note_id: note_id.to_string(),
+            notion_page_id,
+            deleted_at: now,
+        });
+        true
+    } else {
+        false
+    }
 }
 
 pub fn upsert_dictionary(snapshot: &mut AppDataSnapshot, entry: DictionaryEntry) {

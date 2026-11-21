@@ -641,3 +641,55 @@ pub async fn pull_notes_from_notion(
 
     Ok(out)
 }
+
+pub async fn archive_notion_page(page_id: &str) -> Result<(), String> {
+    let token = match secrets::get_secret("notion_access_token")? {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => return Ok(()),
+    };
+    let client = reqwest::Client::new();
+    let url = format!("https://api.notion.com/v1/pages/{page_id}");
+    let resp = client
+        .patch(&url)
+        .bearer_auth(&token)
+        .header("Notion-Version", NOTION_VERSION)
+        .json(&json!({ "archived": true }))
+        .send()
+        .await
+        .map_err(|e| format!("Notion アーカイブ通信エラー: {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let b = resp.text().await.unwrap_or_default();
+        return Err(format!("Notion アーカイブエラー ({s}): {b}"));
+    }
+    Ok(())
+}
+
+pub async fn fetch_page_archive_status(page_id: &str) -> Result<Option<(bool, String)>, String> {
+    let token = match secrets::get_secret("notion_access_token")? {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => return Ok(None),
+    };
+    let client = reqwest::Client::new();
+    let url = format!("https://api.notion.com/v1/pages/{page_id}");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .header("Notion-Version", NOTION_VERSION)
+        .send()
+        .await
+        .map_err(|e| format!("Notion ページ確認通信エラー: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(Some((true, Utc::now().to_rfc3339())));
+    }
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let v: Value = resp.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
+    let archived = v["archived"].as_bool().unwrap_or(false) || v["in_trash"].as_bool().unwrap_or(false);
+    let last_edited = v["last_edited_time"]
+        .as_str()
+        .unwrap_or(&Utc::now().to_rfc3339())
+        .to_string();
+    Ok(Some((archived, last_edited)))
+}

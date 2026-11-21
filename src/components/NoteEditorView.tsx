@@ -2005,37 +2005,56 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           </div>
         )}
 
-        {/* Bottom Question Input + Generate Summary Button (when summary empty) */}
+        {/* Bottom Question Input + Generate Summary Button (popup when transcript exists & summary empty) */}
         <div className="note-composer-wrap">
-          {!note.summary.trim() && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', gap: '8px', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={!llmConfigured || isSummarizingThisNote}
-                onClick={handleRunSummarize}
+          {(() => {
+            const hasTranscript =
+              note.segments.some((s) => s.text.trim().length > 0) ||
+              externalLiveSegments.some((s) => s.text.trim().length > 0);
+            const showSummarizeBtn = !note.summary.trim() && hasTranscript;
+            return (
+              <div
+                style={{
+                  width: '100%',
+                  maxWidth: '840px',
+                  display: 'flex',
+                  justifyContent: showSummarizeBtn ? 'space-between' : 'flex-end',
+                  alignItems: 'center',
+                  marginBottom: '8px',
+                  gap: '8px',
+                  flexWrap: 'wrap',
+                }}
               >
-                <Sparkles size={14} strokeWidth={1.75} />
-                {isSummarizingThisNote ? '要約を生成中...' : '要約を生成'}
-              </button>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button
-                  type="button"
-                  className={`tab-btn ${chatScope === 'note' ? 'active' : ''}`}
-                  onClick={() => setChatScope('note')}
-                >
-                  このノート
-                </button>
-                <button
-                  type="button"
-                  className={`tab-btn ${chatScope === 'space' ? 'active' : ''}`}
-                  onClick={() => setChatScope('space')}
-                >
-                  {activeFolder.name}全体
-                </button>
+                {showSummarizeBtn && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary note-summary-popup-row"
+                    disabled={!llmConfigured || isSummarizingThisNote}
+                    onClick={handleRunSummarize}
+                  >
+                    <Sparkles size={14} strokeWidth={1.75} />
+                    {isSummarizingThisNote ? '要約を生成中...' : '要約を生成'}
+                  </button>
+                )}
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    type="button"
+                    className={`tab-btn ${chatScope === 'note' ? 'active' : ''}`}
+                    onClick={() => setChatScope('note')}
+                  >
+                    このノート
+                  </button>
+                  <button
+                    type="button"
+                    className={`tab-btn ${chatScope === 'space' ? 'active' : ''}`}
+                    onClick={() => setChatScope('space')}
+                  >
+                    {activeFolder.name}全体
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
           <div className="note-composer-box">
             <textarea
               aria-label="ノートについて何でも質問"

@@ -352,11 +352,13 @@ describe('App & Views', () => {
       id: 'note-a',
       title: '心理学の授業ノート（教授の講義と期末レポート課題）',
       manual_notes: '<p>来週までにレポート提出</p>',
+      segments: [{ id: 'seg-a', start_ms: 0, end_ms: 1500, speaker: '', text: '認知心理学の導入講義です。' }],
     };
     const noteB: Note = {
       ...createEmptyNote('personal'),
       id: 'note-b',
       title: '別のメモ',
+      segments: [{ id: 'seg-b', start_ms: 0, end_ms: 1200, speaker: '', text: '別ノートの文字起こし。' }],
     };
     const onUpdateNote = vi.fn();
     let resolveSummarizeA: () => void = () => {};

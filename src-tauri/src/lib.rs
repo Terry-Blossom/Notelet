@@ -69,9 +69,19 @@ fn save_note(state: State<AppState>, note: Note) -> Result<AppDataSnapshot, Stri
 #[tauri::command]
 fn delete_note(state: State<AppState>, note_id: String) -> Result<AppDataSnapshot, String> {
     let mut data = state.data.lock().unwrap();
+    let page_id_to_archive = data
+        .notes
+        .iter()
+        .find(|n| n.id == note_id)
+        .and_then(|n| n.notion_sync.page_id.clone());
     if storage::delete_note(&mut data, &note_id) {
         storage::append_audit(&mut data, "note_deleted", &format!("note_id={note_id}"));
         storage::save_snapshot(&data)?;
+        if let Some(pid) = page_id_to_archive {
+            tauri::async_runtime::spawn(async move {
+                let _ = notion::archive_notion_page(&pid).await;
+            });
+        }
     }
     Ok(data.clone())
 }
@@ -631,6 +641,12 @@ async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result
     }
 }
 
+fn parse_rfc3339_millis(s: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or(0)
+}
+
 #[tauri::command]
 async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot, String> {
     let settings = {
@@ -638,50 +654,143 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
         data.settings.clone()
     };
     let pulled = notion::pull_notes_from_notion(&settings).await?;
-    let mut data = state.data.lock().unwrap();
-    for (mut note, space_name) in pulled {
-        // Find or create folder for space_name
-        let folder_id = if let Some(existing_f) = data.folders.iter().find(|f| f.name == space_name) {
-            existing_f.id.clone()
-        } else {
-            let new_f = Folder {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: space_name,
-                is_shared: false,
-                permission: "owner".to_string(),
-            };
-            let id = new_f.id.clone();
-            data.folders.push(new_f);
-            id
-        };
-        note.folder_id = folder_id;
 
-        if let Some(page_id) = note.notion_sync.page_id.as_ref() {
-            if let Some(existing_n) = data
-                .notes
-                .iter_mut()
-                .find(|n| n.notion_sync.page_id.as_ref() == Some(page_id))
-            {
-                existing_n.title = note.title;
-                existing_n.folder_id = note.folder_id;
-                if !note.summary.is_empty() {
-                    existing_n.summary = note.summary;
+    let mut pulled_page_ids = std::collections::HashSet::new();
+    for (n, _) in &pulled {
+        if let Some(pid) = &n.notion_sync.page_id {
+            pulled_page_ids.insert(pid.clone());
+        }
+    }
+
+    // Check if any locally synced notes missing from query results were archived/deleted in Notion
+    let missing_synced: Vec<(String, String, String)> = {
+        let data = state.data.lock().unwrap();
+        data.notes
+            .iter()
+            .filter_map(|n| {
+                let pid = n.notion_sync.page_id.as_ref()?;
+                let db_matches = n.notion_sync.database_id.as_deref() == Some(settings.notion_target_id.as_str());
+                if db_matches && n.notion_sync.status == "synced" && !pulled_page_ids.contains(pid) {
+                    Some((n.id.clone(), pid.clone(), n.updated_at.clone()))
+                } else {
+                    None
                 }
-                if !note.manual_notes.is_empty() {
-                    existing_n.manual_notes = note.manual_notes;
-                }
-                if !note.segments.is_empty() {
-                    existing_n.segments = note.segments;
-                }
-                existing_n.notion_sync.status = "synced".to_string();
-                existing_n.notion_sync.last_error = None;
-                continue;
+            })
+            .collect()
+    };
+
+    let mut notion_deleted_note_ids = Vec::new();
+    for (nid, pid, local_updated) in missing_synced {
+        if let Ok(Some((archived, notion_edited))) = notion::fetch_page_archive_status(&pid).await {
+            if archived && parse_rfc3339_millis(&notion_edited) > parse_rfc3339_millis(&local_updated) {
+                notion_deleted_note_ids.push(nid);
             }
         }
-        data.notes.push(note);
     }
-    data.notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    storage::save_snapshot(&data)?;
+
+    let mut pages_to_archive_in_notion: Vec<String> = Vec::new();
+    let mut notes_to_push_to_notion: Vec<(Note, String)> = Vec::new();
+
+    {
+        let mut data = state.data.lock().unwrap();
+
+        for nid in notion_deleted_note_ids {
+            storage::delete_note(&mut data, &nid);
+        }
+
+        for (mut note, space_name) in pulled {
+            let notion_ts = parse_rfc3339_millis(&note.updated_at);
+            let page_id_opt = note.notion_sync.page_id.clone();
+
+            // Check local deletion tombstone first (Last-Write-Wins)
+            if let Some(ref pid) = page_id_opt {
+                if let Some(del_rec) = data
+                    .deleted_notes
+                    .iter()
+                    .find(|d| d.notion_page_id.as_deref() == Some(pid.as_str()))
+                    .cloned()
+                {
+                    let del_ts = parse_rfc3339_millis(&del_rec.deleted_at);
+                    if del_ts >= notion_ts {
+                        // Local deletion is newer -> keep deleted and archive on Notion
+                        pages_to_archive_in_notion.push(pid.clone());
+                        continue;
+                    } else {
+                        // Notion was re-edited after local deletion -> restore
+                        data.deleted_notes
+                            .retain(|d| d.notion_page_id.as_deref() != Some(pid.as_str()));
+                    }
+                }
+            }
+
+            // Find or create folder for space_name
+            let folder_id = if let Some(existing_f) = data.folders.iter().find(|f| f.name == space_name) {
+                existing_f.id.clone()
+            } else {
+                let new_f = Folder {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: space_name.clone(),
+                    is_shared: false,
+                    permission: "owner".to_string(),
+                };
+                let id = new_f.id.clone();
+                data.folders.push(new_f);
+                id
+            };
+            note.folder_id = folder_id;
+
+            if let Some(ref page_id) = page_id_opt {
+                if let Some(existing_n) = data
+                    .notes
+                    .iter_mut()
+                    .find(|n| n.notion_sync.page_id.as_ref() == Some(page_id))
+                {
+                    let local_ts = parse_rfc3339_millis(&existing_n.updated_at);
+                    if notion_ts > local_ts {
+                        // Notion is newer -> update local note
+                        existing_n.title = note.title;
+                        existing_n.folder_id = note.folder_id;
+                        existing_n.updated_at = note.updated_at;
+                        existing_n.summary = note.summary;
+                        existing_n.manual_notes = note.manual_notes;
+                        if !note.segments.is_empty() {
+                            existing_n.segments = note.segments;
+                        }
+                        existing_n.notion_sync.status = "synced".to_string();
+                        existing_n.notion_sync.last_error = None;
+                    } else if local_ts > notion_ts {
+                        // Local is newer -> keep local and push back to Notion
+                        let folder_name = data
+                            .folders
+                            .iter()
+                            .find(|f| f.id == existing_n.folder_id)
+                            .map(|f| f.name.clone())
+                            .unwrap_or_else(|| "一般".to_string());
+                        notes_to_push_to_notion.push((existing_n.clone(), folder_name));
+                    }
+                    continue;
+                }
+            }
+            data.notes.push(note);
+        }
+        data.notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        storage::save_snapshot(&data)?;
+    }
+
+    for pid in pages_to_archive_in_notion {
+        let _ = notion::archive_notion_page(&pid).await;
+    }
+    for (local_note, folder_name) in notes_to_push_to_notion {
+        if let Ok(synced_state) = notion::save_note_to_notion(&settings, &local_note, &folder_name).await {
+            let mut data = state.data.lock().unwrap();
+            if let Some(n) = data.notes.iter_mut().find(|n| n.id == local_note.id) {
+                n.notion_sync = synced_state;
+            }
+            let _ = storage::save_snapshot(&data);
+        }
+    }
+
+    let data = state.data.lock().unwrap();
     Ok(data.clone())
 }
 

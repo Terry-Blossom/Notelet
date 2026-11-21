@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ChevronDown,
   Home,
   MessageSquare,
   FileText,
@@ -497,12 +498,27 @@ const MainApp: React.FC = () => {
     chat_history: [],
   });
   const [models, setModels] = useState<AsrModelInfo[]>([]);
-  const [, setDevices] = useState<AudioDeviceInfo[]>([]);
+  const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
   const [adapters, setAdapters] = useState<IntegrationAdapterInfo[]>([]);
   const [secretStatus, setSecretStatus] = useState<SecretStatus | null>(null);
   const [mcpPreview, setMcpPreview] = useState('');
-  const [sourceMode] = useState<AudioSourceMode>('mic');
-  const [selectedDeviceId] = useState('');
+  const [sourceMode, setSourceMode] = useState<AudioSourceMode>('mic');
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [recordOptionsOpen, setRecordOptionsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!recordOptionsOpen) return;
+    const close = () => setRecordOptionsOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRecordOptionsOpen(false);
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [recordOptionsOpen]);
   const [recStatus, setRecStatus] = useState<RecordingStatus>(INITIAL_RECORDING_STATUS);
   const [liveManualNotes, setLiveManualNotes] = useState('');
   const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
@@ -1034,6 +1050,83 @@ const MainApp: React.FC = () => {
         </nav>
 
         <div className="sidebar-footer">
+          {recordOptionsOpen && !sidebarCollapsed && (
+            <div
+              className="record-options-popover"
+              role="dialog"
+              aria-label="録音設定"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                  録音ソース
+                </span>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {(
+                    [
+                      { id: 'mic', label: 'マイク' },
+                      { id: 'system', label: '本体音声' },
+                      { id: 'both', label: '両方' },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={`tab-btn ${sourceMode === opt.id ? 'active' : ''}`}
+                      style={{ flex: 1, height: '28px', padding: '0 8px', fontSize: '12px' }}
+                      onClick={() => setSourceMode(opt.id)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {sourceMode !== 'system' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                    マイク
+                  </span>
+                  <select
+                    aria-label="使用するマイク"
+                    className="input"
+                    style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
+                    value={selectedDeviceId}
+                    onChange={(e) => setSelectedDeviceId(e.target.value)}
+                  >
+                    <option value="">既定のマイク (自動)</option>
+                    {devices
+                      .filter((d) => d.kind === 'input')
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                  保存先スペース
+                </span>
+                <select
+                  aria-label="録音先のスペース"
+                  className="input"
+                  style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
+                  value={recordingSpaceId}
+                  onChange={(e) => setRecordingSpaceId(e.target.value)}
+                >
+                  {snapshot.folders.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
           <button
             type="button"
             aria-label="設定"
@@ -1045,14 +1138,35 @@ const MainApp: React.FC = () => {
           </button>
 
           {!sidebarCollapsed && (
-            <button
-              type="button"
-              className={`btn-sidebar-record ${isRecordingActive ? 'recording' : ''}`}
-              onClick={isRecordingActive ? handleStopAndFinish : handleStartRecording}
-            >
-              {isRecordingActive ? <Square size={14} strokeWidth={1.5} /> : <Mic size={14} strokeWidth={1.5} />}
-              <span>{isRecordingActive ? '停止' : '録音'}</span>
-            </button>
+            <div className={`record-split-group ${isRecordingActive ? 'recording' : ''}`}>
+              <button
+                type="button"
+                className="record-split-btn"
+                onClick={() => {
+                  setRecordOptionsOpen(false);
+                  if (isRecordingActive) {
+                    void handleStopAndFinish();
+                  } else {
+                    void handleStartRecording();
+                  }
+                }}
+              >
+                {isRecordingActive ? <Square size={14} strokeWidth={1.5} /> : <Mic size={14} strokeWidth={1.5} />}
+                <span>{isRecordingActive ? '停止' : '録音'}</span>
+              </button>
+              <button
+                type="button"
+                className="record-split-chevron"
+                aria-label="録音オプション"
+                aria-expanded={recordOptionsOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRecordOptionsOpen((o) => !o);
+                }}
+              >
+                <ChevronDown size={14} strokeWidth={2} />
+              </button>
+            </div>
           )}
         </div>
       </aside>
