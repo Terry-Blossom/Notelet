@@ -8,6 +8,7 @@ import {
   Search,
   Settings,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { AppSettings, ChatAnswer, Folder, Note } from '../types';
 import { findNoteSearchMatches, formatDateTime, formatMs } from '../lib/format';
@@ -21,6 +22,7 @@ interface HomeViewProps {
   onOpenNote: (noteId: string) => void;
   onDeleteNote?: (noteId: string) => Promise<void> | void;
   onCreateManualNote: (folderId?: string) => void;
+  onUploadFile?: (file: File) => Promise<void>;
   onSaveFolder: (folder: Folder) => Promise<void>;
   onDeleteFolder: (folderId: string) => Promise<void>;
   onChatSpace: (noteIds: string[], question: string, spaceId?: string | null) => Promise<ChatAnswer>;
@@ -34,8 +36,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onOpenNote,
   onDeleteNote,
   onCreateManualNote,
+  onUploadFile,
   onGoSettings,
 }) => {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const now = new Date();
   const [calYear, setCalYear] = useState(now.getFullYear());
   const [calMonth, setCalMonth] = useState(now.getMonth());
@@ -134,6 +138,31 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
+              {onUploadFile && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mov,.webm,.ogg,.flac"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        void onUploadFile(f);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload size={14} strokeWidth={1.5} />
+                    音声インポート
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="btn btn-secondary"

@@ -546,6 +546,7 @@ const MainApp: React.FC = () => {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
+  const [globalDragOver, setGlobalDragOver] = useState(false);
   const notionDebounceTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const notionCatchupStartedRef = React.useRef(false);
   const notionPullStartedRef = React.useRef(false);
@@ -1043,7 +1044,55 @@ const MainApp: React.FC = () => {
   ) : null;
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes('Files')) {
+          e.preventDefault();
+          setGlobalDragOver(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) {
+          setGlobalDragOver(false);
+        }
+      }}
+      onDrop={(e) => {
+        setGlobalDragOver(false);
+        const f = e.dataTransfer.files?.[0];
+        if (f) {
+          e.preventDefault();
+          void handleUploadAndTranscribe(f);
+        }
+      }}
+    >
+      {globalDragOver && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: '12px',
+            zIndex: 9999,
+            borderRadius: '16px',
+            border: '2px dashed var(--accent)',
+            backgroundColor: 'rgba(24, 24, 27, 0.72)',
+            color: '#FFFFFF',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '12px',
+            pointerEvents: 'none',
+          }}
+        >
+          <Upload size={32} strokeWidth={1.75} />
+          <strong style={{ fontSize: '16px' }}>
+            音声・動画ファイルをドロップして新規ノートを作成＆文字起こし
+          </strong>
+          <span style={{ fontSize: '12px', color: '#E4E4E7' }}>
+            対応形式: WAV / MP3 / M4A / MP4 / MOV / WebM / OGG / FLAC
+          </span>
+        </div>
+      )}
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <nav className="nav-list" aria-label="メインメニュー" style={{ marginTop: '8px' }}>
           {navItems.map((item) => {
@@ -1271,6 +1320,7 @@ const MainApp: React.FC = () => {
               }
             }}
             onCreateManualNote={handleCreateManualNote}
+            onUploadFile={handleUploadAndTranscribe}
             onSaveFolder={handleSaveFolder}
             onDeleteFolder={handleDeleteFolder}
             onChatSpace={apiChatNotes}
@@ -1504,14 +1554,15 @@ const MainApp: React.FC = () => {
             onSaveToNotion={async (noteId) => {
               await syncNoteToNotion(noteId, false);
             }}
-            onSummarize={async (noteId) => {
-              const updated = await apiSummarizeNote(noteId);
+            onSummarize={async (noteId, templateId) => {
+              const updated = await apiSummarizeNote(noteId, templateId);
               setSnapshot((prev) => ({
                 ...prev,
                 notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
               }));
               scheduleAutoNotionSync(noteId, true);
             }}
+            onUploadFile={handleUploadAndTranscribe}
             onDraftFollowup={async (noteId) => {
               const updated = await apiDraftFollowup(noteId);
               setSnapshot((prev) => ({

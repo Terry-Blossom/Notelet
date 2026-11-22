@@ -1,4 +1,6 @@
-use crate::models::{ActionItem, AppSettings, ChatAnswer, ChatCitation, Note};
+use crate::models::{
+    ActionItem, AppSettings, ChatAnswer, ChatCitation, LiveAssistResult, Note, TranscriptSegment,
+};
 use crate::secrets;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -412,10 +414,28 @@ pub async fn call_llm(
 pub async fn summarize_note(
     settings: &AppSettings,
     note: &Note,
+    template_id: Option<&str>,
 ) -> Result<(String, Vec<String>, Vec<ActionItem>), String> {
-    let sys = "あなたは正確な議事録・ノート要約アシスタントです。与えられた文字起こしとメモのみを根拠にし、会話にない事実を推測で補わないでください。必ずJSONのみで返答し、summaryフィールドは見出し(## 概要、## 要点など)や箇条書き(- )、太字(**強調**)を用いた読みやすいMarkdown記事形式で記述してください: {\"summary\": \"## 概要\\n...\\n\\n## 要点\\n- ...\", \"decisions\": [\"...\"], \"action_items\": [{\"text\": \"...\", \"assignee\": \"...\"}]}";
+    let tpl = template_id
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            if settings.active_template_id.trim().is_empty() {
+                "standard"
+            } else {
+                settings.active_template_id.trim()
+            }
+        });
+    let tpl_instruction = match tpl {
+        "1on1" => "【1on1・面談テンプレート】summaryフィールドには「## 相手の状況・共有事項」「## 課題・フィードバック」「## 次回までの目標・アクション」の見出しを使って整理してください。",
+        "lecture" => "【講義・セミナーテンプレート】summaryフィールドには「## テーマ・重要概念」「## 講義の要点まとめ」「## 疑問点・復習ポイント」の見出しを使って整理してください。",
+        "brainstorm" => "【ブレスト・アイデアテンプレート】summaryフィールドには「## 提案されたアイデア一覧」「## 有望案と優先度」「## 次の検証ステップ」の見出しを使って整理してください。",
+        _ => "【標準議事録テンプレート】summaryフィールドには「## 概要」「## 議論の要点」「## 今後の進め方」の見出しを使って整理してください。",
+    };
+    let sys = format!(
+        "あなたは正確な議事録・ノート要約アシスタントです。与えられた文字起こしとメモのみを根拠にし、会話にない事実を推測で補わないでください。{tpl_instruction} 必ずJSONのみで返答し、summaryフィールドは見出し(## )や箇条書き(- )、太字(**強調**)を用いた読みやすいMarkdown記事形式で記述してください: {{\"summary\": \"## 概要\\n...\\n\\n## 要点\\n- ...\", \"decisions\": [\"...\"], \"action_items\": [{{\"text\": \"...\", \"assignee\": \"...\"}}]}}"
+    );
     let user = note_context_text(note);
-    let raw = call_llm(settings, sys, &user).await?;
+    let raw = call_llm(settings, &sys, &user).await?;
     let cleaned = raw
         .trim()
         .trim_start_matches("```json")
@@ -451,6 +471,85 @@ pub async fn summarize_note(
     } else {
         Ok((raw, Vec::new(), Vec::new()))
     }
+}
+
+pub async fn live_assist_note(
+    settings: &AppSettings,
+    note: &Note,
+    live_segments: &[TranscriptSegment],
+) -> Result<LiveAssistResult, String> {
+    let mut temp_note = note.clone();
+    if !live_segments.is_empty() {
+        temp_note.segments.extend_from_slice(live_segments);
+    }
+
+    if settings.llm_provider != "none" && !settings.llm_provider.trim().is_empty() {
+        let sys = "あなたは会議中のリアルタイムAIファシリテーターです。ここまでの文字起こしとメモから、1) ここまでの要点（最大3項目、各1行）、2) 次に確認・質問すべき論点（最大3項目、各1行）をJSON形式のみで出力してください: {\"summary_points\": [\"...\"], \"next_questions\": [\"...\"]}";
+        let user = note_context_text(&temp_note);
+        if let Ok(raw) = call_llm(settings, sys, &user).await {
+            let cleaned = raw
+                .trim()
+                .trim_start_matches("```json")
+                .trim_start_matches("```")
+                .trim_end_matches("```")
+                .trim();
+            if let Ok(v) = serde_json::from_str::<Value>(cleaned) {
+                let summary_points: Vec<String> = v["summary_points"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let next_questions: Vec<String> = v["next_questions"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !summary_points.is_empty() || !next_questions.is_empty() {
+                    return Ok(LiveAssistResult {
+                        summary_points,
+                        next_questions,
+                    });
+                }
+            }
+        }
+    }
+
+    // Fallback heuristic when LLM is off or unavailable
+    let recent: Vec<String> = temp_note
+        .segments
+        .iter()
+        .rev()
+        .take(3)
+        .rev()
+        .map(|s| {
+            let sp = if s.speaker.trim().is_empty() {
+                "発言"
+            } else {
+                s.speaker.trim()
+            };
+            format!("[{}] {}: {}", format_ms(s.start_ms), sp, s.text)
+        })
+        .collect();
+    let summary_points = if recent.is_empty() {
+        vec!["まだ文字起こしセグメントがありません。録音を続けると直近の要点が表示されます。".to_string()]
+    } else {
+        recent
+    };
+    let next_questions = vec![
+        "ここまでの決定事項と保留事項の切り分けは完了していますか？".to_string(),
+        "次のアクションアイテムの担当者と期限は明確になっていますか？".to_string(),
+        "反対意見やリスク・懸念点で未解消のものはありませんか？".to_string(),
+    ];
+    Ok(LiveAssistResult {
+        summary_points,
+        next_questions,
+    })
 }
 
 pub async fn draft_followup_email(settings: &AppSettings, note: &Note) -> Result<String, String> {

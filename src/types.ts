@@ -161,6 +161,33 @@ export interface AppSettings {
   recording_overlay_x?: number | null;
   recording_overlay_y?: number | null;
   llm_custom_prompt?: string;
+  main_window_x?: number | null;
+  main_window_y?: number | null;
+  main_window_width?: number | null;
+  main_window_height?: number | null;
+  user_speaker_name?: string;
+  remote_speaker_name?: string;
+}
+
+export interface StorageStats {
+  audio_bytes: number;
+  audio_count: number;
+  models_bytes: number;
+  data_dir: string;
+}
+
+export interface LiveAssistResult {
+  summary_points: string[];
+  next_questions: string[];
+}
+
+export interface CalendarEventItem {
+  id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  participants: string[];
+  provider: string;
 }
 
 export interface IntegrationAdapterInfo {

@@ -31,9 +31,11 @@ import {
 } from 'lucide-react';
 import {
   AppSettings,
+  CalendarEventItem,
   ChatAnswer,
   ChatCitation,
   Folder,
+  LiveAssistResult,
   Note,
   Recipe,
   RecordingStatus,
@@ -50,7 +52,12 @@ import { NoteWaveform } from './NoteWaveform';
 import { NotionSyncBadge } from './NotionSyncBadge';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 import { confirmDeleteDialog } from './ConfirmDialog';
-import { apiReadNoteAudio, isTauriRuntime } from '../lib/tauri';
+import {
+  apiGetUpcomingCalendarEvents,
+  apiLiveAssist,
+  apiReadNoteAudio,
+  isTauriRuntime,
+} from '../lib/tauri';
 
 interface PopupChatMessage {
   role: 'user' | 'assistant';
@@ -113,7 +120,7 @@ interface NoteEditorViewProps {
   onCopyText: (text: string, label: string) => Promise<void>;
   onPastePrepare: (text: string) => Promise<void>;
   onSaveToNotion: (noteId: string) => Promise<void>;
-  onSummarize: (noteId: string) => Promise<void>;
+  onSummarize: (noteId: string, templateId?: string) => Promise<void>;
   onDraftFollowup: (noteId: string) => Promise<void>;
   onRunRecipe: (noteId: string, prompt: string) => Promise<string>;
   onSaveRecipe: (recipe: Recipe) => Promise<void>;
@@ -121,6 +128,7 @@ interface NoteEditorViewProps {
   onShareSlack: (noteId: string) => Promise<void>;
   onSendWebhook: (noteId: string) => Promise<void>;
   onAddDictionaryTerm: (term: string) => Promise<void>;
+  onUploadFile?: (file: File) => Promise<void>;
   onGoSettings: () => void;
   onGoHome?: () => void;
 }
@@ -151,6 +159,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   onChatNote,
   onShareSlack,
   onSendWebhook,
+  onUploadFile,
   onGoSettings,
 }) => {
   // Sidebar & responsive drawer
@@ -231,9 +240,38 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [localFallbackSegments, setLocalFallbackSegments] = useState<TranscriptSegment[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackMs, setPlaybackMs] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState<number>(1.0);
+  const [skipSilence, setSkipSilence] = useState<boolean>(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
+    settings.active_template_id || 'standard'
+  );
+  const [editingSpeakerTarget, setEditingSpeakerTarget] = useState<string | null>(null);
+  const [speakerRenameDraft, setSpeakerRenameDraft] = useState<string>('');
+  const [liveAssistOpen, setLiveAssistOpen] = useState<boolean>(false);
+  const [liveAssistBusy, setLiveAssistBusy] = useState<boolean>(false);
+  const [liveAssistResult, setLiveAssistResult] = useState<LiveAssistResult | null>(null);
+  const [calendarMenuOpen, setCalendarMenuOpen] = useState<boolean>(false);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEventItem[]>([]);
+  const [streamingChatText, setStreamingChatText] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlCacheRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      unlisten = await listen<string>('chat-stream-chunk', (ev) => {
+        if (typeof ev.payload === 'string') {
+          setStreamingChatText(ev.payload);
+        }
+      });
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   // Persistent popup chat sessions
   const [chatSessions, setChatSessions] = useState<PopupChatSession[]>(() => loadChatSessions());
@@ -326,11 +364,62 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     setSummarizingByNote((prev) => ({ ...prev, [targetNoteId]: true }));
     setAiErrorByNote((prev) => ({ ...prev, [targetNoteId]: null }));
     try {
-      await onSummarize(targetNoteId);
+      await onSummarize(targetNoteId, selectedTemplateId);
     } catch (err) {
       setAiErrorByNote((prev) => ({ ...prev, [targetNoteId]: String(err) }));
     } finally {
       setSummarizingByNote((prev) => ({ ...prev, [targetNoteId]: false }));
+    }
+  };
+
+  const handleBulkRenameSpeaker = (oldName: string, newNameRaw: string) => {
+    const newName = newNameRaw.trim();
+    if (!newName) return;
+    const oldTrim = oldName.trim();
+    const updatedSegments = note.segments.map((seg) => {
+      const sp = seg.speaker.trim() || '自分';
+      if (sp === oldTrim) {
+        return { ...seg, speaker: newName };
+      }
+      return seg;
+    });
+    const nextParticipants = Array.from(
+      new Set([...note.participants.filter((p) => p !== oldTrim), newName])
+    );
+    onUpdateNote({
+      ...note,
+      segments: updatedSegments,
+      participants: nextParticipants,
+      updated_at: new Date().toISOString(),
+    });
+    setEditingSpeakerTarget(null);
+    notify(`話者「${oldTrim}」をすべて「${newName}」に変更しました`);
+  };
+
+  const handleRunLiveAssist = async () => {
+    setLiveAssistOpen(true);
+    setLiveAssistBusy(true);
+    try {
+      if (isTauriRuntime()) {
+        const res = await apiLiveAssist(note.id, externalLiveSegments);
+        setLiveAssistResult(res);
+      } else {
+        const recent = displayedSegments.slice(-3).map((s) => `${s.speaker || '自分'}: ${s.text}`);
+        setLiveAssistResult({
+          summary_points:
+            recent.length > 0
+              ? recent
+              : ['まだ発言がありません。録音または文字起こしを進めると要点が表示されます。'],
+          next_questions: [
+            '決定事項と担当者の確認は済んでいますか？',
+            '次回までの期限やマイルストーンは明確ですか？',
+          ],
+        });
+      }
+    } catch (err) {
+      notify(`AI補助エラー: ${String(err)}`);
+    } finally {
+      setLiveAssistBusy(false);
     }
   };
 
@@ -435,6 +524,40 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     return () => clearInterval(id);
   }, [isPlaying, phase, totalDurationMs, note.audio_path]);
 
+  // Auto-skip silence & auto-scroll active karaoke segment during playback
+  useEffect(() => {
+    if (!isPlaying) return;
+    if (skipSilence && displayedSegments.length > 0) {
+      const inSegment = displayedSegments.some(
+        (s) => playbackMs >= s.start_ms && playbackMs <= s.end_ms + 300
+      );
+      if (!inSegment) {
+        const nextSeg = displayedSegments.find((s) => s.start_ms > playbackMs + 1200);
+        if (nextSeg) {
+          if (audioRef.current) {
+            audioRef.current.currentTime = nextSeg.start_ms / 1000;
+          }
+          setPlaybackMs(nextSeg.start_ms);
+        }
+      }
+    }
+    if (scrollRef.current) {
+      const activeEl = scrollRef.current.querySelector('.note-turn.playing');
+      if (activeEl && typeof activeEl.scrollIntoView === 'function') {
+        activeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  }, [isPlaying, playbackMs, skipSilence, displayedSegments]);
+
+  const cyclePlaybackRate = () => {
+    const rates = [1.0, 1.25, 1.5, 2.0];
+    const next = rates[(rates.indexOf(playbackRate) + 1) % rates.length];
+    setPlaybackRate(next);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = next;
+    }
+  };
+
   const playNoteAudioFromMs = async (startMs?: number) => {
     if (isTauriRuntime()) {
       if (!note.audio_path) {
@@ -460,6 +583,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         } else if (audioRef.current.src !== dataUrl) {
           audioRef.current.src = dataUrl;
         }
+        audioRef.current.playbackRate = playbackRate;
         const seekSec = ((startMs ?? playbackMs) || 0) / 1000;
         audioRef.current.currentTime = seekSec;
         await audioRef.current.play();
@@ -680,6 +804,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     setChatHistoryOpen(false);
     const sid = appendToSession(scopeKey, q);
     setQuestion('');
+    setStreamingChatText('');
     setAskingByNote((prev) => ({ ...prev, [targetNoteId]: true }));
     setAiErrorByNote((prev) => ({ ...prev, [targetNoteId]: null }));
     try {
@@ -708,6 +833,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       setAiErrorByNote((prev) => ({ ...prev, [targetNoteId]: String(err) }));
     } finally {
       setAskingByNote((prev) => ({ ...prev, [targetNoteId]: false }));
+      setStreamingChatText('');
     }
   };
 
@@ -908,7 +1034,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 </div>
               ))}
               {busy && (
-                <StreamingMarkdownArticle content="" isGenerating animateOnChange />
+                <StreamingMarkdownArticle
+                  content={streamingChatText}
+                  isGenerating={!streamingChatText}
+                  animateOnChange={false}
+                />
               )}
             </>
           )}
@@ -927,7 +1057,14 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const handleCopyMarkdown = async () => {
     const text = formatNoteForCopy(note, settings.copy_format || 'markdown');
     await onCopyText(text, 'ノート');
-    notify('コピーしました');
+    notify('Markdown形式でコピーしました');
+    setShareOpen(false);
+  };
+
+  const handleCopyFormat = async (fmt: 'markdown' | 'slack' | 'line', label: string) => {
+    const text = formatNoteForCopy(note, fmt);
+    await onCopyText(text, label);
+    notify(`${label}をコピーしました`);
     setShareOpen(false);
   };
 
@@ -1909,6 +2046,118 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               )}
             </div>
 
+            {/* Calendar Event Linking Pill */}
+            <div className="note-meta-pill-wrap">
+              <button
+                type="button"
+                className="note-meta-pill"
+                title="カレンダー予定からタイトル・参加者を設定"
+                aria-expanded={calendarMenuOpen}
+                onClick={async () => {
+                  const nextOpen = !calendarMenuOpen;
+                  setCalendarMenuOpen(nextOpen);
+                  if (nextOpen) {
+                    if (isTauriRuntime()) {
+                      try {
+                        const evs = await apiGetUpcomingCalendarEvents();
+                        setCalendarEvents(evs);
+                      } catch {
+                        // ignore
+                      }
+                    } else {
+                      setCalendarEvents([
+                        {
+                          id: 'cal-weekly',
+                          title: '【定例】週次プロジェクト進捗MTG',
+                          start_time: '10:00',
+                          end_time: '11:00',
+                          participants: ['自分', '相手'],
+                          provider: 'Google Calendar',
+                        },
+                        {
+                          id: 'cal-1on1',
+                          title: '1on1 ミーティング',
+                          start_time: '15:00',
+                          end_time: '15:30',
+                          participants: ['自分', '相手'],
+                          provider: 'Outlook Calendar',
+                        },
+                      ]);
+                    }
+                  }
+                }}
+              >
+                <Calendar size={14} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
+                <span>予定紐付け</span>
+              </button>
+
+              {calendarMenuOpen && (
+                <div
+                  className="note-popover"
+                  role="menu"
+                  aria-label="カレンダー予定を選択"
+                  style={{ minWidth: '256px' }}
+                >
+                  <div style={{ padding: '4px 8px', fontSize: '12px', fontWeight: 600, color: 'var(--ns-text-muted)' }}>
+                    現在の会議・予定から自動セット
+                  </div>
+                  {calendarEvents.map((ev) => (
+                    <button
+                      key={ev.id}
+                      type="button"
+                      className="note-sidebar-item"
+                      style={{ height: 'auto', padding: '8px', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}
+                      onClick={() => {
+                        setTitleDraft(ev.title);
+                        titleSnapshotRef.current = ev.title;
+                        onUpdateNote({
+                          ...note,
+                          title: ev.title,
+                          participants: Array.from(new Set([...note.participants, ...ev.participants])),
+                          updated_at: new Date().toISOString(),
+                        });
+                        setCalendarMenuOpen(false);
+                        notify(`予定「${ev.title}」を紐付けました`);
+                      }}
+                    >
+                      <strong style={{ fontSize: '12px', fontWeight: 600 }}>{ev.title}</strong>
+                      <span className="text-muted mono-num" style={{ fontSize: '11px' }}>
+                        {ev.start_time} - {ev.end_time} ・ {ev.provider}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Audio/Video File Import Pill */}
+            {onUploadFile && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.mov,.webm,.ogg,.flac"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      void onUploadFile(f);
+                      e.target.value = '';
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="note-meta-pill"
+                  title="音声・動画ファイルをインポートして文字起こし"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload size={14} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
+                  <span>音声インポート</span>
+                </button>
+              </>
+            )}
+
             {suggestedCategory && (
               <div className="category-suggest-pill" role="status">
                 <button
@@ -2056,6 +2305,28 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
                 <button
                   type="button"
+                  className="chip-filter mono-num"
+                  aria-label="再生速度を切り替え"
+                  title="再生速度を切り替え (1.0x / 1.25x / 1.5x / 2.0x)"
+                  style={{ height: '24px', padding: '0 8px', fontSize: '12px', fontWeight: 600 }}
+                  onClick={cyclePlaybackRate}
+                >
+                  {playbackRate}x
+                </button>
+
+                <button
+                  type="button"
+                  className={`chip-filter ${skipSilence ? 'active' : ''}`}
+                  aria-pressed={skipSilence}
+                  title="無音区間を自動スキップして再生"
+                  style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
+                  onClick={() => setSkipSilence((v) => !v)}
+                >
+                  無音スキップ
+                </button>
+
+                <button
+                  type="button"
                   className="note-rerecord-btn"
                   aria-label="再録音"
                   onClick={handleRecordButtonClick}
@@ -2090,7 +2361,23 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     onClick={handleCopyMarkdown}
                   >
                     <Copy size={15} strokeWidth={1.75} />
-                    <span>ノートをコピー</span>
+                    <span>Markdown形式でコピー</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="note-sidebar-item"
+                    onClick={() => void handleCopyFormat('slack', 'Slack共有フォーマット')}
+                  >
+                    <Copy size={15} strokeWidth={1.75} />
+                    <span>Slack投稿形式でコピー</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="note-sidebar-item"
+                    onClick={() => void handleCopyFormat('line', 'LINE・メール用テキスト')}
+                  >
+                    <Copy size={15} strokeWidth={1.75} />
+                    <span>LINE・メール用でコピー</span>
                   </button>
                   <button
                     type="button"
@@ -2205,7 +2492,81 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             onScroll={handleScroll}
           >
             {activeTab === 'transcript' && (
-              <div aria-live="polite" aria-relevant="additions">
+              <div aria-live="polite" aria-relevant="additions" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {displayedSegments.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span className="text-muted" style={{ fontSize: '12px' }}>
+                        話者名をクリックするとノート全体で一括変更できます
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ height: '28px', fontSize: '12px' }}
+                        disabled={liveAssistBusy}
+                        onClick={() => void handleRunLiveAssist()}
+                      >
+                        <Sparkles size={13} strokeWidth={1.75} />
+                        {liveAssistBusy ? 'AI補助を分析中...' : 'AIリアルタイム補助（3行整理＆次の質問）'}
+                      </button>
+                    </div>
+
+                    {liveAssistOpen && liveAssistResult && (
+                      <div className="surface-card" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <strong style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Sparkles size={14} strokeWidth={1.75} />
+                            ここまでの要点と次に聞くべき論点
+                          </strong>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
+                              onClick={() => {
+                                const block = [
+                                  '<p><strong>【AIリアルタイム整理】</strong></p>',
+                                  '<ul>',
+                                  ...liveAssistResult.summary_points.map((p) => `<li>${p}</li>`),
+                                  ...liveAssistResult.next_questions.map((q) => `<li>確認事項: ${q}</li>`),
+                                  '</ul>',
+                                ].join('');
+                                saveMemoHtml((note.manual_notes || '') + block);
+                                notify('メモに追記しました');
+                              }}
+                            >
+                              メモに追記
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="AI補助を閉じる"
+                              className="btn btn-ghost"
+                              style={{ width: '24px', height: '24px', padding: 0 }}
+                              onClick={() => setLiveAssistOpen(false)}
+                            >
+                              <X size={14} strokeWidth={1.75} />
+                            </button>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
+                          <span style={{ fontWeight: 600, color: 'var(--ns-text-secondary)' }}>ここまでの要点</span>
+                          {liveAssistResult.summary_points.map((pt, i) => (
+                            <div key={`sp-${i}`}>・{pt}</div>
+                          ))}
+                        </div>
+                        {liveAssistResult.next_questions.length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', paddingTop: '4px', borderTop: '1px solid var(--ns-border-sidebar)' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--ns-text-secondary)' }}>次に確認・質問すべき論点</span>
+                            {liveAssistResult.next_questions.map((nq, i) => (
+                              <div key={`nq-${i}`}>？ {nq}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {displayedSegments.length === 0 ? (
                   <div className="note-empty-state">
                     まだ文字起こしがありません
@@ -2219,9 +2580,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     {displayedSegments.map((seg) => {
                       const isActiveSeg =
                         isPlaying && playbackMs >= seg.start_ms && playbackMs < seg.end_ms;
+                      const speakerLabel = seg.speaker.trim() || (settings.user_speaker_name || '自分');
+                      const isEditingThisSpeaker = editingSpeakerTarget === speakerLabel;
                       return (
                         <article key={seg.id} className={`note-turn ${isActiveSeg ? 'playing' : ''}`}>
-                          <div className="note-turn-meta" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div className="note-turn-meta" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <button
                               type="button"
                               className={`note-seg-play-btn ${isActiveSeg ? 'active' : ''}`}
@@ -2240,6 +2603,70 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             <span className="note-turn-time">
                               {formatNoteTimer(seg.start_ms)}
                             </span>
+                            <button
+                              type="button"
+                              className="chip-filter"
+                              style={{ height: '20px', padding: '0 8px', fontSize: '12px' }}
+                              title={`話者「${speakerLabel}」を一括変更`}
+                              onClick={() => {
+                                if (isEditingThisSpeaker) {
+                                  setEditingSpeakerTarget(null);
+                                } else {
+                                  setEditingSpeakerTarget(speakerLabel);
+                                  setSpeakerRenameDraft(speakerLabel);
+                                }
+                              }}
+                            >
+                              {speakerLabel}
+                            </button>
+                            {isEditingThisSpeaker && (
+                              <form
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  handleBulkRenameSpeaker(speakerLabel, speakerRenameDraft);
+                                }}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}
+                              >
+                                <input
+                                  type="text"
+                                  aria-label="新しい話者名"
+                                  className="input"
+                                  style={{ width: '120px', height: '24px', fontSize: '12px', padding: '0 8px' }}
+                                  value={speakerRenameDraft}
+                                  onChange={(e) => setSpeakerRenameDraft(e.target.value)}
+                                  autoFocus
+                                />
+                                {['自分', '相手', ...note.participants]
+                                  .filter((p, idx, arr) => p && p !== speakerLabel && arr.indexOf(p) === idx)
+                                  .slice(0, 4)
+                                  .map((preset) => (
+                                    <button
+                                      key={preset}
+                                      type="button"
+                                      className="chip-filter"
+                                      style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
+                                      onClick={() => handleBulkRenameSpeaker(speakerLabel, preset)}
+                                    >
+                                      {preset}
+                                    </button>
+                                  ))}
+                                <button
+                                  type="submit"
+                                  className="btn btn-primary"
+                                  style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
+                                >
+                                  一括変更
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
+                                  onClick={() => setEditingSpeakerTarget(null)}
+                                >
+                                  閉じる
+                                </button>
+                              </form>
+                            )}
                           </div>
                           <p className="note-turn-text">{seg.text}</p>
                         </article>
@@ -2253,9 +2680,21 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             {activeTab === 'summary' && (
               <div className="note-notes-tab">
                 <section className="note-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <h2 className="note-card-title">要約</h2>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <select
+                        aria-label="要約テンプレート"
+                        className="input"
+                        style={{ width: '160px', height: '28px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
+                        value={selectedTemplateId}
+                        onChange={(e) => setSelectedTemplateId(e.target.value)}
+                      >
+                        <option value="standard">標準議事録</option>
+                        <option value="1on1">1on1・面談</option>
+                        <option value="lecture">講義・セミナー</option>
+                        <option value="brainstorm">ブレスト・アイデア</option>
+                      </select>
                       {llmConfigured && (
                         <button
                           type="button"
@@ -2434,15 +2873,29 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 }}
               >
                 {showSummarizeBtn && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary note-summary-popup-row"
-                    disabled={!llmConfigured || isSummarizingThisNote}
-                    onClick={handleRunSummarize}
-                  >
-                    <Sparkles size={14} strokeWidth={1.75} />
-                    {isSummarizingThisNote ? '要約を生成中...' : '要約を生成'}
-                  </button>
+                  <div className="note-summary-popup-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <select
+                      aria-label="要約テンプレート選択"
+                      className="input"
+                      style={{ width: '148px', height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
+                      value={selectedTemplateId}
+                      onChange={(e) => setSelectedTemplateId(e.target.value)}
+                    >
+                      <option value="standard">標準議事録</option>
+                      <option value="1on1">1on1・面談</option>
+                      <option value="lecture">講義・セミナー</option>
+                      <option value="brainstorm">ブレスト・アイデア</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={!llmConfigured || isSummarizingThisNote}
+                      onClick={handleRunSummarize}
+                    >
+                      <Sparkles size={14} strokeWidth={1.75} />
+                      {isSummarizingThisNote ? '要約を生成中...' : '要約を生成'}
+                    </button>
+                  </div>
                 )}
                 {!chatPopupOpen && (
                   <div style={{ display: 'flex', gap: '4px' }}>

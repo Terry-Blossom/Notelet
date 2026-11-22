@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Check,
   Cloud,
   Download,
+  FolderOpen,
+  HardDrive,
   Key,
   Keyboard,
   Loader2,
@@ -11,7 +13,13 @@ import {
   Shield,
   Sparkles,
 } from 'lucide-react';
-import { AppSettings, AsrModelInfo, SecretStatus, UpdateCheckResult } from '../types';
+import { AppSettings, AsrModelInfo, SecretStatus, StorageStats, UpdateCheckResult } from '../types';
+import {
+  apiCompressRetainedAudio,
+  apiGetStorageStats,
+  apiOpenStorageFolder,
+  isTauriRuntime,
+} from '../lib/tauri';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -81,6 +89,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+  const [compressingAudio, setCompressingAudio] = useState(false);
+
+  useEffect(() => {
+    if (tab === 'privacy' && isTauriRuntime()) {
+      void apiGetStorageStats()
+        .then((st) => setStorageStats(st))
+        .catch(() => {
+          // ignore
+        });
+    }
+  }, [tab]);
+
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  };
 
   const flash = (msg: string) => {
     setStatusMessage(msg);
@@ -767,20 +794,95 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div>
               <h2 className="section-title">データ管理・セキュリティ</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                録音ファイルやノートデータの暗号化・バックアップを管理します。
+                録音ファイルの容量管理・軽量化や話者ラベル、データの暗号化・バックアップを管理します。
               </p>
             </div>
 
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={settings.delete_audio_after_transcribe}
-                  onChange={(e) => update({ delete_audio_after_transcribe: e.target.checked })}
-                />
-                <span>文字起こし完了後に一時音声ファイル（WAV）を自動削除する</span>
-              </label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <HardDrive size={15} strokeWidth={1.5} />
+                  <strong style={{ fontSize: '13px' }}>ストレージ使用状況</strong>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ height: '28px', fontSize: '12px' }}
+                    onClick={async () => {
+                      if (isTauriRuntime()) {
+                        await apiOpenStorageFolder();
+                      }
+                    }}
+                  >
+                    <FolderOpen size={13} strokeWidth={1.5} />
+                    保存フォルダを開く
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ height: '28px', fontSize: '12px' }}
+                    disabled={compressingAudio}
+                    onClick={async () => {
+                      if (!isTauriRuntime()) {
+                        flash('録音音声を軽量化しました');
+                        return;
+                      }
+                      setCompressingAudio(true);
+                      try {
+                        const res = await apiCompressRetainedAudio();
+                        setStorageStats(res.stats);
+                        flash(
+                          res.compressed_count > 0
+                            ? `${res.compressed_count} 件の録音を軽量化しました（-${formatBytes(res.saved_bytes)}）`
+                            : 'すべての録音ファイルは既に最適化されています'
+                        );
+                      } finally {
+                        setCompressingAudio(false);
+                      }
+                    }}
+                  >
+                    {compressingAudio ? '軽量化中...' : '録音音声を軽量化（容量圧縮）'}
+                  </button>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <span className="status-chip mono-num">
+                  録音音声: {storageStats ? `${formatBytes(storageStats.audio_bytes)} (${storageStats.audio_count}件)` : '0 B (0件)'}
+                </span>
+                <span className="status-chip mono-num">
+                  ローカルモデル: {storageStats ? formatBytes(storageStats.models_bytes) : '0 B'}
+                </span>
+              </div>
+            </div>
 
+            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <strong style={{ fontSize: '13px' }}>既定の話者ラベル（自動振り分け用）</strong>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label className="text-muted">マイク入力の話者名</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="自分"
+                    value={settings.user_speaker_name ?? '自分'}
+                    onChange={(e) => update({ user_speaker_name: e.target.value })}
+                  />
+                </div>
+                <div style={{ flex: 1, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label className="text-muted">PC本体音声の話者名</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="相手"
+                    value={settings.remote_speaker_name ?? '相手'}
+                    onChange={(e) => update({ remote_speaker_name: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
@@ -835,7 +937,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.7'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.8'}</strong>
                 </div>
                 <button
                   type="button"

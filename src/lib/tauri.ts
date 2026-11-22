@@ -5,15 +5,19 @@ import {
   AsrModelInfo,
   AudioDeviceInfo,
   AudioSourceMode,
+  CalendarEventItem,
   ChatAnswer,
   DictionaryEntry,
   Folder,
   IntegrationAdapterInfo,
+  LiveAssistResult,
   Note,
   NotionTarget,
   Recipe,
   RecordingStatus,
   SecretStatus,
+  StorageStats,
+  TranscriptSegment,
   UpdateCheckResult,
 } from '../types';
 
@@ -120,8 +124,18 @@ export async function apiTranscribeUploadedUrl(url: string, noteId: string): Pro
   return invoke<Note>('transcribe_uploaded_url', { url, noteId });
 }
 
-export async function apiSummarizeNote(noteId: string): Promise<Note> {
-  return invoke<Note>('summarize_note_cmd', { noteId });
+export async function apiSummarizeNote(noteId: string, templateId?: string): Promise<Note> {
+  return invoke<Note>('summarize_note_cmd', { noteId, templateId: templateId ?? null });
+}
+
+export async function apiLiveAssist(
+  noteId: string,
+  liveSegments?: TranscriptSegment[]
+): Promise<LiveAssistResult> {
+  return invoke<LiveAssistResult>('live_assist_cmd', {
+    noteId,
+    liveSegments: liveSegments ?? null,
+  });
 }
 
 export async function apiDraftFollowup(noteId: string): Promise<Note> {
@@ -218,4 +232,28 @@ export async function apiReadNoteAudio(noteId: string): Promise<string> {
 
 export async function apiOpenExternalUrl(url: string): Promise<void> {
   return invoke<void>('open_external_url', { url });
+}
+
+export async function apiGetStorageStats(): Promise<StorageStats> {
+  return invoke<StorageStats>('get_storage_stats_cmd');
+}
+
+export async function apiOpenStorageFolder(): Promise<void> {
+  return invoke<void>('open_storage_folder_cmd');
+}
+
+export async function apiCompressRetainedAudio(): Promise<{
+  compressed_count: number;
+  saved_bytes: number;
+  stats: StorageStats;
+}> {
+  return invoke<{
+    compressed_count: number;
+    saved_bytes: number;
+    stats: StorageStats;
+  }>('compress_retained_audio_cmd');
+}
+
+export async function apiGetUpcomingCalendarEvents(): Promise<CalendarEventItem[]> {
+  return invoke<CalendarEventItem[]>('get_upcoming_calendar_events_cmd');
 }

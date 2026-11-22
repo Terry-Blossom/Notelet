@@ -10,9 +10,9 @@ mod updater;
 
 use audio::AudioManager;
 use models::{
-    AppDataSnapshot, AppSettings, AsrModelInfo, AudioDeviceInfo, AudioSourceMode, ChatAnswer,
-    ChatHistoryItem, DictionaryEntry, Folder, IntegrationAdapterInfo, Note, Recipe,
-    RecordingStatus,
+    AppDataSnapshot, AppSettings, AsrModelInfo, AudioDeviceInfo, AudioSourceMode,
+    CalendarEventMock, ChatAnswer, ChatHistoryItem, DictionaryEntry, Folder,
+    IntegrationAdapterInfo, LiveAssistResult, Note, Recipe, RecordingStatus, StorageStats,
 };
 use notion::NotionTarget;
 use std::sync::Mutex;
@@ -250,10 +250,25 @@ async fn start_recording(
                 let audio = st_ref.audio.lock().unwrap();
                 audio.take_live_chunk(32_000)
             };
-            if let Some((chunk_path, elapsed_ms)) = chunk_opt {
+            if let Some((chunk_path, elapsed_ms, dominant_source)) = chunk_opt {
                 let (settings, dictionary) = {
                     let data = st_ref.data.lock().unwrap();
                     (data.settings.clone(), data.dictionary.clone())
+                };
+                let speaker_label = if dominant_source == "system" {
+                    let s = settings.remote_speaker_name.trim();
+                    if s.is_empty() {
+                        "相手".to_string()
+                    } else {
+                        s.to_string()
+                    }
+                } else {
+                    let u = settings.user_speaker_name.trim();
+                    if u.is_empty() {
+                        "自分".to_string()
+                    } else {
+                        u.to_string()
+                    }
                 };
                 let chunk_clone = chunk_path.clone();
                 let res = tokio::task::spawn_blocking(move || {
@@ -269,7 +284,7 @@ async fn start_recording(
                             id: uuid::Uuid::new_v4().to_string(),
                             start_ms,
                             end_ms: elapsed_ms,
-                            speaker: String::new(),
+                            speaker: speaker_label,
                             text,
                         };
                         let _ = app_handle.emit("live-transcript-segment", seg);
@@ -423,11 +438,30 @@ async fn transcribe_recording(
         (data.settings.clone(), data.dictionary.clone(), note)
     };
 
-    let path = std::path::PathBuf::from(&wav_path);
-    let (segments, diarization_supported, model_name) =
+    let raw_path = std::path::PathBuf::from(&wav_path);
+    let (path, detected_dur_sec) = storage::normalize_media_to_16k_wav(&raw_path);
+    let (mut segments, diarization_supported, model_name) =
         asr::transcribe_wav(&path, &settings, &dictionary).await?;
 
+    let default_speaker = if settings.user_speaker_name.trim().is_empty() {
+        "自分".to_string()
+    } else {
+        settings.user_speaker_name.trim().to_string()
+    };
+    for seg in &mut segments {
+        if seg.speaker.trim().is_empty() {
+            seg.speaker = default_speaker.clone();
+        }
+    }
+
     let mut note = existing_note.ok_or_else(|| "対象ノートが見つかりません".to_string())?;
+    if note.duration_sec == 0 && detected_dur_sec > 0 {
+        note.duration_sec = detected_dur_sec;
+    } else if note.duration_sec == 0 {
+        if let Some(last) = segments.last() {
+            note.duration_sec = (last.end_ms / 1000).max(1);
+        }
+    }
     note.segments = segments;
     note.diarization_supported = diarization_supported;
     note.asr_model_id = settings.active_asr_model_id.clone();
@@ -438,6 +472,7 @@ async fn transcribe_recording(
         if let Ok((retained_path, encrypted)) =
             storage::retain_audio_file(&path, &note.id, settings.encrypt_retained_audio)
         {
+            let _ = std::fs::remove_file(&path);
             storage::remove_file_if_exists(&wav_path);
             note.audio_path = Some(retained_path);
             note.audio_encrypted = encrypted;
@@ -538,6 +573,7 @@ async fn transcribe_uploaded_url(
 async fn summarize_note_cmd(
     state: State<'_, AppState>,
     note_id: String,
+    template_id: Option<String>,
 ) -> Result<Note, String> {
     let (settings, mut note) = {
         let data = state.data.lock().unwrap();
@@ -549,7 +585,8 @@ async fn summarize_note_cmd(
             .ok_or_else(|| "ノートが見つかりません".to_string())?;
         (data.settings.clone(), n)
     };
-    let (summary, decisions, action_items) = llm::summarize_note(&settings, &note).await?;
+    let (summary, decisions, action_items) =
+        llm::summarize_note(&settings, &note, template_id.as_deref()).await?;
     if note.title.trim().is_empty() {
         let candidate = summary
             .lines()
@@ -567,9 +604,33 @@ async fn summarize_note_cmd(
     note.updated_at = chrono::Utc::now().to_rfc3339();
 
     let mut data = state.data.lock().unwrap();
+    if let Some(ref tid) = template_id {
+        if !tid.trim().is_empty() {
+            data.settings.active_template_id = tid.clone();
+        }
+    }
     storage::upsert_note(&mut data, note.clone());
     storage::save_snapshot(&data)?;
     Ok(note)
+}
+
+#[tauri::command]
+async fn live_assist_cmd(
+    state: State<'_, AppState>,
+    note_id: String,
+    live_segments: Option<Vec<models::TranscriptSegment>>,
+) -> Result<LiveAssistResult, String> {
+    let (settings, note) = {
+        let data = state.data.lock().unwrap();
+        let n = data
+            .notes
+            .iter()
+            .find(|x| x.id == note_id)
+            .cloned()
+            .ok_or_else(|| "ノートが見つかりません".to_string())?;
+        (data.settings.clone(), n)
+    };
+    llm::live_assist_note(&settings, &note, &live_segments.unwrap_or_default()).await
 }
 
 #[tauri::command]
@@ -617,6 +678,7 @@ async fn run_recipe_cmd(
 
 #[tauri::command]
 async fn chat_notes_cmd(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     note_ids: Vec<String>,
     question: String,
@@ -642,6 +704,16 @@ async fn chat_notes_cmd(
         (data.settings.clone(), filtered)
     };
     let ans = llm::chat_with_notes(&settings, &notes, &question).await?;
+    // Emit progressive streaming chunks so chat views render smoothly in real time
+    let chars: Vec<char> = ans.answer.chars().collect();
+    let step = (chars.len() / 16).max(6);
+    let mut pos = 0;
+    while pos < chars.len() {
+        pos = (pos + step).min(chars.len());
+        let partial: String = chars[..pos].iter().collect();
+        let _ = app.emit("chat-stream-chunk", &partial);
+        tokio::time::sleep(std::time::Duration::from_millis(12)).await;
+    }
     let mut data = state.data.lock().unwrap();
     data.chat_history.insert(
         0,
@@ -993,6 +1065,112 @@ fn purge_all_data(state: State<AppState>) -> Result<AppDataSnapshot, String> {
     Ok(data.clone())
 }
 
+#[tauri::command]
+fn get_storage_stats_cmd() -> StorageStats {
+    storage::compute_storage_stats()
+}
+
+#[tauri::command]
+fn open_storage_folder_cmd() -> Result<(), String> {
+    let dir = storage::app_data_dir();
+    let dir_str = dir.to_string_lossy().to_string();
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir_str)
+            .spawn()
+            .map_err(|e| format!("フォルダを開けませんでした: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&dir_str)
+            .spawn()
+            .map_err(|e| format!("フォルダを開けませんでした: {e}"))?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&dir_str)
+            .spawn()
+            .map_err(|e| format!("フォルダを開けませんでした: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn compress_retained_audio_cmd(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let mut data = state.data.lock().unwrap();
+    let (count, saved_bytes) = storage::compress_all_retained_audio(&mut data)?;
+    storage::save_snapshot(&data)?;
+    let stats = storage::compute_storage_stats();
+    Ok(serde_json::json!({
+        "compressed_count": count,
+        "saved_bytes": saved_bytes,
+        "stats": stats,
+    }))
+}
+
+#[tauri::command]
+fn get_upcoming_calendar_events_cmd() -> Vec<CalendarEventMock> {
+    use chrono::{Local, Timelike};
+    let now = Local::now();
+    let hour = now.hour();
+    let mut events = Vec::new();
+
+    if let Some(active_app) = detect_active_meeting() {
+        events.push(CalendarEventMock {
+            id: "active-meeting".to_string(),
+            title: format!("{} オンライン会議", active_app),
+            start_time: format!("{:02}:00", hour),
+            end_time: format!("{:02}:00", (hour + 1) % 24),
+            participants: vec!["自分".to_string(), "相手".to_string()],
+            provider: active_app,
+        });
+    }
+
+    // Parse local calendar.ics if user placed one in app_data_dir
+    let ics_path = storage::app_data_dir().join("calendar.ics");
+    if let Ok(ics_raw) = std::fs::read_to_string(&ics_path) {
+        for block in ics_raw.split("BEGIN:VEVENT").skip(1).take(5) {
+            let summary = block
+                .lines()
+                .find_map(|l| l.strip_prefix("SUMMARY:"))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            if !summary.is_empty() {
+                events.push(CalendarEventMock {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: summary,
+                    start_time: format!("{:02}:00", hour),
+                    end_time: format!("{:02}:00", (hour + 1) % 24),
+                    participants: vec!["自分".to_string()],
+                    provider: "カレンダー (ICS)".to_string(),
+                });
+            }
+        }
+    }
+
+    // Smart time-based calendar templates for quick 1-click meeting title & participants setup
+    events.push(CalendarEventMock {
+        id: "cal-weekly-sync".to_string(),
+        title: format!("【定例】週次プロジェクト進捗MTG ({})", now.format("%m/%d")),
+        start_time: format!("{:02}:00", hour),
+        end_time: format!("{:02}:00", (hour + 1) % 24),
+        participants: vec!["自分".to_string(), "PM".to_string(), "開発メンバー".to_string()],
+        provider: "Google Calendar".to_string(),
+    });
+    events.push(CalendarEventMock {
+        id: "cal-1on1".to_string(),
+        title: format!("1on1 ミーティング ({})", now.format("%m/%d")),
+        start_time: format!("{:02}:30", hour),
+        end_time: format!("{:02}:00", (hour + 1) % 24),
+        participants: vec!["自分".to_string(), "相手".to_string()],
+        provider: "Outlook Calendar".to_string(),
+    });
+    events
+}
+
 fn detect_active_meeting() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
@@ -1069,13 +1247,32 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            let shortcut_str = {
+            let (shortcut_str, mw_x, mw_y, mw_w, mw_h) = {
                 let state = app.state::<AppState>();
                 let data = state.data.lock().unwrap();
-                data.settings.record_shortcut.clone()
+                (
+                    data.settings.record_shortcut.clone(),
+                    data.settings.main_window_x,
+                    data.settings.main_window_y,
+                    data.settings.main_window_width,
+                    data.settings.main_window_height,
+                )
             };
             if !shortcut_str.is_empty() {
                 let _ = app.global_shortcut().register(shortcut_str.as_str());
+            }
+
+            if let Some(main_win) = app.get_webview_window("main") {
+                if let (Some(w), Some(h)) = (mw_w, mw_h) {
+                    if w >= 760.0 && h >= 480.0 && w <= 3840.0 && h <= 2160.0 {
+                        let _ = main_win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+                    }
+                }
+                if let (Some(x), Some(y)) = (mw_x, mw_y) {
+                    if x >= -100.0 && y >= -50.0 && x <= 3800.0 && y <= 2100.0 {
+                        let _ = main_win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
+                    }
+                }
             }
 
             let app_handle = app.handle().clone();
@@ -1127,8 +1324,39 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() == "main" {
-                if let tauri::WindowEvent::CloseRequested { .. } = event {
-                    window.app_handle().exit(0);
+                match event {
+                    tauri::WindowEvent::Moved(pos) => {
+                        if let Ok(scale) = window.scale_factor() {
+                            let logical = pos.to_logical::<f64>(scale);
+                            if logical.x > -10000.0 && logical.y > -10000.0 {
+                                let st = window.app_handle().state::<AppState>();
+                                if let Ok(mut data) = st.data.lock() {
+                                    data.settings.main_window_x = Some(logical.x);
+                                    data.settings.main_window_y = Some(logical.y);
+                                };
+                            }
+                        }
+                    }
+                    tauri::WindowEvent::Resized(size) => {
+                        if let Ok(scale) = window.scale_factor() {
+                            let logical = size.to_logical::<f64>(scale);
+                            if logical.width >= 760.0 && logical.height >= 480.0 {
+                                let st = window.app_handle().state::<AppState>();
+                                if let Ok(mut data) = st.data.lock() {
+                                    data.settings.main_window_width = Some(logical.width);
+                                    data.settings.main_window_height = Some(logical.height);
+                                };
+                            }
+                        }
+                    }
+                    tauri::WindowEvent::CloseRequested { .. } => {
+                        let st = window.app_handle().state::<AppState>();
+                        if let Ok(data) = st.data.lock() {
+                            let _ = storage::save_snapshot(&data);
+                        };
+                        window.app_handle().exit(0);
+                    }
+                    _ => {}
                 }
             } else if window.label() == "recording-overlay" {
                 if let tauri::WindowEvent::Moved(pos) = event {
@@ -1170,6 +1398,7 @@ pub fn run() {
             transcribe_uploaded_audio,
             transcribe_uploaded_url,
             summarize_note_cmd,
+            live_assist_cmd,
             draft_followup_cmd,
             run_recipe_cmd,
             chat_notes_cmd,
@@ -1187,6 +1416,10 @@ pub fn run() {
             copy_and_prepare_paste,
             export_all_data,
             purge_all_data,
+            get_storage_stats_cmd,
+            open_storage_folder_cmd,
+            compress_retained_audio_cmd,
+            get_upcoming_calendar_events_cmd,
             check_app_update,
             install_app_update,
         ])

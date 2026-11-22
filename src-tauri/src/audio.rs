@@ -16,6 +16,7 @@ use uuid::Uuid;
 pub struct AudioManager {
     runtime: Arc<Mutex<RecordingRuntime>>,
     live_chunk_pcm: Arc<Mutex<Vec<i16>>>,
+    live_chunk_energy: Arc<Mutex<(f64, f64)>>,
     stop_flag: Arc<AtomicBool>,
     paused_flag: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
@@ -58,13 +59,14 @@ impl AudioManager {
         Self {
             runtime: Arc::new(Mutex::new(RecordingRuntime::default())),
             live_chunk_pcm: Arc::new(Mutex::new(Vec::new())),
+            live_chunk_energy: Arc::new(Mutex::new((0.0, 0.0))),
             stop_flag: Arc::new(AtomicBool::new(false)),
             paused_flag: Arc::new(AtomicBool::new(false)),
             worker: None,
         }
     }
 
-    pub fn take_live_chunk(&self, min_samples: usize) -> Option<(PathBuf, u64)> {
+    pub fn take_live_chunk(&self, min_samples: usize) -> Option<(PathBuf, u64, &'static str)> {
         let samples = {
             let mut buf = self.live_chunk_pcm.lock().ok()?;
             if buf.len() < min_samples {
@@ -72,6 +74,16 @@ impl AudioManager {
             }
             std::mem::take(&mut *buf)
         };
+        let (mic_e, sys_e) = self
+            .live_chunk_energy
+            .lock()
+            .ok()
+            .map(|mut e| {
+                let cur = *e;
+                *e = (0.0, 0.0);
+                cur
+            })
+            .unwrap_or((0.0, 0.0));
         let mut sum_sq = 0.0f64;
         for &s in &samples {
             let f = s as f64 / i16::MAX as f64;
@@ -81,7 +93,23 @@ impl AudioManager {
         if rms < 0.001 {
             return None;
         }
-        let elapsed_ms = self.runtime.lock().ok().map(|r| r.elapsed_ms).unwrap_or(0);
+        let (elapsed_ms, source_mode) = self
+            .runtime
+            .lock()
+            .ok()
+            .map(|r| (r.elapsed_ms, r.source_mode.clone()))
+            .unwrap_or((0, AudioSourceMode::Mic));
+        let dominant_source = match source_mode {
+            AudioSourceMode::Mic => "mic",
+            AudioSourceMode::System => "system",
+            AudioSourceMode::Both => {
+                if mic_e >= sys_e * 0.75 {
+                    "mic"
+                } else {
+                    "system"
+                }
+            }
+        };
         let dir = storage::app_data_dir().join("temp_recordings");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join(format!("live_{}.wav", Uuid::new_v4()));
@@ -96,7 +124,7 @@ impl AudioManager {
                 let _ = w.write_sample(s);
             }
             let _ = w.finalize();
-            return Some((path, elapsed_ms));
+            return Some((path, elapsed_ms, dominant_source));
         }
         None
     }
@@ -253,6 +281,9 @@ impl AudioManager {
         if let Ok(mut buf) = self.live_chunk_pcm.lock() {
             buf.clear();
         }
+        if let Ok(mut e) = self.live_chunk_energy.lock() {
+            *e = (0.0, 0.0);
+        }
 
         {
             let mut rt = self.runtime.lock().unwrap();
@@ -275,6 +306,7 @@ impl AudioManager {
         let stop_flag = Arc::clone(&self.stop_flag);
         let paused_flag = Arc::clone(&self.paused_flag);
         let chunk_cb = Arc::clone(&self.live_chunk_pcm);
+        let energy_cb = Arc::clone(&self.live_chunk_energy);
 
         let wav_path_clone = wav_path.clone();
         let mode_clone = source_mode.clone();
@@ -377,6 +409,15 @@ impl AudioManager {
                     .lock()
                     .map(|mut q| q.drain(..).collect())
                     .unwrap_or_default();
+
+                if (!mic_samples.is_empty() || !sys_samples.is_empty()) {
+                    let me: f64 = mic_samples.iter().map(|&v| (v as f64) * (v as f64)).sum();
+                    let se: f64 = sys_samples.iter().map(|&v| (v as f64) * (v as f64)).sum();
+                    if let Ok(mut eg) = energy_cb.lock() {
+                        eg.0 += me;
+                        eg.1 += se;
+                    }
+                }
 
                 let mixed: Vec<f32> = match (mic_samples.is_empty(), sys_samples.is_empty()) {
                     (true, true) => {

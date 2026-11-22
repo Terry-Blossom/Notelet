@@ -272,3 +272,211 @@ pub fn upsert_dictionary(snapshot: &mut AppDataSnapshot, entry: DictionaryEntry)
         snapshot.dictionary.push(entry);
     }
 }
+
+fn dir_size_bytes(dir: &Path) -> (u64, usize) {
+    let mut total = 0u64;
+    let mut count = 0usize;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let (sub_b, sub_c) = dir_size_bytes(&p);
+                total += sub_b;
+                count += sub_c;
+            } else if let Ok(meta) = entry.metadata() {
+                total += meta.len();
+                count += 1;
+            }
+        }
+    }
+    (total, count)
+}
+
+pub fn compute_storage_stats() -> crate::models::StorageStats {
+    let (audio_bytes, audio_count) = dir_size_bytes(&audio_dir());
+    let (models_bytes, _) = dir_size_bytes(&models_dir());
+    crate::models::StorageStats {
+        audio_bytes,
+        audio_count,
+        models_bytes,
+        data_dir: app_data_dir().to_string_lossy().to_string(),
+    }
+}
+
+pub fn compress_all_retained_audio(snapshot: &mut AppDataSnapshot) -> Result<(usize, u64), String> {
+    let mut compressed_count = 0usize;
+    let mut saved_bytes = 0u64;
+    let encrypt = snapshot.settings.encrypt_retained_audio;
+
+    for note in snapshot.notes.iter_mut() {
+        let Some(ref path_str) = note.audio_path.clone() else {
+            continue;
+        };
+        let path_obj = Path::new(path_str);
+        if !path_obj.exists() {
+            continue;
+        }
+        let before_len = fs::metadata(path_obj).map(|m| m.len()).unwrap_or(0);
+        let Ok(raw_wav) = read_retained_audio_bytes(path_str, note.audio_encrypted) else {
+            continue;
+        };
+        let cursor = std::io::Cursor::new(&raw_wav);
+        let Ok(mut reader) = hound::WavReader::new(cursor) else {
+            continue;
+        };
+        let spec = reader.spec();
+        if spec.sample_rate <= 8000 && spec.channels == 1 {
+            continue;
+        }
+        let step = ((spec.sample_rate as usize) / 8000).max(1) * (spec.channels.max(1) as usize);
+        let samples_i16: Vec<i16> = match spec.sample_format {
+            hound::SampleFormat::Int => reader
+                .samples::<i32>()
+                .filter_map(|s| s.ok())
+                .map(|v| {
+                    if spec.bits_per_sample <= 16 {
+                        v as i16
+                    } else {
+                        (v >> (spec.bits_per_sample - 16)) as i16
+                    }
+                })
+                .collect(),
+            hound::SampleFormat::Float => reader
+                .samples::<f32>()
+                .filter_map(|s| s.ok())
+                .map(|v| (v.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+                .collect(),
+        };
+        if samples_i16.is_empty() {
+            continue;
+        }
+        let downsampled: Vec<i16> = samples_i16.iter().step_by(step).copied().collect();
+        let temp_dir = app_data_dir().join("temp_recordings");
+        let _ = fs::create_dir_all(&temp_dir);
+        let tmp_wav = temp_dir.join(format!("comp_{}.wav", note.id));
+        let out_spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 8000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        if let Ok(mut writer) = hound::WavWriter::create(&tmp_wav, out_spec) {
+            for s in downsampled {
+                let _ = writer.write_sample(s);
+            }
+            let _ = writer.finalize();
+            if let Ok((new_path, new_enc)) = retain_audio_file(&tmp_wav, &note.id, encrypt) {
+                let _ = fs::remove_file(&tmp_wav);
+                let after_len = fs::metadata(&new_path).map(|m| m.len()).unwrap_or(before_len);
+                if before_len > after_len {
+                    saved_bytes += before_len - after_len;
+                }
+                note.audio_path = Some(new_path);
+                note.audio_encrypted = new_enc;
+                compressed_count += 1;
+            }
+        }
+    }
+    Ok((compressed_count, saved_bytes))
+}
+
+pub fn normalize_media_to_16k_wav(input_path: &Path) -> (PathBuf, u64) {
+    let temp_dir = app_data_dir().join("temp_recordings");
+    let _ = fs::create_dir_all(&temp_dir);
+    let out_wav = temp_dir.join(format!("norm_{}.wav", Uuid::new_v4()));
+
+    // 1. Check if already a readable WAV
+    if let Ok(mut reader) = hound::WavReader::open(input_path) {
+        let spec = reader.spec();
+        let total_samples = reader.duration() as u64;
+        let dur_sec = if spec.sample_rate > 0 {
+            (total_samples / spec.sample_rate as u64).max(1)
+        } else {
+            0
+        };
+        if spec.channels == 1 && spec.sample_rate == 16_000 && spec.bits_per_sample == 16 {
+            return (input_path.to_path_buf(), dur_sec);
+        }
+        // Resample WAV to 16kHz mono 16-bit in pure Rust
+        let ch = spec.channels.max(1) as usize;
+        let mono: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Int => {
+                let raw: Vec<i32> = reader.samples::<i32>().filter_map(|s| s.ok()).collect();
+                let scale = (1i64 << (spec.bits_per_sample.saturating_sub(1))) as f32;
+                raw.chunks(ch)
+                    .map(|frame| frame.iter().map(|&v| v as f32 / scale.max(1.0)).sum::<f32>() / ch as f32)
+                    .collect()
+            }
+            hound::SampleFormat::Float => {
+                let raw: Vec<f32> = reader.samples::<f32>().filter_map(|s| s.ok()).collect();
+                raw.chunks(ch)
+                    .map(|frame| frame.iter().sum::<f32>() / ch as f32)
+                    .collect()
+            }
+        };
+        let ratio = (spec.sample_rate as f64 / 16_000.0).max(0.1);
+        let out_spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        if let Ok(mut writer) = hound::WavWriter::create(&out_wav, out_spec) {
+            let mut idx = 0.0f64;
+            while (idx as usize) < mono.len() {
+                let s = (mono[idx as usize].clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                let _ = writer.write_sample(s);
+                idx += ratio;
+            }
+            let _ = writer.finalize();
+            let _ = fs::remove_file(input_path);
+            return (out_wav, dur_sec);
+        }
+        return (input_path.to_path_buf(), dur_sec);
+    }
+
+    // 2. Non-WAV file (.mp3, .m4a, .mp4, .webm, .ogg, .flac): try ffmpeg or macOS afconvert
+    let mut ff_cmd = std::process::Command::new("ffmpeg");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        ff_cmd.creation_flags(0x0800_0000);
+    }
+    if let Ok(status) = ff_cmd
+        .args(["-y", "-i"])
+        .arg(input_path)
+        .args(["-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le"])
+        .arg(&out_wav)
+        .status()
+    {
+        if status.success() && out_wav.exists() {
+            let dur_sec = hound::WavReader::open(&out_wav)
+                .ok()
+                .map(|r| (r.duration() as u64 / r.spec().sample_rate.max(1) as u64).max(1))
+                .unwrap_or(0);
+            let _ = fs::remove_file(input_path);
+            return (out_wav, dur_sec);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(status) = std::process::Command::new("afconvert")
+            .args(["-f", "WAVE", "-d", "LEI16@16000", "-c", "1"])
+            .arg(input_path)
+            .arg(&out_wav)
+            .status()
+        {
+            if status.success() && out_wav.exists() {
+                let dur_sec = hound::WavReader::open(&out_wav)
+                    .ok()
+                    .map(|r| (r.duration() as u64 / r.spec().sample_rate.max(1) as u64).max(1))
+                    .unwrap_or(0);
+                let _ = fs::remove_file(input_path);
+                return (out_wav, dur_sec);
+            }
+        }
+    }
+
+    (input_path.to_path_buf(), 0)
+}

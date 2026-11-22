@@ -229,6 +229,18 @@ pub struct AppSettings {
     pub recording_overlay_y: Option<f64>,
     #[serde(default)]
     pub llm_custom_prompt: String,
+    #[serde(default)]
+    pub main_window_x: Option<f64>,
+    #[serde(default)]
+    pub main_window_y: Option<f64>,
+    #[serde(default)]
+    pub main_window_width: Option<f64>,
+    #[serde(default)]
+    pub main_window_height: Option<f64>,
+    #[serde(default)]
+    pub user_speaker_name: String,
+    #[serde(default)]
+    pub remote_speaker_name: String,
 }
 
 impl Default for AppSettings {
@@ -267,8 +279,28 @@ impl Default for AppSettings {
             recording_overlay_x: None,
             recording_overlay_y: None,
             llm_custom_prompt: String::new(),
+            main_window_x: None,
+            main_window_y: None,
+            main_window_width: None,
+            main_window_height: None,
+            user_speaker_name: "自分".to_string(),
+            remote_speaker_name: "相手".to_string(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageStats {
+    pub audio_bytes: u64,
+    pub audio_count: usize,
+    pub models_bytes: u64,
+    pub data_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveAssistResult {
+    pub summary_points: Vec<String>,
+    pub next_questions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

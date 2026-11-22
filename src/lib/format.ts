@@ -42,17 +42,47 @@ export function formatDateTime(iso: string): string {
   });
 }
 
-export function formatNoteForCopy(note: Note, format: 'markdown' | 'plain'): string {
+export function formatNoteForCopy(
+  note: Note,
+  format: 'markdown' | 'plain' | 'slack' | 'line'
+): string {
   const title = note.title.trim() || '無題のノート';
   const dateStr = formatDateTime(note.created_at);
+  const cleanMemo = note.manual_notes.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 
-  if (format === 'plain') {
-    const lines: string[] = [title, `日時: ${dateStr}`];
+  if (format === 'slack') {
+    const lines: string[] = [`*【${title}】* (${dateStr})`];
     if (note.participants.length > 0) {
       lines.push(`参加者: ${note.participants.join(', ')}`);
     }
     if (note.summary.trim()) {
-      lines.push('', '【要約】', note.summary.trim());
+      lines.push('', '*■ 要約*', note.summary.trim().replace(/^#{1,3}\s+/gm, '• '));
+    }
+    if (note.decisions.length > 0) {
+      lines.push('', '*■ 決定事項*', ...note.decisions.map((d) => `• ${d}`));
+    }
+    if (note.action_items.length > 0) {
+      lines.push(
+        '',
+        '*■ ネクストアクション*',
+        ...note.action_items.map(
+          (a) => `[${a.done ? 'x' : ' '}] ${a.text}${a.assignee ? ` (@${a.assignee})` : ''}`
+        )
+      );
+    }
+    if (cleanMemo) {
+      lines.push('', '*■ メモ*', cleanMemo);
+    }
+    return lines.join('\n');
+  }
+
+  if (format === 'plain' || format === 'line') {
+    const lines: string[] = [`■ ${title}`, `日時: ${dateStr}`];
+    if (note.participants.length > 0) {
+      lines.push(`参加者: ${note.participants.join('、')}`);
+    }
+    if (note.summary.trim()) {
+      lines.push('', '【要約】', note.summary.trim().replace(/^#{1,3}\s+/gm, '■ ').replace(/\*\*/g, ''));
     }
     if (note.decisions.length > 0) {
       lines.push('', '【決定事項】', ...note.decisions.map((d) => `・${d}`));
@@ -61,17 +91,17 @@ export function formatNoteForCopy(note: Note, format: 'markdown' | 'plain'): str
       lines.push(
         '',
         '【アクション項目】',
-        ...note.action_items.map((a) => `[${a.done ? 'x' : ' '}] ${a.text}${a.assignee ? `（${a.assignee}）` : ''}`)
+        ...note.action_items.map((a) => `[${a.done ? '済' : '未'}] ${a.text}${a.assignee ? `（${a.assignee}）` : ''}`)
       );
     }
-    if (note.manual_notes.trim()) {
-      lines.push('', '【手入力メモ】', note.manual_notes.trim());
+    if (cleanMemo) {
+      lines.push('', '【メモ】', cleanMemo);
     }
-    if (note.segments.length > 0) {
+    if (format === 'plain' && note.segments.length > 0) {
       lines.push(
         '',
         '【文字起こし】',
-        ...note.segments.map((s) => `[${formatMs(s.start_ms)}] ${s.speaker}: ${s.text}`)
+        ...note.segments.map((s) => `[${formatMs(s.start_ms)}] ${s.speaker || '発言'}: ${s.text}`)
       );
     }
     return lines.join('\n');
@@ -94,14 +124,14 @@ export function formatNoteForCopy(note: Note, format: 'markdown' | 'plain'): str
       ...note.action_items.map((a) => `- [${a.done ? 'x' : ' '}] ${a.text}${a.assignee ? `（担当: ${a.assignee}）` : ''}`)
     );
   }
-  if (note.manual_notes.trim()) {
-    md.push('', '## 手入力メモ', note.manual_notes.trim());
+  if (cleanMemo) {
+    md.push('', '## 手入力メモ', cleanMemo);
   }
   if (note.segments.length > 0) {
     md.push(
       '',
       '## 文字起こし',
-      ...note.segments.map((s) => `- \`${formatMs(s.start_ms)}\` **${s.speaker}**: ${s.text}`)
+      ...note.segments.map((s) => `- \`${formatMs(s.start_ms)}\` **${s.speaker || '発言'}**: ${s.text}`)
     );
   }
   return md.join('\n');
