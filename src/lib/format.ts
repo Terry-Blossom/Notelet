@@ -146,3 +146,57 @@ export function createEmptyNote(folderId = 'personal'): Note {
     audio_encrypted: false,
   };
 }
+
+export interface NoteSearchMatch {
+  source: string;
+  before: string;
+  match: string;
+  after: string;
+}
+
+function stripHtmlForSearch(raw: string): string {
+  return raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function buildSnippetAround(text: string, qLower: string): { before: string; match: string; after: string } | null {
+  const clean = stripHtmlForSearch(text);
+  if (!clean) return null;
+  const idx = clean.toLowerCase().indexOf(qLower);
+  if (idx === -1) return null;
+  const start = Math.max(0, idx - 32);
+  const end = Math.min(clean.length, idx + qLower.length + 48);
+  const prefix = start > 0 ? '…' : '';
+  const suffix = end < clean.length ? '…' : '';
+  return {
+    before: prefix + clean.slice(start, idx),
+    match: clean.slice(idx, idx + qLower.length),
+    after: clean.slice(idx + qLower.length, end) + suffix,
+  };
+}
+
+export function findNoteSearchMatches(note: Note, query: string): NoteSearchMatch[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const results: NoteSearchMatch[] = [];
+
+  const titleHit = buildSnippetAround(note.title || '無題のノート', q);
+  if (titleHit) {
+    results.push({ source: 'タイトル', ...titleHit });
+  }
+  const summaryHit = buildSnippetAround(note.summary, q);
+  if (summaryHit) {
+    results.push({ source: '要約', ...summaryHit });
+  }
+  const memoHit = buildSnippetAround(note.manual_notes, q);
+  if (memoHit) {
+    results.push({ source: 'メモ', ...memoHit });
+  }
+  for (const seg of note.segments) {
+    if (results.length >= 3) break;
+    const segHit = buildSnippetAround(seg.text, q);
+    if (segHit) {
+      results.push({ source: `文字起こし ${formatMs(seg.start_ms)}`, ...segHit });
+    }
+  }
+  return results;
+}

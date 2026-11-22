@@ -1,8 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { MessageSquare, AlertCircle, Search, Trash2 } from 'lucide-react';
-import { AppSettings, ChatAnswer, ChatHistoryItem, Folder, Note } from '../types';
+import {
+  AlertCircle,
+  ArrowUp,
+  CheckSquare,
+  FileText,
+  Plus,
+  Search,
+  Trash2,
+} from 'lucide-react';
+import { AppSettings, ChatAnswer, ChatCitation, ChatHistoryItem, Folder, Note } from '../types';
 import { formatDateTime } from '../lib/format';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
+import { confirmDeleteDialog } from './ConfirmDialog';
 
 interface ChatViewProps {
   notes: Note[];
@@ -11,8 +20,15 @@ interface ChatViewProps {
   settings: AppSettings;
   onChatAcrossNotes: (noteIds: string[], question: string, spaceId?: string | null) => Promise<ChatAnswer>;
   onClearHistory: () => Promise<void>;
+  onDeleteHistoryItems?: (itemIds: string[]) => Promise<void>;
   onOpenNote: (noteId: string) => void;
   onGoSettings: () => void;
+}
+
+interface ActiveTurn {
+  id: string;
+  question: string;
+  answer: ChatAnswer;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -22,16 +38,19 @@ export const ChatView: React.FC<ChatViewProps> = ({
   settings,
   onChatAcrossNotes,
   onClearHistory,
+  onDeleteHistoryItems,
   onOpenNote,
   onGoSettings,
 }) => {
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>('all');
   const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState<ChatAnswer | null>(null);
+  const [turns, setTurns] = useState<ActiveTurn[]>([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyQuery, setHistoryQuery] = useState('');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const llmConfigured = settings.llm_provider !== 'none' && settings.llm_provider !== '';
 
@@ -48,24 +67,40 @@ export const ChatView: React.FC<ChatViewProps> = ({
   }, [chatHistory, historyQuery, selectedSpaceId]);
 
   const activeHistoryItem = useMemo(
-    () => filteredHistory.find((h) => h.id === selectedHistoryId) ?? null,
-    [filteredHistory, selectedHistoryId]
+    () => chatHistory.find((h) => h.id === selectedHistoryId) ?? null,
+    [chatHistory, selectedHistoryId]
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!question.trim()) return;
+  const handleAsk = async () => {
+    const q = question.trim();
+    if (!q || busy) return;
     setBusy(true);
     setError(null);
-    setSelectedHistoryId(null);
+    if (selectedHistoryId && activeHistoryItem) {
+      setTurns([
+        {
+          id: activeHistoryItem.id,
+          question: activeHistoryItem.question,
+          answer: { answer: activeHistoryItem.answer, citations: activeHistoryItem.citations },
+        },
+      ]);
+      setSelectedHistoryId(null);
+    }
+    setQuestion('');
     try {
       const spaceId = selectedSpaceId === 'all' ? null : selectedSpaceId;
       const targetIds = notes
         .filter((n) => !spaceId || n.folder_id === spaceId)
         .map((n) => n.id);
-      const res = await onChatAcrossNotes(targetIds, question, spaceId);
-      setAnswer(res);
-      setQuestion('');
+      const res = await onChatAcrossNotes(targetIds, q, spaceId);
+      setTurns((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          question: q,
+          answer: res,
+        },
+      ]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -78,28 +113,147 @@ export const ChatView: React.FC<ChatViewProps> = ({
       ? 'すべてのスペース'
       : folders.find((f) => f.id === selectedSpaceId)?.name ?? 'スペース';
 
-  const displayedAnswer = activeHistoryItem
-    ? { answer: activeHistoryItem.answer, citations: activeHistoryItem.citations }
-    : answer;
+  const allSelected =
+    filteredHistory.length > 0 && filteredHistory.every((h) => selectedIds.includes(h.id));
+
+  const renderCitations = (citations: ChatCitation[]) => {
+    if (!citations || citations.length === 0) return null;
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          paddingTop: '12px',
+          borderTop: '1px solid var(--border-subtle)',
+        }}
+      >
+        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
+          引用元のノート・該当箇所
+        </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {citations.map((c, idx) => (
+            <button
+              key={`${c.note_id}-${idx}`}
+              type="button"
+              onClick={() => onOpenNote(c.note_id)}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                backgroundColor: 'var(--bg-canvas)',
+                border: '1px solid var(--border-subtle)',
+                textAlign: 'left',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <FileText size={13} strokeWidth={1.75} style={{ color: 'var(--text-secondary)' }} />
+                <strong style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {c.note_title}
+                </strong>
+                {c.timestamp && (
+                  <span className="status-chip mono-num" style={{ fontSize: '11px' }}>
+                    {c.timestamp}
+                  </span>
+                )}
+              </div>
+              {c.excerpt && (
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                  「{c.excerpt}」
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="chat-split">
       {/* Left Rail: Searchable Conversation History */}
       <aside className="chat-history-rail">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
           <strong style={{ fontSize: '14px', fontWeight: 600 }}>会話履歴 ({filteredHistory.length})</strong>
-          {chatHistory.length > 0 && (
+          <button
+            type="button"
+            aria-label="チャット履歴を選択"
+            title={selectMode ? '選択を終了' : '複数選択して削除'}
+            aria-pressed={selectMode}
+            className={`btn btn-ghost ${selectMode ? 'active' : ''}`}
+            style={{
+              width: '28px',
+              height: '28px',
+              padding: 0,
+              backgroundColor: selectMode ? 'var(--text-primary)' : undefined,
+              color: selectMode ? 'var(--text-inverse)' : undefined,
+            }}
+            onClick={() => {
+              setSelectMode((v) => !v);
+              setSelectedIds([]);
+            }}
+          >
+            <CheckSquare size={15} strokeWidth={1.75} />
+          </button>
+        </div>
+
+        {selectMode && (
+          <div
+            className="surface-subtle"
+            style={{
+              padding: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '8px',
+              flexWrap: 'wrap',
+            }}
+          >
             <button
               type="button"
               className="btn btn-ghost"
               style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
-              onClick={onClearHistory}
+              onClick={() => {
+                if (allSelected) {
+                  setSelectedIds([]);
+                } else {
+                  setSelectedIds(filteredHistory.map((h) => h.id));
+                }
+              }}
+            >
+              {allSelected ? 'すべて解除' : 'すべて選択'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
+              disabled={selectedIds.length === 0}
+              onClick={async () => {
+                if (selectedIds.length === 0) return;
+                const ok = await confirmDeleteDialog(
+                  `${selectedIds.length} 件のチャット履歴を削除しますか？`,
+                  '選択した会話履歴を削除します。この操作は取り消せません。'
+                );
+                if (!ok) return;
+                if (onDeleteHistoryItems) {
+                  await onDeleteHistoryItems(selectedIds);
+                } else if (selectedIds.length === chatHistory.length) {
+                  await onClearHistory();
+                }
+                if (selectedHistoryId && selectedIds.includes(selectedHistoryId)) {
+                  setSelectedHistoryId(null);
+                }
+                setSelectedIds([]);
+                setSelectMode(false);
+              }}
             >
               <Trash2 size={12} strokeWidth={1.5} />
-              削除
+              削除 ({selectedIds.length})
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         <div style={{ position: 'relative' }}>
           <Search
@@ -124,44 +278,80 @@ export const ChatView: React.FC<ChatViewProps> = ({
         </div>
 
         {filteredHistory.length === 0 ? (
-          <p className="text-muted" style={{ margin: '8px 0 0' }}>
+          <div className="text-muted" style={{ paddingTop: '8px', fontSize: '13px' }}>
             履歴はありません
-          </p>
+          </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {filteredHistory.map((item) => {
               const isSelected = selectedHistoryId === item.id;
+              const isChecked = selectedIds.includes(item.id);
               return (
-                <button
+                <div
                   key={item.id}
-                  type="button"
-                  onClick={() => setSelectedHistoryId(item.id)}
                   style={{
-                    textAlign: 'left',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
                     padding: '8px',
                     borderRadius: '6px',
                     backgroundColor: isSelected ? 'var(--accent-tint)' : 'transparent',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '4px',
                   }}
                 >
-                  <span
+                  {selectMode && (
+                    <input
+                      type="checkbox"
+                      aria-label={`${item.question}を選択`}
+                      checked={isChecked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedIds((prev) => [...prev, item.id]);
+                        } else {
+                          setSelectedIds((prev) => prev.filter((id) => id !== item.id));
+                        }
+                      }}
+                      style={{ width: '16px', height: '16px', flexShrink: 0, cursor: 'pointer' }}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectMode) {
+                        setSelectedIds((prev) =>
+                          prev.includes(item.id)
+                            ? prev.filter((id) => id !== item.id)
+                            : [...prev, item.id]
+                        );
+                      } else {
+                        setSelectedHistoryId(item.id);
+                      }
+                    }}
                     style={{
-                      fontSize: '14px',
-                      fontWeight: isSelected ? 600 : 500,
-                      color: isSelected ? 'var(--accent)' : 'var(--text-primary)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      flex: 1,
+                      minWidth: 0,
+                      textAlign: 'left',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
                     }}
                   >
-                    {item.question}
-                  </span>
-                  <span className="text-muted mono-num" style={{ fontSize: '11px' }}>
-                    {formatDateTime(item.timestamp)}
-                  </span>
-                </button>
+                    <span
+                      style={{
+                        fontSize: '13px',
+                        fontWeight: isSelected ? 600 : 500,
+                        color: isSelected ? 'var(--accent)' : 'var(--text-primary)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {item.question}
+                    </span>
+                    <span className="text-muted mono-num" style={{ fontSize: '11px' }}>
+                      {formatDateTime(item.timestamp)}
+                    </span>
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -169,25 +359,44 @@ export const ChatView: React.FC<ChatViewProps> = ({
       </aside>
 
       {/* Main Chat Pane */}
-      <div className="chat-main-pane">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+      <div className="chat-main-pane" style={{ overflow: 'hidden' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+            <button
+              type="button"
+              className={`chip-filter ${selectedSpaceId === 'all' ? 'active' : ''}`}
+              onClick={() => setSelectedSpaceId('all')}
+            >
+              すべて
+            </button>
+            {folders.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className={`chip-filter ${selectedSpaceId === f.id ? 'active' : ''}`}
+                onClick={() => setSelectedSpaceId(f.id)}
+              >
+                {f.name}
+              </button>
+            ))}
+          </div>
+
           <button
             type="button"
-            className={`chip-filter ${selectedSpaceId === 'all' ? 'active' : ''}`}
-            onClick={() => setSelectedSpaceId('all')}
+            className="btn btn-secondary"
+            aria-label="新しいチャットを作成"
+            title="新しいチャットを作成"
+            style={{ height: '32px', padding: '0 12px' }}
+            onClick={() => {
+              setSelectedHistoryId(null);
+              setTurns([]);
+              setQuestion('');
+              setError(null);
+            }}
           >
-            すべて
+            <Plus size={15} strokeWidth={1.75} />
+            <span>新規チャット</span>
           </button>
-          {folders.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              className={`chip-filter ${selectedSpaceId === f.id ? 'active' : ''}`}
-              onClick={() => setSelectedSpaceId(f.id)}
-            >
-              {f.name}
-            </button>
-          ))}
         </div>
 
         {!llmConfigured && (
@@ -201,6 +410,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               justifyContent: 'space-between',
               alignItems: 'center',
               gap: '12px',
+              flexShrink: 0,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -213,67 +423,108 @@ export const ChatView: React.FC<ChatViewProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '8px' }}>
-          <input
-            aria-label="全ノートへの質問"
-            className="input"
-            placeholder={`${activeSpaceName} のノートをもとに質問（例：今週決まったタスクは？）`}
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            disabled={busy}
-          />
-          <button type="submit" className="btn btn-primary" disabled={busy || !question.trim()}>
-            <MessageSquare size={15} strokeWidth={1.5} />
-            {busy ? '検索中' : '質問する'}
-          </button>
-        </form>
-
         {error && (
-          <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
+          <div style={{ color: 'var(--danger)', fontSize: '13px', flexShrink: 0 }}>{error}</div>
         )}
 
-        {busy || displayedAnswer ? (
-          <div
-            style={{
-              padding: '16px',
-              borderRadius: '8px',
-              border: '1px solid var(--border-subtle)',
-              backgroundColor: 'var(--bg-subtle)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '12px',
-            }}
-          >
-            {activeHistoryItem && (
-              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {activeHistoryItem ? (
+            <div
+              style={{
+                padding: '16px',
+                borderRadius: '12px',
+                border: '1px solid var(--border-subtle)',
+                backgroundColor: 'var(--bg-subtle)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+              }}
+            >
+              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
                 Q. {activeHistoryItem.question}
               </div>
-            )}
-            <StreamingMarkdownArticle
-              content={busy ? '' : displayedAnswer?.answer || ''}
-              isGenerating={busy}
-              animateOnChange={!activeHistoryItem}
+              <StreamingMarkdownArticle
+                content={activeHistoryItem.answer}
+                isGenerating={false}
+                animateOnChange={false}
+              />
+              {renderCitations(activeHistoryItem.citations)}
+            </div>
+          ) : turns.length > 0 || busy ? (
+            <>
+              {turns.map((t) => (
+                <div
+                  key={t.id}
+                  style={{
+                    padding: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-subtle)',
+                    backgroundColor: 'var(--bg-subtle)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                  }}
+                >
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Q. {t.question}
+                  </div>
+                  <StreamingMarkdownArticle
+                    content={t.answer.answer}
+                    isGenerating={false}
+                    animateOnChange
+                  />
+                  {renderCitations(t.answer.citations)}
+                </div>
+              ))}
+              {busy && (
+                <div
+                  style={{
+                    padding: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-subtle)',
+                    backgroundColor: 'var(--bg-subtle)',
+                  }}
+                >
+                  <StreamingMarkdownArticle content="" isGenerating animateOnChange />
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ padding: '24px 0', color: 'var(--text-muted)' }}>
+              下の入力欄から「{activeSpaceName}」について何でも質問するか、左側の履歴から過去の回答を開けます。
+            </div>
+          )}
+        </div>
+
+        {/* Bottom Composer Box (matching NoteEditorView's "ノートについて何でも質問") */}
+        <div className="note-composer-wrap" style={{ flexShrink: 0 }}>
+          <div className="note-composer-box">
+            <textarea
+              aria-label="全ノートへの質問"
+              className="note-composer-input"
+              rows={1}
+              placeholder={`${activeSpaceName}について何でも質問`}
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              disabled={busy}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void handleAsk();
+                }
+              }}
             />
-            {!busy && displayedAnswer && displayedAnswer.citations.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)' }}>
-                {displayedAnswer.citations.map((c, idx) => (
-                  <button
-                    key={`${c.note_id}-${idx}`}
-                    type="button"
-                    className="chip-filter"
-                    onClick={() => onOpenNote(c.note_id)}
-                  >
-                    {c.note_title}
-                  </button>
-                ))}
-              </div>
-            )}
+            <button
+              type="button"
+              className="note-send-btn"
+              aria-label="質問を送信"
+              disabled={busy || !question.trim()}
+              onClick={() => void handleAsk()}
+            >
+              <ArrowUp size={18} strokeWidth={2} aria-hidden="true" />
+            </button>
           </div>
-        ) : (
-          <div style={{ padding: '24px 0', color: 'var(--text-muted)' }}>
-            上の入力欄から質問するか、左側の履歴から過去の回答を開けます。
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

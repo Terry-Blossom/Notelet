@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Plus, Search, Trash2 } from 'lucide-react';
 import { DictionaryEntry } from '../types';
+import { confirmDeleteDialog } from './ConfirmDialog';
 
 interface DictionaryViewProps {
   dictionary: DictionaryEntry[];
@@ -116,7 +117,14 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
                 aria-label={`${d.term}を削除`}
                 className="btn btn-ghost"
                 style={{ width: '28px', height: '28px', padding: 0 }}
-                onClick={() => onDeleteEntry(d.id)}
+                onClick={async () => {
+                  const ok = await confirmDeleteDialog(
+                    `「${d.term}」を辞書から削除しますか？`,
+                    '削除した登録語は元に戻せません。'
+                  );
+                  if (!ok) return;
+                  await onDeleteEntry(d.id);
+                }}
               >
                 <Trash2 size={14} strokeWidth={1.5} />
               </button>

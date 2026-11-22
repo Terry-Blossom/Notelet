@@ -227,6 +227,8 @@ pub struct AppSettings {
     pub recording_overlay_x: Option<f64>,
     #[serde(default)]
     pub recording_overlay_y: Option<f64>,
+    #[serde(default)]
+    pub llm_custom_prompt: String,
 }
 
 impl Default for AppSettings {
@@ -264,6 +266,7 @@ impl Default for AppSettings {
             active_template_id: "standard".to_string(),
             recording_overlay_x: None,
             recording_overlay_y: None,
+            llm_custom_prompt: String::new(),
         }
     }
 }

@@ -10,8 +10,9 @@ import {
   Trash2,
 } from 'lucide-react';
 import { AppSettings, ChatAnswer, Folder, Note } from '../types';
-import { formatDateTime, formatMs } from '../lib/format';
+import { findNoteSearchMatches, formatDateTime, formatMs } from '../lib/format';
 import { NotionSyncBadge } from './NotionSyncBadge';
+import { confirmDeleteDialog } from './ConfirmDialog';
 
 interface HomeViewProps {
   settings: AppSettings;
@@ -199,6 +200,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div className="flat-list">
                 {filteredNotes.map((note) => {
                   const spaceName = folders.find((f) => f.id === note.folder_id)?.name ?? '個人';
+                  const matches = searchQuery.trim() ? findNoteSearchMatches(note, searchQuery) : [];
                   return (
                     <button
                       key={note.id}
@@ -210,13 +212,49 @@ export const HomeView: React.FC<HomeViewProps> = ({
                         setContextMenu({ noteId: note.id, x: e.clientX, y: e.clientY });
                       }}
                     >
-                      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
                         <strong style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
                           {note.title.trim() || '無題のノート'}
                         </strong>
                         <span className="text-muted mono-num">
                           {formatDateTime(note.created_at)} ・ {formatMs(note.duration_sec * 1000)} ・ {spaceName}
                         </span>
+                        {matches.length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                            {matches.map((m, idx) => (
+                              <div
+                                key={idx}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'baseline',
+                                  gap: '8px',
+                                  fontSize: '12px',
+                                  color: 'var(--text-secondary)',
+                                  lineHeight: '1.5',
+                                }}
+                              >
+                                <span className="status-chip" style={{ fontSize: '11px', flexShrink: 0 }}>
+                                  {m.source}
+                                </span>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {m.before}
+                                  <mark
+                                    style={{
+                                      backgroundColor: '#FEF08A',
+                                      color: 'var(--text-primary)',
+                                      padding: '0 4px',
+                                      borderRadius: '4px',
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    {m.match}
+                                  </mark>
+                                  {m.after}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div style={{ flexShrink: 0 }}>
                         <NotionSyncBadge status={note.notion_sync.status} pageUrl={note.notion_sync.page_url} />
@@ -396,6 +434,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
               onClick={async () => {
                 const id = contextMenu.noteId;
                 setContextMenu(null);
+                const ok = await confirmDeleteDialog(
+                  'このノートを削除しますか？',
+                  '削除したノートは元に戻せません。'
+                );
+                if (!ok) return;
                 await onDeleteNote(id);
               }}
             >

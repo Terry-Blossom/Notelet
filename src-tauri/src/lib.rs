@@ -57,9 +57,29 @@ fn save_settings(
 }
 
 #[tauri::command]
-fn save_note(state: State<AppState>, note: Note) -> Result<AppDataSnapshot, String> {
+fn save_note(state: State<AppState>, mut note: Note) -> Result<AppDataSnapshot, String> {
     let mut data = state.data.lock().unwrap();
     let id = note.id.clone();
+    let encrypt = data.settings.encrypt_retained_audio;
+
+    if let Some(ref p) = note.audio_path.clone() {
+        let path_obj = std::path::Path::new(p);
+        if p.contains("temp_recordings") && path_obj.exists() {
+            if let Ok((retained_path, encrypted)) =
+                storage::retain_audio_file(path_obj, &id, encrypt)
+            {
+                storage::remove_file_if_exists(p);
+                note.audio_path = Some(retained_path);
+                note.audio_encrypted = encrypted;
+            }
+        }
+    } else if let Some(existing) = data.notes.iter().find(|n| n.id == id) {
+        if existing.audio_path.is_some() {
+            note.audio_path = existing.audio_path.clone();
+            note.audio_encrypted = existing.audio_encrypted;
+        }
+    }
+
     storage::upsert_note(&mut data, note);
     storage::append_audit(&mut data, "note_saved", &format!("note_id={id}"));
     storage::save_snapshot(&data)?;
@@ -156,6 +176,17 @@ fn delete_folder(state: State<AppState>, folder_id: String) -> Result<AppDataSna
 fn clear_chat_history(state: State<AppState>) -> Result<AppDataSnapshot, String> {
     let mut data = state.data.lock().unwrap();
     data.chat_history.clear();
+    storage::save_snapshot(&data)?;
+    Ok(data.clone())
+}
+
+#[tauri::command]
+fn delete_chat_history_items(
+    state: State<AppState>,
+    item_ids: Vec<String>,
+) -> Result<AppDataSnapshot, String> {
+    let mut data = state.data.lock().unwrap();
+    data.chat_history.retain(|item| !item_ids.contains(&item.id));
     storage::save_snapshot(&data)?;
     Ok(data.clone())
 }
@@ -279,17 +310,30 @@ fn stop_recording(app: tauri::AppHandle, state: State<AppState>) -> RecordingSta
 #[tauri::command]
 fn read_note_audio(state: State<AppState>, note_id: String) -> Result<String, String> {
     let (audio_path, encrypted) = {
-        let data = state.data.lock().unwrap();
+        let mut data = state.data.lock().unwrap();
+        let encrypt_pref = data.settings.encrypt_retained_audio;
         let note = data
             .notes
-            .iter()
+            .iter_mut()
             .find(|n| n.id == note_id)
             .ok_or_else(|| "対象ノートが見つかりません".to_string())?;
-        let path = note
+        let existing_valid = note
             .audio_path
-            .clone()
-            .ok_or_else(|| "このノートには保存された録音音声がありません".to_string())?;
-        (path, note.audio_encrypted)
+            .as_ref()
+            .filter(|p| std::path::Path::new(p.as_str()).exists())
+            .cloned();
+        if let Some(p) = existing_valid {
+            (p, note.audio_encrypted)
+        } else if let Some((recovered_path, enc)) =
+            storage::recover_orphan_temp_audio(&note_id, encrypt_pref)
+        {
+            note.audio_path = Some(recovered_path.clone());
+            note.audio_encrypted = enc;
+            let _ = storage::save_snapshot(&data);
+            (recovered_path, enc)
+        } else {
+            return Err("このノートには保存された録音音声がありません".to_string());
+        }
     };
     let bytes = storage::read_retained_audio_bytes(&audio_path, encrypted)?;
     use base64::Engine as _;
@@ -390,16 +434,14 @@ async fn transcribe_recording(
     note.asr_provider_label = model_name;
     note.updated_at = chrono::Utc::now().to_rfc3339();
 
-    if settings.delete_audio_after_transcribe {
-        storage::remove_file_if_exists(&wav_path);
-        note.audio_path = None;
-        note.audio_encrypted = false;
-    } else {
-        let (retained_path, encrypted) =
-            storage::retain_audio_file(&path, &note.id, settings.encrypt_retained_audio)?;
-        storage::remove_file_if_exists(&wav_path);
-        note.audio_path = Some(retained_path);
-        note.audio_encrypted = encrypted;
+    if path.exists() {
+        if let Ok((retained_path, encrypted)) =
+            storage::retain_audio_file(&path, &note.id, settings.encrypt_retained_audio)
+        {
+            storage::remove_file_if_exists(&wav_path);
+            note.audio_path = Some(retained_path);
+            note.audio_encrypted = encrypted;
+        }
     }
 
     let mut data = state.data.lock().unwrap();
@@ -1112,6 +1154,7 @@ pub fn run() {
             save_folder,
             delete_folder,
             clear_chat_history,
+            delete_chat_history_items,
             list_audio_devices,
             start_recording,
             pause_recording,

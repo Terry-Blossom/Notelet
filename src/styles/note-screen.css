@@ -580,21 +580,36 @@
   align-items: center;
 }
 
-.note-chat-popup {
-  position: absolute;
-  bottom: calc(100% + 8px);
+.note-composer-unified {
+  position: relative;
   width: 100%;
   max-width: 840px;
-  max-height: 360px;
-  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.note-chat-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  width: 100%;
+  max-height: 320px;
+  border-radius: 20px 20px 0 0;
   background-color: #ffffff;
   border: 1px solid var(--ns-border-pill);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  border-bottom: none;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
   z-index: 40;
   overflow: hidden;
-  animation: notePopUp 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: notePopUp 160ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.note-composer-box.popup-open {
+  border-radius: 0 0 20px 20px;
+  border-top: 1px solid var(--ns-border-sidebar);
 }
 
 .note-chat-popup-header {
@@ -602,7 +617,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--ns-border-sidebar);
   background-color: #fafafa;
 }

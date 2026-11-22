@@ -32,6 +32,7 @@ import {
 import {
   AppSettings,
   ChatAnswer,
+  ChatCitation,
   Folder,
   Note,
   Recipe,
@@ -40,6 +41,7 @@ import {
   TranscriptSegment,
 } from '../types';
 import {
+  findNoteSearchMatches,
   formatDateTime,
   formatNoteForCopy,
   formatNoteTimer,
@@ -47,11 +49,13 @@ import {
 import { NoteWaveform } from './NoteWaveform';
 import { NotionSyncBadge } from './NotionSyncBadge';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
+import { confirmDeleteDialog } from './ConfirmDialog';
 import { apiReadNoteAudio, isTauriRuntime } from '../lib/tauri';
 
 interface PopupChatMessage {
   role: 'user' | 'assistant';
   text: string;
+  citations?: ChatCitation[];
   createdAt: string;
 }
 
@@ -148,7 +152,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   onShareSlack,
   onSendWebhook,
   onGoSettings,
-  onGoHome,
 }) => {
   // Sidebar & responsive drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -235,11 +238,9 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   // Persistent popup chat sessions
   const [chatSessions, setChatSessions] = useState<PopupChatSession[]>(() => loadChatSessions());
   const [lastSessionByScope, setLastSessionByScope] = useState<Record<string, string>>(() => loadLastSessionMap());
-  const [chatPopupOpen, setChatPopupOpen] = useState<boolean>(() => {
-    const map = loadLastSessionMap();
-    return Boolean(map[`note:${note.id}`]);
-  });
+  const [chatPopupOpen, setChatPopupOpen] = useState<boolean>(false);
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
+  const composerUnifiedRef = useRef<HTMLDivElement | null>(null);
 
   const currentScopeKey = viewingFolderId ? `space:${viewingFolderId}` : `note:${note.id}`;
 
@@ -259,11 +260,24 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     }
   }, [lastSessionByScope]);
 
-  // When switching note or space, restore last conversation popup if one exists
+  // Close popup when switching notes/spaces (tapping the textbox reopens the last session)
   useEffect(() => {
     setChatHistoryOpen(false);
-    setChatPopupOpen(Boolean(lastSessionByScope[currentScopeKey]));
-  }, [currentScopeKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    setChatPopupOpen(false);
+  }, [currentScopeKey]);
+
+  // Close popup when clicking outside the unified popup + composer container
+  useEffect(() => {
+    if (!chatPopupOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (composerUnifiedRef.current && !composerUnifiedRef.current.contains(e.target as Node)) {
+        setChatPopupOpen(false);
+        setChatHistoryOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [chatPopupOpen]);
 
   // Sync rich memo HTML when note or activeTab switches
   useEffect(() => {
@@ -682,7 +696,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             ? {
                 ...s,
                 updatedAt: now,
-                messages: [...s.messages, { role: 'assistant', text: res.answer, createdAt: now }],
+                messages: [
+                  ...s.messages,
+                  { role: 'assistant', text: res.answer, citations: res.citations, createdAt: now },
+                ],
               }
             : s
         )
@@ -694,23 +711,42 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     }
   };
 
-  const renderChatPopup = (scopeKey: string, busy: boolean, label: string) => {
+  const renderChatPopup = (scopeKey: string, busy: boolean, isSpacePage = false) => {
     if (!chatPopupOpen) return null;
     const session = chatSessions.find((s) => s.id === lastSessionByScope[scopeKey]) ?? null;
-    const sessionsForScope = chatSessions
-      .filter((s) => s.scopeKey === scopeKey)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    // Show ALL chat sessions across the entire app so user can continue any past conversation
+    const allSortedSessions = [...chatSessions].sort((a, b) =>
+      b.updatedAt.localeCompare(a.updatedAt)
+    );
 
     return (
-      <div className="note-chat-popup" role="dialog" aria-label={`${label}のチャット`}>
+      <div className="note-chat-popup" role="dialog" aria-label="チャット">
         <div className="note-chat-popup-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-            <Sparkles size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {chatHistoryOpen
-                ? 'チャット履歴'
-                : session?.title || `${label}に質問`}
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
+            {!isSpacePage ? (
+              <>
+                <button
+                  type="button"
+                  className={`tab-btn ${chatScope === 'note' ? 'active' : ''}`}
+                  style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
+                  onClick={() => setChatScope('note')}
+                >
+                  このノート
+                </button>
+                <button
+                  type="button"
+                  className={`tab-btn ${chatScope === 'space' ? 'active' : ''}`}
+                  style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
+                  onClick={() => setChatScope('space')}
+                >
+                  {activeFolder.name}全体
+                </button>
+              </>
+            ) : (
+              <span className="status-chip" style={{ fontSize: '12px' }}>
+                スペース全体
+              </span>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
             <button
@@ -734,8 +770,15 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               type="button"
               aria-label="チャット履歴"
               title="チャット履歴"
+              aria-pressed={chatHistoryOpen}
               className={`btn btn-ghost ${chatHistoryOpen ? 'active' : ''}`}
-              style={{ width: '28px', height: '28px', padding: 0 }}
+              style={{
+                width: '28px',
+                height: '28px',
+                padding: 0,
+                backgroundColor: chatHistoryOpen ? 'var(--ns-text-primary)' : undefined,
+                color: chatHistoryOpen ? '#ffffff' : undefined,
+              }}
               onClick={() => setChatHistoryOpen((v) => !v)}
             >
               <History size={14} strokeWidth={1.75} />
@@ -758,13 +801,13 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
         <div className="note-chat-popup-body">
           {chatHistoryOpen ? (
-            sessionsForScope.length === 0 ? (
+            allSortedSessions.length === 0 ? (
               <div className="text-muted" style={{ fontSize: '13px' }}>
-                この場所でのチャット履歴はまだありません。
+                チャット履歴はまだありません。
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {sessionsForScope.map((s) => (
+                {allSortedSessions.map((s) => (
                   <button
                     key={s.id}
                     type="button"
@@ -794,7 +837,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             )
           ) : !session || session.messages.length === 0 ? (
             <div className="text-muted" style={{ fontSize: '13px' }}>
-              下の入力欄から「{label}」について何でも質問できます。
+              下の入力欄から何でも質問できます。過去のチャットは右上の履歴ボタンから呼び出せます。
             </div>
           ) : (
             <>
@@ -808,12 +851,59 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     borderRadius: m.role === 'user' ? '12px' : '0',
                     backgroundColor: m.role === 'user' ? 'var(--ns-surface-pill)' : 'transparent',
                     fontSize: '13px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
                   }}
                 >
                   {m.role === 'user' ? (
                     <span>{m.text}</span>
                   ) : (
-                    <StreamingMarkdownArticle content={m.text} isGenerating={false} />
+                    <>
+                      <StreamingMarkdownArticle content={m.text} isGenerating={false} />
+                      {m.citations && m.citations.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingTop: '8px', borderTop: '1px solid var(--ns-border-sidebar)' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--ns-text-muted)' }}>
+                            引用元のノート・該当箇所
+                          </span>
+                          {m.citations.map((c, cIdx) => (
+                            <button
+                              key={`${c.note_id}-${cIdx}`}
+                              type="button"
+                              onClick={() => {
+                                setViewingFolderId(null);
+                                onSelectNote?.(c.note_id);
+                              }}
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '4px',
+                                padding: '8px',
+                                borderRadius: '8px',
+                                backgroundColor: '#fafafa',
+                                border: '1px solid var(--ns-border-sidebar)',
+                                textAlign: 'left',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                <FileText size={12} strokeWidth={1.75} />
+                                <strong style={{ fontSize: '12px', fontWeight: 600 }}>{c.note_title}</strong>
+                                {c.timestamp && (
+                                  <span className="status-chip mono-num" style={{ fontSize: '11px' }}>
+                                    {c.timestamp}
+                                  </span>
+                                )}
+                              </div>
+                              {c.excerpt && (
+                                <div style={{ fontSize: '12px', color: 'var(--ns-text-secondary)', lineHeight: '1.5' }}>
+                                  「{c.excerpt}」
+                                </div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               ))}
@@ -1135,20 +1225,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             </button>
           </form>
         )}
-
-        {onGoHome && (
-          <div className="note-sidebar-footer">
-            <button
-              type="button"
-              className="note-sidebar-item"
-              onClick={onGoHome}
-              title="ホームに戻る"
-            >
-              <ArrowDown size={18} strokeWidth={1.75} style={{ transform: 'rotate(90deg)' }} aria-hidden="true" />
-              <span className="note-sidebar-item-label">ホーム</span>
-            </button>
-          </div>
-        )}
       </aside>
 
       {/* Main Content */}
@@ -1238,7 +1314,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       ? {
                           ...s,
                           updatedAt: now,
-                          messages: [...s.messages, { role: 'assistant', text: res.answer, createdAt: now }],
+                          messages: [
+                            ...s.messages,
+                            { role: 'assistant', text: res.answer, citations: res.citations, createdAt: now },
+                          ],
                         }
                       : s
                   )
@@ -1336,6 +1415,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           type="button"
                           className="btn btn-ghost"
                           onClick={async () => {
+                            const ok = await confirmDeleteDialog(
+                              `スペース「${targetFolder.name}」を削除しますか？`,
+                              'スペース内のノートは「一般」スペースへ移動されます。'
+                            );
+                            if (!ok) return;
                             await onDeleteFolder(targetFolder.id);
                             setViewingFolderId(null);
                           }}
@@ -1543,6 +1627,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             disabled={selectedNoteIds.length === 0}
                             onClick={async () => {
                               const ids = [...selectedNoteIds];
+                              const ok = await confirmDeleteDialog(
+                                `${ids.length} 件のノートを削除しますか？`,
+                                '選択したノートをすべて削除します。この操作は取り消せません。'
+                              );
+                              if (!ok) return;
                               for (const id of ids) {
                                 await onDeleteNote(id);
                               }
@@ -1631,6 +1720,46 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                               <span className="text-muted mono-num">
                                 {formatDateTime(fn.created_at)} ・ {fn.segments.length} セグメント
                               </span>
+                              {spaceSearchQuery.trim() && (() => {
+                                const matches = findNoteSearchMatches(fn, spaceSearchQuery);
+                                if (matches.length === 0) return null;
+                                return (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                                    {matches.map((m, idx) => (
+                                      <div
+                                        key={idx}
+                                        style={{
+                                          display: 'flex',
+                                          alignItems: 'baseline',
+                                          gap: '8px',
+                                          fontSize: '12px',
+                                          color: 'var(--text-secondary)',
+                                          lineHeight: '1.5',
+                                        }}
+                                      >
+                                        <span className="status-chip" style={{ fontSize: '11px', flexShrink: 0 }}>
+                                          {m.source}
+                                        </span>
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                          {m.before}
+                                          <mark
+                                            style={{
+                                              backgroundColor: '#FEF08A',
+                                              color: 'var(--text-primary)',
+                                              padding: '0 4px',
+                                              borderRadius: '4px',
+                                              fontWeight: 600,
+                                            }}
+                                          >
+                                            {m.match}
+                                          </mark>
+                                          {m.after}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                             </button>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                               <NotionSyncBadge status={fn.notion_sync.status} pageUrl={fn.notion_sync.page_url} />
@@ -1644,32 +1773,35 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
                 {/* Space Bottom Question Bar (matching Note page composer design) */}
                 <div className="note-composer-wrap">
-                  {renderChatPopup(`space:${targetFolder.id}`, spaceChatBusy, targetFolder.name)}
-                  <div className="note-composer-box">
-                    <textarea
-                      aria-label={`${targetFolder.name}について何でも質問`}
-                      className="note-composer-input"
-                      rows={1}
-                      placeholder={`${targetFolder.name}について何でも質問`}
-                      value={spaceChatQuestion}
-                      onFocus={() => setChatPopupOpen(true)}
-                      onChange={(e) => setSpaceChatQuestion(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          void handleSpaceAsk();
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="note-send-btn"
-                      aria-label="質問を送信"
-                      disabled={!spaceChatQuestion.trim() || spaceChatBusy}
-                      onClick={() => void handleSpaceAsk()}
-                    >
-                      <ArrowUp size={18} strokeWidth={2} aria-hidden="true" />
-                    </button>
+                  <div ref={composerUnifiedRef} className="note-composer-unified">
+                    {renderChatPopup(`space:${targetFolder.id}`, spaceChatBusy, true)}
+                    <div className={`note-composer-box ${chatPopupOpen ? 'popup-open' : ''}`}>
+                      <textarea
+                        aria-label={`${targetFolder.name}について何でも質問`}
+                        className="note-composer-input"
+                        rows={1}
+                        placeholder={`${targetFolder.name}について何でも質問`}
+                        value={spaceChatQuestion}
+                        onClick={() => setChatPopupOpen(true)}
+                        onFocus={() => setChatPopupOpen(true)}
+                        onChange={(e) => setSpaceChatQuestion(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            void handleSpaceAsk();
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="note-send-btn"
+                        aria-label="質問を送信"
+                        disabled={!spaceChatQuestion.trim() || spaceChatBusy}
+                        onClick={() => void handleSpaceAsk()}
+                      >
+                        <ArrowUp size={18} strokeWidth={2} aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2282,12 +2414,12 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
         {/* Bottom Question Input + Generate Summary Button (popup when transcript exists & summary empty) */}
         <div className="note-composer-wrap">
-          {renderChatPopup(`note:${note.id}`, isAskingThisNote, note.title.trim() || 'このノート')}
           {(() => {
             const hasTranscript =
               note.segments.some((s) => s.text.trim().length > 0) ||
               externalLiveSegments.some((s) => s.text.trim().length > 0);
             const showSummarizeBtn = !note.summary.trim() && hasTranscript;
+            if (!showSummarizeBtn && chatPopupOpen) return null;
             return (
               <div
                 style={{
@@ -2312,45 +2444,51 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     {isSummarizingThisNote ? '要約を生成中...' : '要約を生成'}
                   </button>
                 )}
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <button
-                    type="button"
-                    className={`tab-btn ${chatScope === 'note' ? 'active' : ''}`}
-                    onClick={() => setChatScope('note')}
-                  >
-                    このノート
-                  </button>
-                  <button
-                    type="button"
-                    className={`tab-btn ${chatScope === 'space' ? 'active' : ''}`}
-                    onClick={() => setChatScope('space')}
-                  >
-                    {activeFolder.name}全体
-                  </button>
-                </div>
+                {!chatPopupOpen && (
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      type="button"
+                      className={`tab-btn ${chatScope === 'note' ? 'active' : ''}`}
+                      onClick={() => setChatScope('note')}
+                    >
+                      このノート
+                    </button>
+                    <button
+                      type="button"
+                      className={`tab-btn ${chatScope === 'space' ? 'active' : ''}`}
+                      onClick={() => setChatScope('space')}
+                    >
+                      {activeFolder.name}全体
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })()}
-          <div className="note-composer-box">
-            <textarea
-              aria-label="ノートについて何でも質問"
-              className="note-composer-input"
-              rows={1}
-              placeholder="ノートについて何でも質問"
-              value={question}
-              onFocus={() => setChatPopupOpen(true)}
-              onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={handleQuestionKeyDown}
-            />
-            <button
-              type="button"
-              className="note-send-btn"
-              aria-label="質問を送信"
-              disabled={!question.trim() || isAskingThisNote}
-              onClick={handleAskQuestion}
-            >
-              <ArrowUp size={18} strokeWidth={2} aria-hidden="true" />
-            </button>
+          <div ref={composerUnifiedRef} className="note-composer-unified">
+            {renderChatPopup(`note:${note.id}`, isAskingThisNote, false)}
+            <div className={`note-composer-box ${chatPopupOpen ? 'popup-open' : ''}`}>
+              <textarea
+                aria-label="ノートについて何でも質問"
+                className="note-composer-input"
+                rows={1}
+                placeholder="ノートについて何でも質問"
+                value={question}
+                onClick={() => setChatPopupOpen(true)}
+                onFocus={() => setChatPopupOpen(true)}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={handleQuestionKeyDown}
+              />
+              <button
+                type="button"
+                className="note-send-btn"
+                aria-label="質問を送信"
+                disabled={!question.trim() || isAskingThisNote}
+                onClick={handleAskQuestion}
+              >
+                <ArrowUp size={18} strokeWidth={2} aria-hidden="true" />
+              </button>
+            </div>
           </div>
 
           <div className="note-consent-note">
@@ -2433,6 +2571,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               onClick={async () => {
                 const id = noteContextMenu.noteId;
                 setNoteContextMenu(null);
+                const ok = await confirmDeleteDialog(
+                  'このノートを削除しますか？',
+                  '削除したノートは元に戻せません。'
+                );
+                if (!ok) return;
                 await onDeleteNote(id);
               }}
             >

@@ -88,6 +88,7 @@ pub fn load_snapshot() -> AppDataSnapshot {
             if snap.recipes.is_empty() {
                 snap.recipes = default_recipes();
             }
+            snap.settings.delete_audio_after_transcribe = false;
             return snap;
         }
     }
@@ -185,6 +186,39 @@ pub fn read_retained_audio_bytes(path: &str, encrypted: bool) -> Result<Vec<u8>,
     cipher
         .decrypt(nonce, &raw[12..])
         .map_err(|e| format!("音声の復号に失敗しました: {e}"))
+}
+
+pub fn recover_orphan_temp_audio(note_id: &str, encrypt: bool) -> Option<(String, bool)> {
+    let temp_dir = app_data_dir().join("temp_recordings");
+    let entries = fs::read_dir(&temp_dir).ok()?;
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if fname.starts_with("live_") {
+            continue;
+        }
+        let is_audio = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("wav"))
+            .unwrap_or(false);
+        if !is_audio {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            if meta.len() > 1000 {
+                let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                if newest.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true) {
+                    newest = Some((mtime, p));
+                }
+            }
+        }
+    }
+    let (_, cand_path) = newest?;
+    let res = retain_audio_file(&cand_path, note_id, encrypt).ok()?;
+    let _ = fs::remove_file(&cand_path);
+    Some(res)
 }
 
 pub fn remove_file_if_exists(path: &str) {

@@ -64,6 +64,82 @@ pub fn note_context_text(note: &Note) -> String {
     out
 }
 
+async fn call_openai_compatible_endpoint(
+    client: &reqwest::Client,
+    base_raw: &str,
+    model_raw: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<String, String> {
+    let base = base_raw.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("OpenAI 互換 API のベースURLを設定してください（例: https://openrouter.ai/api/v1 または http://localhost:1234/v1）。".to_string());
+    }
+    let url = if base.ends_with("/chat/completions") {
+        base.to_string()
+    } else if base.ends_with("/v1") {
+        format!("{base}/chat/completions")
+    } else if base.contains("openrouter.ai") && !base.contains("/api/v1") {
+        format!("{base}/api/v1/chat/completions")
+    } else {
+        format!("{base}/chat/completions")
+    };
+    let model = if model_raw.trim().is_empty() {
+        "openai/gpt-4o-mini"
+    } else {
+        model_raw.trim()
+    };
+    let key = resolve_secret_candidates(
+        &[
+            "llm_openai_compatible_api_key",
+            "llm_openai_api_key",
+            "openai_api_key",
+            "groq_api_key",
+        ],
+        &["OPENROUTER_API_KEY", "OPENAI_API_KEY"],
+    )
+    .unwrap_or_default();
+
+    let is_local = base.contains("localhost") || base.contains("127.0.0.1");
+    if key.is_empty() && !is_local {
+        return Err("OpenAI 互換 APIキーが保存されていません。設定（左下歯車）＞「AI・LLM」で「OpenAI互換 API Key」を入力して保存してください。".to_string());
+    }
+
+    let mut req = client
+        .post(&url)
+        .header("HTTP-Referer", "https://github.com/otetcham/koenote")
+        .header("X-Title", "Notelet")
+        .json(&json!({
+            "model": model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
+            ],
+            "temperature": 0.2
+        }));
+    if !key.is_empty() {
+        req = req.bearer_auth(&key);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("OpenAI 互換 API 通信エラー ({url}): {e}"))?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let b = resp.text().await.unwrap_or_default();
+        if s.as_u16() == 401 {
+            return Err("OpenAI 互換 API の認証エラー (401): APIキーが未設定か無効です。設定＞AI・LLMで「OpenAI互換 API Key」を入力し「保存」を押してください。".to_string());
+        }
+        return Err(format!("OpenAI 互換 API エラー ({s}): {b}"));
+    }
+    let v: Value = resp.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
+    Ok(v["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string())
+}
+
 pub async fn call_llm(
     settings: &AppSettings,
     system_prompt: &str,
@@ -72,6 +148,16 @@ pub async fn call_llm(
     if settings.llm_provider == "none" || settings.llm_provider.trim().is_empty() {
         return Err("LLMが未設定です。設定＞AI・LLMでプロバイダーとAPIキー（またはローカルOllama）を設定してください。".to_string());
     }
+
+    let effective_system = if settings.llm_custom_prompt.trim().is_empty() {
+        system_prompt.to_string()
+    } else {
+        format!(
+            "{system_prompt}\n\n【ユーザーの独自ルール・カスタム指示（必ず従うこと）】\n{}",
+            settings.llm_custom_prompt.trim()
+        )
+    };
+    let system_prompt = effective_system.as_str();
 
     let client = reqwest::Client::new();
     match settings.llm_provider.as_str() {
@@ -120,71 +206,14 @@ pub async fn call_llm(
                 .to_string())
         }
         "openai_compatible" => {
-            let base = settings.llm_endpoint.trim().trim_end_matches('/');
-            if base.is_empty() {
-                return Err("OpenAI 互換 API のベースURLを設定してください（例: https://openrouter.ai/api/v1 または http://localhost:1234/v1）。".to_string());
-            }
-            let url = if base.ends_with("/chat/completions") {
-                base.to_string()
-            } else {
-                format!("{base}/chat/completions")
-            };
-            let model = if settings.llm_model.trim().is_empty() {
-                return Err("OpenAI 互換 API で使用するモデル名を設定してください。".to_string());
-            } else {
-                settings.llm_model.trim()
-            };
-            let key = resolve_secret_candidates(
-                &[
-                    "llm_openai_compatible_api_key",
-                    "llm_openai_api_key",
-                    "openai_api_key",
-                    "groq_api_key",
-                ],
-                &["OPENROUTER_API_KEY", "OPENAI_API_KEY"],
+            call_openai_compatible_endpoint(
+                &client,
+                &settings.llm_endpoint,
+                &settings.llm_model,
+                system_prompt,
+                user_prompt,
             )
-            .unwrap_or_default();
-
-            let is_local = base.contains("localhost") || base.contains("127.0.0.1");
-            if key.is_empty() && !is_local {
-                return Err("OpenAI 互換 APIキーが保存されていません。設定（左下歯車）＞「AI・LLM」で「OpenAI互換 API Key」を入力して保存してください。".to_string());
-            }
-
-            let mut req = client
-                .post(&url)
-                .header("HTTP-Referer", "https://github.com/otetcham/koenote")
-                .header("X-Title", "KoeNote")
-                .json(&json!({
-                    "model": model,
-                    "messages": [
-                        { "role": "system", "content": system_prompt },
-                        { "role": "user", "content": user_prompt }
-                    ],
-                    "temperature": 0.2
-                }));
-            if !key.is_empty() {
-                req = req.bearer_auth(&key);
-            }
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| format!("OpenAI 互換 API 通信エラー ({url}): {e}"))?;
-            if !resp.status().is_success() {
-                let s = resp.status();
-                let b = resp.text().await.unwrap_or_default();
-                if s.as_u16() == 401 {
-                    return Err(format!(
-                        "OpenAI 互換 API の認証エラー (401): APIキーが未設定か無効です。設定＞AI・LLMで「OpenAI互換 API Key」を入力し「保存」を押してください。"
-                    ));
-                }
-                return Err(format!("OpenAI 互換 API エラー ({s}): {b}"));
-            }
-            let v: Value = resp.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
-            Ok(v["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or("")
-                .trim()
-                .to_string())
+            .await
         }
         "anthropic" => {
             let key = resolve_secret_candidates(
@@ -255,15 +284,52 @@ pub async fn call_llm(
                 .to_string())
         }
         "ollama" => {
-            let endpoint = if settings.llm_endpoint.trim().is_empty() {
+            let raw_ep = settings.llm_endpoint.trim().trim_end_matches('/');
+            // If endpoint is actually an OpenRouter / Groq / OpenAI-compatible URL, route it directly
+            let looks_openai_compat = raw_ep.contains("openrouter.ai")
+                || raw_ep.contains("groq.com")
+                || raw_ep.contains("openai.com")
+                || raw_ep.ends_with("/v1");
+            if looks_openai_compat {
+                let has_key = resolve_secret_candidates(
+                    &[
+                        "llm_openai_compatible_api_key",
+                        "llm_openai_api_key",
+                        "openai_api_key",
+                        "groq_api_key",
+                    ],
+                    &["OPENROUTER_API_KEY", "OPENAI_API_KEY"],
+                )
+                .map(|k| !k.is_empty())
+                .unwrap_or(false);
+                if has_key || raw_ep.contains("localhost") || raw_ep.contains("127.0.0.1") {
+                    if let Ok(ans) = call_openai_compatible_endpoint(
+                        &client,
+                        raw_ep,
+                        &settings.llm_model,
+                        system_prompt,
+                        user_prompt,
+                    )
+                    .await
+                    {
+                        return Ok(ans);
+                    }
+                }
+            }
+
+            let endpoint = if raw_ep.is_empty()
+                || raw_ep.contains("openrouter.ai")
+                || raw_ep.contains("groq.com")
+                || raw_ep.contains("openai.com")
+            {
                 "http://localhost:11434"
             } else {
-                settings.llm_endpoint.trim_end_matches('/')
+                raw_ep.trim_end_matches("/v1")
             };
-            let model = if settings.llm_model.trim().is_empty() {
-                "qwen2.5:7b"
+            let mut model = if settings.llm_model.trim().is_empty() {
+                "qwen2.5:7b".to_string()
             } else {
-                settings.llm_model.trim()
+                settings.llm_model.trim().to_string()
             };
             let resp = client
                 .post(format!("{endpoint}/api/chat"))
@@ -278,6 +344,55 @@ pub async fn call_llm(
                 .send()
                 .await
                 .map_err(|e| format!("ローカル Ollama への接続に失敗しました ({endpoint}): {e}"))?;
+
+            if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                // Model may not exist in local Ollama (e.g. "gpt-4o-mini"); query /api/tags for installed models
+                if let Ok(tags_resp) = client.get(format!("{endpoint}/api/tags")).send().await {
+                    if let Ok(tags_json) = tags_resp.json::<Value>().await {
+                        if let Some(first_model) = tags_json["models"]
+                            .as_array()
+                            .and_then(|arr| arr.first())
+                            .and_then(|m| m["name"].as_str())
+                        {
+                            model = first_model.to_string();
+                            let retry = client
+                                .post(format!("{endpoint}/api/chat"))
+                                .json(&json!({
+                                    "model": model,
+                                    "stream": false,
+                                    "messages": [
+                                        { "role": "system", "content": system_prompt },
+                                        { "role": "user", "content": user_prompt }
+                                    ]
+                                }))
+                                .send()
+                                .await
+                                .map_err(|e| format!("Ollama 再試行通信エラー: {e}"))?;
+                            if retry.status().is_success() {
+                                let v: Value = retry.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
+                                return Ok(v["message"]["content"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .trim()
+                                    .to_string());
+                            }
+                        }
+                    }
+                }
+                // Or endpoint might be an OpenAI-compatible local server (/v1/chat/completions)
+                if let Ok(ans) = call_openai_compatible_endpoint(
+                    &client,
+                    &format!("{endpoint}/v1"),
+                    &model,
+                    system_prompt,
+                    user_prompt,
+                )
+                .await
+                {
+                    return Ok(ans);
+                }
+            }
+
             if !resp.status().is_success() {
                 let s = resp.status();
                 let b = resp.text().await.unwrap_or_default();
@@ -389,6 +504,48 @@ fn build_local_fallback_answer(
     lines.join("\n")
 }
 
+fn strip_html_tags(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut inside = false;
+    for ch in raw.chars() {
+        if ch == '<' {
+            inside = true;
+            out.push(' ');
+        } else if ch == '>' {
+            inside = false;
+        } else if !inside {
+            out.push(ch);
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn extract_sentence_excerpt(text: &str, query_lower: &str) -> String {
+    let clean = strip_html_tags(text);
+    let sentences: Vec<&str> = clean
+        .split(|c| c == '。' || c == '！' || c == '？' || c == '\n')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let terms: Vec<&str> = query_lower
+        .split_whitespace()
+        .filter(|w| !w.is_empty())
+        .collect();
+    if !terms.is_empty() {
+        for s in &sentences {
+            let s_low = s.to_lowercase();
+            if terms.iter().any(|w| s_low.contains(w)) {
+                let mut res: String = s.chars().take(200).collect();
+                if !res.ends_with('。') {
+                    res.push('。');
+                }
+                return res;
+            }
+        }
+    }
+    clean.chars().take(200).collect()
+}
+
 pub async fn chat_with_notes(
     settings: &AppSettings,
     notes: &[Note],
@@ -407,27 +564,40 @@ pub async fn chat_with_notes(
         context.push_str(&format!("\n=== ノート: {} (ID: {}) ===\n", note_title, note.id));
         if !note.summary.trim().is_empty() {
             context.push_str(&format!("[要約] {}\n", note.summary.trim()));
+            if citations.len() < 8
+                && q_lower
+                    .split_whitespace()
+                    .any(|w| !w.is_empty() && note.summary.to_lowercase().contains(w))
+            {
+                citations.push(ChatCitation {
+                    note_id: note.id.clone(),
+                    note_title: note_title.clone(),
+                    timestamp: "要約".to_string(),
+                    excerpt: extract_sentence_excerpt(&note.summary, &q_lower),
+                });
+            }
         }
         if !note.manual_notes.trim().is_empty() {
-            context.push_str(&format!("[メモ] {}\n", note.manual_notes.trim()));
-            if citations.len() < 5
+            let clean_memo = strip_html_tags(&note.manual_notes);
+            context.push_str(&format!("[メモ] {}\n", clean_memo));
+            if citations.len() < 8
                 && (q_lower
                     .split_whitespace()
-                    .any(|w| !w.is_empty() && note.manual_notes.to_lowercase().contains(w))
+                    .any(|w| !w.is_empty() && clean_memo.to_lowercase().contains(w))
                     || note.segments.is_empty())
             {
                 citations.push(ChatCitation {
                     note_id: note.id.clone(),
                     note_title: note_title.clone(),
                     timestamp: "メモ".to_string(),
-                    excerpt: note.manual_notes.chars().take(80).collect(),
+                    excerpt: extract_sentence_excerpt(&clean_memo, &q_lower),
                 });
             }
         }
         for seg in &note.segments {
             let ts = format_ms(seg.start_ms);
             context.push_str(&format!("[{ts}] {}: {}\n", seg.speaker, seg.text));
-            if citations.len() < 5
+            if citations.len() < 8
                 && (q_lower
                     .split_whitespace()
                     .any(|w| !w.is_empty() && seg.text.to_lowercase().contains(w))
@@ -437,14 +607,14 @@ pub async fn chat_with_notes(
                     note_id: note.id.clone(),
                     note_title: note_title.clone(),
                     timestamp: ts,
-                    excerpt: seg.text.chars().take(80).collect(),
+                    excerpt: extract_sentence_excerpt(&seg.text, &q_lower),
                 });
             }
         }
     }
 
     if citations.is_empty() {
-        for note in notes.iter().take(3) {
+        for note in notes.iter().take(4) {
             let note_title = if note.title.trim().is_empty() {
                 "無題のノート".to_string()
             } else {
@@ -455,14 +625,14 @@ pub async fn chat_with_notes(
                     note_id: note.id.clone(),
                     note_title,
                     timestamp: format_ms(seg.start_ms),
-                    excerpt: seg.text.chars().take(80).collect(),
+                    excerpt: extract_sentence_excerpt(&seg.text, &q_lower),
                 });
             } else if !note.manual_notes.trim().is_empty() {
                 citations.push(ChatCitation {
                     note_id: note.id.clone(),
                     note_title,
                     timestamp: "メモ".to_string(),
-                    excerpt: note.manual_notes.chars().take(80).collect(),
+                    excerpt: extract_sentence_excerpt(&note.manual_notes, &q_lower),
                 });
             }
         }
@@ -473,7 +643,7 @@ pub async fn chat_with_notes(
         return Ok(ChatAnswer { answer, citations });
     }
 
-    let sys = "あなたはノート検索・質問応答アシスタントです。与えられたノートの記録だけに基づいて、見出し(## や ###)・箇条書き(- )・太字(**...**)を使った読みやすいMarkdown記事形式で回答してください。記録にない情報は「記録に見当たりません」と答え、推測で補わないでください。回答には該当するノート名と [MM:SS] タイムスタンプを明記してください。";
+    let sys = "あなたはノート検索・質問応答アシスタントです。与えられたノートの記録だけに基づいて、見出し(## や ###)・箇条書き(- )・太字(**...**)を使った読みやすいMarkdown記事形式で回答してください。記録にない情報は「記録に見当たりません」と答え、推測で補わないでください。各情報の根拠となった引用元ノート名・タイムスタンプ・該当する元の文章を「> 『該当する文章』（出典: ノート名 [MM:SS]）」のように文章レベルで明記してください。";
     let user = format!("質問: {question}\n\n参照ノート:\n{context}");
     match call_llm(settings, sys, &user).await {
         Ok(answer) => Ok(ChatAnswer { answer, citations }),

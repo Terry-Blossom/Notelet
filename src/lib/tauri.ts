@@ -61,6 +61,10 @@ export async function apiClearChatHistory(): Promise<AppDataSnapshot> {
   return invoke<AppDataSnapshot>('clear_chat_history');
 }
 
+export async function apiDeleteChatHistoryItems(itemIds: string[]): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>('delete_chat_history_items', { itemIds });
+}
+
 export async function apiListAudioDevices(): Promise<AudioDeviceInfo[]> {
   return invoke<AudioDeviceInfo[]>('list_audio_devices');
 }

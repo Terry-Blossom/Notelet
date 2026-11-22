@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ChevronDown,
   Home,
-  Loader2,
   MessageSquare,
   FileText,
   Upload,
@@ -65,6 +64,7 @@ import {
   apiSaveFolder,
   apiDeleteFolder,
   apiClearChatHistory,
+  apiDeleteChatHistoryItems,
   apiSaveDictionaryEntry,
   apiSaveNote,
   apiSaveSettings,
@@ -79,9 +79,9 @@ import {
   apiTranscribeUploadedUrl,
   isTauriRuntime,
 } from './lib/tauri';
-import { createEmptyNote, formatMs } from './lib/format';
+import { createEmptyNote, findNoteSearchMatches, formatMs } from './lib/format';
 import { HomeView } from './components/HomeView';
-import { OfficialNotionLogo } from './components/NotionSyncBadge';
+import { ConfirmDialogHost } from './components/ConfirmDialog';
 import { RecordingView } from './components/RecordingView';
 import { NoteEditorView } from './components/NoteEditorView';
 import { ChatView } from './components/ChatView';
@@ -774,6 +774,7 @@ const MainApp: React.FC = () => {
             ? [existing.manual_notes, liveManualNotes].filter(Boolean).join('\n')
             : existing.manual_notes,
           segments: liveSegments.length > 0 ? [...existing.segments, ...liveSegments] : existing.segments,
+          audio_path: finalStatus.temp_wav_path || existing.audio_path || null,
           updated_at: new Date().toISOString(),
         }
       : {
@@ -781,6 +782,7 @@ const MainApp: React.FC = () => {
           duration_sec: Math.round(finalStatus.elapsed_ms / 1000),
           manual_notes: liveManualNotes,
           segments: liveSegments,
+          audio_path: finalStatus.temp_wav_path || null,
           language: snapshot.settings.language,
         };
 
@@ -1064,78 +1066,6 @@ const MainApp: React.FC = () => {
           })}
         </nav>
 
-        {!sidebarCollapsed && (() => {
-          const notionConnected = Boolean(secretStatus?.notion_access_token && snapshot.settings.notion_target_id);
-          const syncingCount = snapshot.notes.filter((n) => n.notion_sync.status === 'syncing').length;
-          const unsyncedCount = snapshot.notes.filter(
-            (n) => n.notion_sync.status === 'not_synced' || n.notion_sync.status === 'failed'
-          ).length;
-          return (
-            <button
-              type="button"
-              onClick={async () => {
-                if (!notionConnected) {
-                  setView('integrations');
-                  return;
-                }
-                if (unsyncedCount > 0 && isTauriRuntime()) {
-                  const pending = snapshot.notes.filter(
-                    (n) => n.notion_sync.status === 'not_synced' || n.notion_sync.status === 'failed'
-                  );
-                  for (const n of pending) {
-                    await syncNoteToNotion(n.id, true);
-                  }
-                  const snap = await apiNotionPullNotes();
-                  setSnapshot(snap);
-                } else {
-                  setView('integrations');
-                }
-              }}
-              title={
-                !notionConnected
-                  ? 'Notion 連携設定を開く'
-                  : unsyncedCount > 0
-                  ? 'クリックして未同期のノートを今すぐ同期'
-                  : 'Notion 同期設定を開く'
-              }
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px',
-                borderRadius: '8px',
-                backgroundColor: 'var(--bg-canvas)',
-                border: '1px solid var(--border-subtle)',
-                fontSize: '12px',
-                color: !notionConnected
-                  ? 'var(--text-muted)'
-                  : syncingCount > 0
-                  ? 'var(--text-secondary)'
-                  : unsyncedCount > 0
-                  ? 'var(--danger)'
-                  : 'var(--text-primary)',
-                width: '100%',
-                textAlign: 'left',
-              }}
-            >
-              {syncingCount > 0 ? (
-                <Loader2 size={15} strokeWidth={1.75} className="spin" style={{ flexShrink: 0 }} />
-              ) : (
-                <OfficialNotionLogo size={15} />
-              )}
-              <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {!notionConnected
-                  ? 'Notion 未連携'
-                  : syncingCount > 0
-                  ? 'Notion 同期中...'
-                  : unsyncedCount > 0
-                  ? `未同期 ${unsyncedCount}件`
-                  : '最新の状態'}
-              </span>
-            </button>
-          );
-        })()}
-
         <div className="sidebar-footer">
           {recordOptionsOpen && !sidebarCollapsed && (
             <div
@@ -1381,6 +1311,16 @@ const MainApp: React.FC = () => {
                 setSnapshot(await apiClearChatHistory());
               } else {
                 setSnapshot((prev) => ({ ...prev, chat_history: [] }));
+              }
+            }}
+            onDeleteHistoryItems={async (ids) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiDeleteChatHistoryItems(ids));
+              } else {
+                setSnapshot((prev) => ({
+                  ...prev,
+                  chat_history: (prev.chat_history || []).filter((h) => !ids.includes(h.id)),
+                }));
               }
             }}
             onOpenNote={(id) => {
@@ -1678,23 +1618,62 @@ const MainApp: React.FC = () => {
                 .slice(0, 12)
                 .map((n) => {
                   const sp = snapshot.folders.find((f) => f.id === n.folder_id)?.name ?? '個人';
+                  const matches = commandQuery.trim() ? findNoteSearchMatches(n, commandQuery) : [];
                   return (
                     <button
                       key={n.id}
                       type="button"
                       className="flat-row"
-                      style={{ borderBottom: 'none', padding: '8px 12px' }}
+                      style={{ borderBottom: 'none', padding: '8px 12px', alignItems: 'flex-start' }}
                       onClick={() => {
                         setActiveNoteId(n.id);
                         setView('notes');
                         setCommandSearchOpen(false);
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                        <FileText size={14} strokeWidth={1.5} />
-                        <span style={{ fontWeight: 500 }}>{n.title.trim() || '無題のノート'}</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                          <FileText size={14} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+                          <span style={{ fontWeight: 500 }}>{n.title.trim() || '無題のノート'}</span>
+                        </div>
+                        {matches.length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '20px' }}>
+                            {matches.map((m, idx) => (
+                              <div
+                                key={idx}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'baseline',
+                                  gap: '8px',
+                                  fontSize: '12px',
+                                  color: 'var(--text-secondary)',
+                                  lineHeight: '1.5',
+                                }}
+                              >
+                                <span className="status-chip" style={{ fontSize: '11px', flexShrink: 0 }}>
+                                  {m.source}
+                                </span>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {m.before}
+                                  <mark
+                                    style={{
+                                      backgroundColor: '#FEF08A',
+                                      color: 'var(--text-primary)',
+                                      padding: '0 4px',
+                                      borderRadius: '4px',
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    {m.match}
+                                  </mark>
+                                  {m.after}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <span className="status-chip">{sp}</span>
+                      <span className="status-chip" style={{ flexShrink: 0 }}>{sp}</span>
                     </button>
                   );
                 })}
@@ -1702,6 +1681,7 @@ const MainApp: React.FC = () => {
           </div>
         </div>
       )}
+      <ConfirmDialogHost />
     </div>
   );
 };

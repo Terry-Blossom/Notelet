@@ -539,7 +539,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   key={p.id}
                   type="button"
                   className={`category-tab ${settings.llm_provider === p.id ? 'active' : ''}`}
-                  onClick={() => update({ llm_provider: p.id })}
+                  onClick={() => {
+                    const patch: Partial<AppSettings> = { llm_provider: p.id };
+                    if (p.id === 'ollama') {
+                      if (
+                        !settings.llm_endpoint ||
+                        settings.llm_endpoint.includes('openrouter.ai') ||
+                        settings.llm_endpoint.includes('groq.com')
+                      ) {
+                        patch.llm_endpoint = 'http://localhost:11434';
+                      }
+                      if (!settings.llm_model || settings.llm_model === 'gpt-4o-mini' || settings.llm_model.includes('/')) {
+                        patch.llm_model = 'qwen2.5:7b';
+                      }
+                    } else if (p.id === 'openai_compatible') {
+                      if (!settings.llm_endpoint || settings.llm_endpoint === 'http://localhost:11434') {
+                        patch.llm_endpoint = 'https://openrouter.ai/api/v1';
+                      }
+                    }
+                    update(patch);
+                  }}
                 >
                   {p.label}
                 </button>
@@ -689,6 +708,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                   </div>
                 )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label className="text-muted">独自ルール・カスタムプロンプト（任意）</label>
+                  <textarea
+                    aria-label="独自ルール・カスタムプロンプト"
+                    className="textarea"
+                    rows={3}
+                    placeholder="例: 回答は常に結論から箇条書きで記述してください。専門用語には簡単な補足を添えてください。"
+                    value={settings.llm_custom_prompt || ''}
+                    onChange={(e) => update({ llm_custom_prompt: e.target.value })}
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -804,7 +835,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.6'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.7'}</strong>
                 </div>
                 <button
                   type="button"

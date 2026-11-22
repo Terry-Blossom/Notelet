@@ -158,6 +158,9 @@ export interface AppSettings {
   mcp_enabled: boolean;
   mcp_scope: string;
   active_template_id: string;
+  recording_overlay_x?: number | null;
+  recording_overlay_y?: number | null;
+  llm_custom_prompt?: string;
 }
 
 export interface IntegrationAdapterInfo {
