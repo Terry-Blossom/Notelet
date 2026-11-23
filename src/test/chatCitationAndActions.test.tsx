@@ -40,7 +40,7 @@ describe('Inline citation badges and AI chat actions', () => {
     expect(onCitationClick).toHaveBeenCalledWith(citations[1]);
   });
 
-  it('displays executed AI chat actions and inline citations in ChatView history', () => {
+  it('displays executed AI chat actions and inline citations in ChatView history', async () => {
     const note = createEmptyNote();
     note.id = 'note-a';
     note.title = '週次定例';
@@ -86,8 +86,13 @@ describe('Inline citation badges and AI chat actions', () => {
     fireEvent.click(screen.getByText('タイトルを「週次定例」に変更して要約を教えて'));
     expect(screen.getByText('ノート「無題」のタイトルを「週次定例」に変更しました')).toBeInTheDocument();
 
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const inlineBadge = screen.getByRole('button', { name: '引用 1: 週次定例' });
     fireEvent.click(inlineBadge);
-    expect(onOpenNote).toHaveBeenCalledWith('note-a');
+    await vi.waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalled();
+      expect(onOpenNote).toHaveBeenCalledWith('note-a');
+    });
+    confirmSpy.mockRestore();
   });
 });

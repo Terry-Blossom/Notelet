@@ -53,6 +53,12 @@ fn save_settings(
             .global_shortcut()
             .register(settings.voice_typing_shortcut.trim());
     }
+    if settings.notion_target_type == "database" && !settings.notion_target_id.trim().is_empty() {
+        let db_id = settings.notion_target_id.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = notion::ensure_database_schema(&db_id).await;
+        });
+    }
     Ok(state.data.lock().unwrap().clone())
 }
 
@@ -1037,6 +1043,7 @@ async fn chat_notes_cmd(
             answer: ans.answer.clone(),
             citations: ans.citations.clone(),
             actions: ans.actions.clone(),
+            thinking: ans.thinking.clone(),
         },
     );
     if data.chat_history.len() > 200 {
@@ -1479,23 +1486,6 @@ async fn get_upcoming_calendar_events_cmd(state: State<'_, AppState>) -> Result<
         }
     }
 
-    // Smart time-based calendar templates for quick 1-click meeting title & participants setup
-    events.push(CalendarEventMock {
-        id: "cal-weekly-sync".to_string(),
-        title: format!("【定例】週次プロジェクト進捗MTG ({})", now.format("%m/%d")),
-        start_time: format!("{:02}:00", hour),
-        end_time: format!("{:02}:00", (hour + 1) % 24),
-        participants: vec!["自分".to_string(), "PM".to_string(), "開発メンバー".to_string()],
-        provider: "Google Calendar".to_string(),
-    });
-    events.push(CalendarEventMock {
-        id: "cal-1on1".to_string(),
-        title: format!("1on1 ミーティング ({})", now.format("%m/%d")),
-        start_time: format!("{:02}:30", hour),
-        end_time: format!("{:02}:00", (hour + 1) % 24),
-        participants: vec!["自分".to_string(), "相手".to_string()],
-        provider: "Outlook Calendar".to_string(),
-    });
     Ok(events)
 }
 

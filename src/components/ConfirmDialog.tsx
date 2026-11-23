@@ -3,15 +3,26 @@ import React, { useEffect, useState } from 'react';
 interface ConfirmRequest {
   title: string;
   detail?: string;
+  confirmLabel?: string;
+  isDanger?: boolean;
   resolve: (confirmed: boolean) => void;
 }
 
 let activeListener: ((req: ConfirmRequest) => void) | null = null;
 
 export function confirmDeleteDialog(title: string, detail?: string): Promise<boolean> {
+  return confirmActionDialog(title, detail, '削除する', true);
+}
+
+export function confirmActionDialog(
+  title: string,
+  detail?: string,
+  confirmLabel = '開く',
+  isDanger = false
+): Promise<boolean> {
   if (activeListener) {
     return new Promise<boolean>((resolve) => {
-      activeListener?.({ title, detail, resolve });
+      activeListener?.({ title, detail, confirmLabel, isDanger, resolve });
     });
   }
   if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
@@ -43,7 +54,7 @@ export const ConfirmDialogHost: React.FC = () => {
       className="settings-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="削除の確認"
+      aria-label="確認"
       style={{ zIndex: 300 }}
       onClick={(e) => {
         if (e.target === e.currentTarget) handleClose(false);
@@ -77,11 +88,11 @@ export const ConfirmDialogHost: React.FC = () => {
           </button>
           <button
             type="button"
-            className="btn btn-danger"
+            className={`btn ${req.isDanger ? 'btn-danger' : 'btn-primary'}`}
             onClick={() => handleClose(true)}
             autoFocus
           >
-            削除する
+            {req.confirmLabel || 'OK'}
           </button>
         </div>
       </div>

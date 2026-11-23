@@ -19,7 +19,7 @@ interface HomeViewProps {
   settings: AppSettings;
   notes: Note[];
   folders: Folder[];
-  onOpenNote: (noteId: string) => void;
+  onOpenNote: (noteId: string, searchQuery?: string) => void;
   onDeleteNote?: (noteId: string) => Promise<void> | void;
   onCreateManualNote: (folderId?: string) => void;
   onUploadFile?: (file: File) => Promise<void>;
@@ -235,7 +235,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       key={note.id}
                       type="button"
                       className="flat-row"
-                      onClick={() => onOpenNote(note.id)}
+                      onClick={() => onOpenNote(note.id, searchQuery.trim() || undefined)}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         setContextMenu({ noteId: note.id, x: e.clientX, y: e.clientY });

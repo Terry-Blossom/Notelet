@@ -174,6 +174,7 @@ export interface AppSettings {
   jira_email?: string;
   jira_project_key?: string;
   enable_local_diarization?: boolean;
+  silence_skip_enabled?: boolean;
 }
 
 export interface IssueCreateResult {
@@ -238,6 +239,7 @@ export interface ChatAnswer {
   answer: string;
   citations: ChatCitation[];
   actions?: ChatActionResult[];
+  thinking?: string | null;
 }
 
 export interface ChatHistoryItem {
@@ -248,6 +250,7 @@ export interface ChatHistoryItem {
   answer: string;
   citations: ChatCitation[];
   actions?: ChatActionResult[];
+  thinking?: string | null;
 }
 
 export interface AppDataSnapshot {

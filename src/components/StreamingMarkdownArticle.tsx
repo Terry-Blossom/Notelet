@@ -8,6 +8,7 @@ interface StreamingMarkdownArticleProps {
   placeholder?: string;
   citations?: ChatCitation[];
   onCitationClick?: (citation: ChatCitation) => void;
+  thinking?: string | null;
 }
 
 function renderInlineMarkdown(
@@ -61,6 +62,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
   placeholder = '',
   citations,
   onCitationClick,
+  thinking,
 }) => {
   const [displayedText, setDisplayedText] = useState(content);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -242,7 +244,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
       <div className="md-stream-skeleton" aria-live="polite">
         <div className="md-stream-status">
           <span className="md-stream-pulse" />
-          <span>AIがテキストを生成しています...</span>
+          <span>思考中...</span>
         </div>
         <div className="md-shimmer-line" style={{ width: '88%' }} />
         <div className="md-shimmer-line" style={{ width: '72%' }} />
@@ -251,7 +253,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
     );
   }
 
-  if (!displayedText.trim()) {
+  if (!displayedText.trim() && !thinking) {
     return placeholder ? (
       <p className="text-muted" style={{ margin: '0px' }}>
         {placeholder}
@@ -261,6 +263,25 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
 
   return (
     <div className={`md-article ${isGenerating || isAnimating ? 'streaming' : ''}`}>
+      {thinking && thinking.trim() && (
+        <div
+          className="ai-thinking-block"
+          style={{
+            marginBottom: '10px',
+            padding: '8px 10px',
+            borderRadius: '8px',
+            backgroundColor: 'var(--bg-canvas)',
+            border: '1px solid var(--border-subtle)',
+            color: 'var(--text-muted, #6b7280)',
+            fontSize: '12px',
+            lineHeight: 1.55,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: '2px', fontSize: '11px' }}>思考プロセス</div>
+          {thinking}
+        </div>
+      )}
       {blocks}
       {(isGenerating || isAnimating) && <span className="ai-stream-cursor" aria-hidden="true" />}
     </div>

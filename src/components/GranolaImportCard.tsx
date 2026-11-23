@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { AlertTriangle, Check, CloudDownload, FileSpreadsheet, FileText, FolderSearch, Loader2, Upload } from 'lucide-react';
+import { AlertTriangle, Check, CloudDownload, FileSpreadsheet, FileText, Loader2, Upload } from 'lucide-react';
 import { Folder, Note } from '../types';
 import { GranolaImportFileInput, GranolaImportParseResult, parseGranolaImportFiles } from '../lib/granolaImport';
 import { formatDateTime } from '../lib/format';
 import { unzipTextFiles } from '../lib/zip';
-import { apiFetchGranolaNotes, apiReadGranolaLocalCache, isTauriRuntime } from '../lib/tauri';
+import { apiFetchGranolaNotes, isTauriRuntime } from '../lib/tauri';
 
 interface GranolaImportCardProps {
   folders: Folder[];
@@ -59,25 +59,6 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
         existingNotes,
       });
       setFileNames(files.map((f) => f.name));
-      setParseResult(res);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoadingSource(false);
-    }
-  };
-
-  const handleLoadLocalCache = async () => {
-    setError(null);
-    setImportedCount(null);
-    setLoadingSource(true);
-    try {
-      const raw = await apiReadGranolaLocalCache();
-      const res = parseGranolaImportFiles([{ name: 'cache-v3.json', content: raw }], {
-        folderId: targetFolderId,
-        existingNotes,
-      });
-      setFileNames(['ローカルキャッシュ (cache-v3.json)']);
       setParseResult(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -216,15 +197,6 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
 
       {isTauriRuntime() && (
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={loadingSource || importing}
-            onClick={handleLoadLocalCache}
-          >
-            {loadingSource ? <Loader2 size={14} strokeWidth={1.5} className="spin" /> : <FolderSearch size={14} strokeWidth={1.5} />}
-            ローカルキャッシュを自動読み込み
-          </button>
           <input
             type="password"
             className="input"

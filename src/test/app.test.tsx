@@ -231,6 +231,31 @@ describe('App & Views', () => {
     );
 
     expect(screen.queryByText('文字起こし済み')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '録音を再生' })).not.toBeInTheDocument();
+
+    rerender(
+      <NoteEditorView
+        note={{ ...updatedNote, audio_path: '/tmp/test.wav' }}
+        settings={baseSettings}
+        recipes={[]}
+        secretStatus={null}
+        transcribing={false}
+        transcribeError={null}
+        onUpdateNote={onUpdateNote}
+        onCopyText={vi.fn()}
+        onPastePrepare={vi.fn()}
+        onSaveToNotion={vi.fn()}
+        onSummarize={vi.fn()}
+        onDraftFollowup={vi.fn()}
+        onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
+        onChatNote={vi.fn()}
+        onShareSlack={vi.fn()}
+        onSendWebhook={vi.fn()}
+        onAddDictionaryTerm={vi.fn()}
+        onGoSettings={vi.fn()}
+      />
+    );
     expect(screen.getByRole('button', { name: '録音を再生' })).toBeInTheDocument();
 
     // Re-record starts recording directly without confirmation popup

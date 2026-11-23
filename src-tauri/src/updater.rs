@@ -7,7 +7,7 @@ use std::io::Write;
 use std::process::Command;
 use tauri::Emitter;
 
-const GITHUB_REPO: &str = "otetcham/koenote";
+const GITHUB_REPO: &str = "otetcham/Notelet";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCheckResult {
@@ -185,16 +185,31 @@ pub async fn download_and_launch_update(
     if cfg!(windows) {
         if asset_name.ends_with(".msi") {
             Command::new("msiexec")
-                .args(["/i", &dest.to_string_lossy()])
+                .args(["/i", &dest.to_string_lossy(), "/passive", "/norestart"])
                 .spawn()
                 .map_err(|e| format!("MSI インストーラ起動失敗: {e}"))?;
+        } else if asset_name.ends_with("-setup.exe") {
+            // Wait briefly for current process lock release, run silent NSIS overwrite (/S), and relaunch
+            let bat_path = update_dir.join("apply_update.cmd");
+            let exe_path = std::env::current_exe()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let dest_str = dest.to_string_lossy().to_string();
+            let script = format!(
+                "@echo off\r\ntimeout /t 2 /nobreak > nul\r\n\"{dest_str}\" /S\r\nif exist \"{exe_path}\" start \"\" \"{exe_path}\"\r\n"
+            );
+            let _ = fs::write(&bat_path, script);
+            Command::new("cmd")
+                .args(["/C", "start", "/min", "", &bat_path.to_string_lossy()])
+                .spawn()
+                .map_err(|e| format!("サイレント更新の起動失敗: {e}"))?;
         } else {
             Command::new(&dest)
                 .spawn()
                 .map_err(|e| format!("インストーラ起動失敗: {e}"))?;
         }
         app.exit(0);
-        Ok("インストーラを起動しました。".to_string())
+        Ok("サイレント上書き更新を開始しました。完了後に自動で再起動します。".to_string())
     } else if cfg!(target_os = "macos") {
         Command::new("open")
             .arg(&dest)

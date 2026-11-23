@@ -255,6 +255,8 @@ pub struct AppSettings {
     pub jira_project_key: String,
     #[serde(default)]
     pub enable_local_diarization: bool,
+    #[serde(default)]
+    pub silence_skip_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +315,7 @@ impl Default for AppSettings {
             jira_email: String::new(),
             jira_project_key: String::new(),
             enable_local_diarization: false,
+            silence_skip_enabled: false,
         }
     }
 }
@@ -372,6 +375,8 @@ pub struct ChatAnswer {
     pub citations: Vec<ChatCitation>,
     #[serde(default)]
     pub actions: Vec<ChatActionResult>,
+    #[serde(default)]
+    pub thinking: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,6 +389,8 @@ pub struct ChatHistoryItem {
     pub citations: Vec<ChatCitation>,
     #[serde(default)]
     pub actions: Vec<ChatActionResult>,
+    #[serde(default)]
+    pub thinking: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

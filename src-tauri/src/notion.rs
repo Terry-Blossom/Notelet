@@ -169,6 +169,86 @@ fn strip_html_to_text(raw: &str) -> String {
     out.trim().to_string()
 }
 
+fn split_text_chunks(text: &str, max_chars: usize) -> Vec<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut count = 0usize;
+    for ch in trimmed.chars() {
+        current.push(ch);
+        count += 1;
+        if count >= max_chars {
+            chunks.push(current);
+            current = String::new();
+            count = 0;
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+fn push_paragraph_chunks(blocks: &mut Vec<Value>, text: &str) {
+    for chunk in split_text_chunks(text, 1900) {
+        blocks.push(json!({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": { "rich_text": [{ "type": "text", "text": { "content": chunk } }] }
+        }));
+    }
+}
+
+pub async fn ensure_database_schema(database_id: &str) -> Result<(), String> {
+    if database_id.trim().is_empty() {
+        return Ok(());
+    }
+    let token = require_notion_token()?;
+    let client = reqwest::Client::new();
+    let db_url = format!("https://api.notion.com/v1/databases/{database_id}");
+    let resp = client
+        .get(&db_url)
+        .bearer_auth(&token)
+        .header("Notion-Version", NOTION_VERSION)
+        .send()
+        .await
+        .map_err(|e| format!("Notion DB 取得エラー: {e}"))?;
+    if !resp.status().is_success() {
+        return Ok(());
+    }
+    let db_json: Value = resp.json().await.map_err(|e| format!("Notion DB 解析エラー: {e}"))?;
+    let props = db_json["properties"].as_object();
+    let mut patch_props = serde_json::Map::new();
+
+    let has_category = props.map(|p| p.contains_key("カテゴリ")).unwrap_or(false);
+    let has_date = props.map(|p| p.contains_key("日付")).unwrap_or(false);
+    let has_pages = props.map(|p| p.contains_key("ページ数")).unwrap_or(false);
+
+    if !has_category {
+        patch_props.insert("カテゴリ".to_string(), json!({ "select": {} }));
+    }
+    if !has_date {
+        patch_props.insert("日付".to_string(), json!({ "date": {} }));
+    }
+    if !has_pages {
+        patch_props.insert("ページ数".to_string(), json!({ "number": { "format": "number" } }));
+    }
+
+    if !patch_props.is_empty() {
+        let _ = client
+            .patch(&db_url)
+            .bearer_auth(&token)
+            .header("Notion-Version", NOTION_VERSION)
+            .json(&json!({ "properties": patch_props }))
+            .send()
+            .await;
+    }
+    Ok(())
+}
+
 fn build_children_blocks(note: &Note, folder_name: &str) -> Vec<Value> {
     let mut blocks = Vec::new();
 
@@ -190,16 +270,11 @@ fn build_children_blocks(note: &Note, folder_name: &str) -> Vec<Value> {
         "type": "heading_2",
         "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "要約" } }] }
     }));
-    let summary_text = if note.summary.trim().is_empty() {
-        "（要約なし）".to_string()
+    if note.summary.trim().is_empty() {
+        push_paragraph_chunks(&mut blocks, "（要約なし）");
     } else {
-        note.summary.trim().chars().take(1900).collect::<String>()
-    };
-    blocks.push(json!({
-        "object": "block",
-        "type": "paragraph",
-        "paragraph": { "rich_text": [{ "type": "text", "text": { "content": summary_text } }] }
-    }));
+        push_paragraph_chunks(&mut blocks, &note.summary);
+    }
 
     // 2. メモ
     blocks.push(json!({
@@ -208,41 +283,28 @@ fn build_children_blocks(note: &Note, folder_name: &str) -> Vec<Value> {
         "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "メモ" } }] }
     }));
     let clean_memo = strip_html_to_text(&note.manual_notes);
-    let memo_text = if clean_memo.is_empty() {
-        "（メモなし）".to_string()
+    if clean_memo.is_empty() {
+        push_paragraph_chunks(&mut blocks, "（メモなし）");
     } else {
-        clean_memo.chars().take(1900).collect::<String>()
-    };
-    blocks.push(json!({
-        "object": "block",
-        "type": "paragraph",
-        "paragraph": { "rich_text": [{ "type": "text", "text": { "content": memo_text } }] }
-    }));
+        push_paragraph_chunks(&mut blocks, &clean_memo);
+    }
 
-    // 3. 文字起こし
+    // 3. 文字起こし（全発話を2000文字未満単位で分割し無制限保持）
     blocks.push(json!({
         "object": "block",
         "type": "heading_2",
         "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "文字起こし" } }] }
     }));
     if note.segments.is_empty() {
-        blocks.push(json!({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": { "rich_text": [{ "type": "text", "text": { "content": "（文字起こしなし）" } }] }
-        }));
+        push_paragraph_chunks(&mut blocks, "（文字起こしなし）");
     } else {
-        for seg in note.segments.iter().take(60) {
+        for seg in &note.segments {
             let line = if seg.speaker.trim().is_empty() {
                 format!("[{}] {}", format_ms(seg.start_ms), seg.text)
             } else {
                 format!("[{}] {}: {}", format_ms(seg.start_ms), seg.speaker, seg.text)
             };
-            blocks.push(json!({
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": { "rich_text": [{ "type": "text", "text": { "content": line.chars().take(1900).collect::<String>() } }] }
-            }));
+            push_paragraph_chunks(&mut blocks, &line);
         }
     }
     blocks
@@ -341,18 +403,34 @@ pub async fn save_note_to_notion(
                 }
             }
 
-            let children = build_children_blocks(note, folder_name);
-            let append_url = format!("https://api.notion.com/v1/blocks/{existing_page_id}/children");
-            let _ = client
-                .patch(&append_url)
-                .bearer_auth(&token)
-                .header("Notion-Version", NOTION_VERSION)
-                .json(&json!({ "children": children }))
-                .send()
-                .await;
+            let all_blocks = build_children_blocks(note, folder_name);
+            let total_pages = write_blocks_with_portal(&client, &token, existing_page_id, &title_text, note, folder_name, &all_blocks).await?;
+            if settings.notion_target_type == "database" {
+                let _ = ensure_database_schema(&settings.notion_target_id).await;
+                let space_label = if folder_name.trim().is_empty() { "一般" } else { folder_name.trim() };
+                let mut patch_props = json!({
+                    &title_prop_name: { "title": [{ "text": { "content": title_text } }] },
+                    "カテゴリ": { "select": { "name": space_label } },
+                    "ページ数": { "number": total_pages }
+                });
+                if !note.created_at.is_empty() {
+                    patch_props["日付"] = json!({ "date": { "start": note.created_at } });
+                }
+                let _ = client
+                    .patch(format!("https://api.notion.com/v1/pages/{existing_page_id}"))
+                    .bearer_auth(&token)
+                    .header("Notion-Version", NOTION_VERSION)
+                    .json(&json!({ "properties": patch_props }))
+                    .send()
+                    .await;
+            }
 
             return Ok((existing_page_id.clone(), url, Utc::now().to_rfc3339()));
         }
+    }
+
+    if settings.notion_target_type == "database" {
+        let _ = ensure_database_schema(&settings.notion_target_id).await;
     }
 
     let parent = if settings.notion_target_type == "database" {
@@ -361,6 +439,14 @@ pub async fn save_note_to_notion(
         json!({ "page_id": settings.notion_target_id })
     };
 
+    let all_blocks = build_children_blocks(note, folder_name);
+    let total_pages = if all_blocks.len() <= 100 {
+        1usize
+    } else {
+        all_blocks.chunks(95).count()
+    };
+    let space_label = if folder_name.trim().is_empty() { "一般" } else { folder_name.trim() };
+
     let mut properties = json!({
         &title_prop_name: {
             "title": [{ "text": { "content": title_text } }]
@@ -368,6 +454,11 @@ pub async fn save_note_to_notion(
     });
 
     if settings.notion_target_type == "database" {
+        properties["カテゴリ"] = json!({ "select": { "name": space_label } });
+        properties["ページ数"] = json!({ "number": total_pages });
+        if !note.created_at.is_empty() {
+            properties["日付"] = json!({ "date": { "start": note.created_at } });
+        }
         if !settings.notion_mapping.summary_prop.is_empty() && !note.summary.is_empty() {
             properties[&settings.notion_mapping.summary_prop] = json!({
                 "rich_text": [{ "text": { "content": note.summary.chars().take(1900).collect::<String>() } }]
@@ -380,11 +471,16 @@ pub async fn save_note_to_notion(
         }
     }
 
-    let children = build_children_blocks(note, folder_name);
+    // Create parent/portal page first (with empty children if >100 so we can build portal + child pages cleanly)
+    let initial_children: Vec<Value> = if total_pages == 1 {
+        all_blocks.clone()
+    } else {
+        Vec::new()
+    };
     let payload = json!({
         "parent": parent,
         "properties": properties,
-        "children": children
+        "children": initial_children
     });
 
     let mut resp = client
@@ -396,36 +492,23 @@ pub async fn save_note_to_notion(
         .await
         .map_err(|e| format!("Notion 保存通信エラー（ノートはローカルに安全に保持されています）: {e}"))?;
 
-    // DB側のプロパティ名が一致しない(400)場合は、DBスキーマから実際のtitleプロパティ名（例: 名前 / Name）を取得して再試行
+    // DB側のプロパティ名が一致しない(400)場合は、DBスキーマから実際のtitleプロパティ名を取得して再試行
     if resp.status() == reqwest::StatusCode::BAD_REQUEST && settings.notion_target_type == "database" {
-        let mut resolved_title_prop = settings.notion_mapping.title_prop.clone();
-        let db_url = format!("https://api.notion.com/v1/databases/{}", settings.notion_target_id);
-        if let Ok(db_resp) = client
-            .get(&db_url)
-            .bearer_auth(&token)
-            .header("Notion-Version", NOTION_VERSION)
-            .send()
-            .await
-        {
-            if let Ok(db_json) = db_resp.json::<Value>().await {
-                if let Some(props) = db_json["properties"].as_object() {
-                    for (prop_name, prop_val) in props {
-                        if prop_val["type"].as_str() == Some("title") {
-                            resolved_title_prop = prop_name.clone();
-                            break;
-                        }
-                    }
-                }
-            }
+        let resolved_title_prop = resolve_db_title_prop(&client, &token, settings).await;
+        let mut fallback_props = json!({
+            resolved_title_prop: {
+                "title": [{ "text": { "content": title_text } }]
+            },
+            "カテゴリ": { "select": { "name": space_label } },
+            "ページ数": { "number": total_pages }
+        });
+        if !note.created_at.is_empty() {
+            fallback_props["日付"] = json!({ "date": { "start": note.created_at } });
         }
         let fallback_payload = json!({
             "parent": parent,
-            "properties": {
-                resolved_title_prop: {
-                    "title": [{ "text": { "content": title_text } }]
-                }
-            },
-            "children": children
+            "properties": fallback_props,
+            "children": initial_children
         });
         resp = client
             .post("https://api.notion.com/v1/pages")
@@ -446,7 +529,113 @@ pub async fn save_note_to_notion(
     let v: Value = resp.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
     let page_id = v["id"].as_str().unwrap_or("").to_string();
     let url = v["url"].as_str().unwrap_or("").to_string();
+
+    if total_pages > 1 && !page_id.is_empty() {
+        let _ = write_blocks_with_portal(&client, &token, &page_id, &title_text, note, folder_name, &all_blocks).await?;
+    }
+
     Ok((page_id, url, Utc::now().to_rfc3339()))
+}
+
+async fn append_blocks_chunked(
+    client: &reqwest::Client,
+    token: &str,
+    page_id: &str,
+    blocks: &[Value],
+) -> Result<(), String> {
+    let url = format!("https://api.notion.com/v1/blocks/{page_id}/children");
+    for chunk in blocks.chunks(100) {
+        let resp = client
+            .patch(&url)
+            .bearer_auth(token)
+            .header("Notion-Version", NOTION_VERSION)
+            .json(&json!({ "children": chunk }))
+            .send()
+            .await
+            .map_err(|e| format!("Notion ブロック追記エラー: {e}"))?;
+        if !resp.status().is_success() {
+            let s = resp.status();
+            let b = resp.text().await.unwrap_or_default();
+            return Err(format!("Notion ブロック追記エラー ({s}): {b}"));
+        }
+    }
+    Ok(())
+}
+
+async fn write_blocks_with_portal(
+    client: &reqwest::Client,
+    token: &str,
+    portal_page_id: &str,
+    title: &str,
+    note: &Note,
+    folder_name: &str,
+    all_blocks: &[Value],
+) -> Result<usize, String> {
+    if all_blocks.len() <= 100 {
+        append_blocks_chunked(client, token, portal_page_id, all_blocks).await?;
+        return Ok(1);
+    }
+
+    let parts: Vec<&[Value]> = all_blocks.chunks(95).collect();
+    let total_pages = parts.len();
+    let space_label = if folder_name.trim().is_empty() { "一般" } else { folder_name.trim() };
+
+    let mut portal_blocks = vec![
+        json!({
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "icon": { "type": "emoji", "emoji": "📑" },
+                "rich_text": [{
+                    "type": "text",
+                    "text": {
+                        "content": format!(
+                            "このノートは長文のため全 {total_pages} ページに分割保存されています（カテゴリ: {space_label}）。下の各パートから詳細を開けます。"
+                        )
+                    }
+                }]
+            }
+        }),
+        json!({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "要約プレビュー" } }] }
+        }),
+    ];
+    if note.summary.trim().is_empty() {
+        push_paragraph_chunks(&mut portal_blocks, "（要約なし）");
+    } else {
+        push_paragraph_chunks(&mut portal_blocks, &note.summary.chars().take(1800).collect::<String>());
+    }
+    portal_blocks.push(json!({
+        "object": "block",
+        "type": "heading_2",
+        "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "分割ページ一覧" } }] }
+    }));
+
+    append_blocks_chunked(client, token, portal_page_id, &portal_blocks).await?;
+
+    for (idx, part_blocks) in parts.iter().enumerate() {
+        let part_title = format!("Part {}/{total_pages} — {title}", idx + 1);
+        let child_payload = json!({
+            "parent": { "page_id": portal_page_id },
+            "properties": {
+                "title": {
+                    "title": [{ "type": "text", "text": { "content": part_title } }]
+                }
+            },
+            "children": part_blocks
+        });
+        let _ = client
+            .post("https://api.notion.com/v1/pages")
+            .bearer_auth(token)
+            .header("Notion-Version", NOTION_VERSION)
+            .json(&child_payload)
+            .send()
+            .await;
+    }
+
+    Ok(total_pages)
 }
 
 fn extract_rich_text(arr: Option<&Vec<Value>>) -> String {

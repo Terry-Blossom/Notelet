@@ -542,6 +542,7 @@ const MainApp: React.FC = () => {
   const [liveManualNotes, setLiveManualNotes] = useState('');
   const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [pendingSearchQuery, setPendingSearchQuery] = useState<string>('');
   const [recordingNoteId, setRecordingNoteId] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
@@ -1346,7 +1347,8 @@ const MainApp: React.FC = () => {
             settings={snapshot.settings}
             notes={snapshot.notes}
             folders={snapshot.folders}
-            onOpenNote={(id) => {
+            onOpenNote={(id, query) => {
+              setPendingSearchQuery(query || '');
               setActiveNoteId(id);
               setView('editor');
             }}
@@ -1392,6 +1394,7 @@ const MainApp: React.FC = () => {
                       space_id: spaceId ?? null,
                       question: q,
                       answer: res.answer,
+                      thinking: res.thinking ?? null,
                       citations: res.citations,
                       actions: res.actions,
                     },
@@ -1419,6 +1422,7 @@ const MainApp: React.FC = () => {
               }
             }}
             onOpenNote={(id) => {
+              setPendingSearchQuery('');
               setActiveNoteId(id);
               setView('editor');
             }}
@@ -1557,6 +1561,8 @@ const MainApp: React.FC = () => {
             settings={snapshot.settings}
             recipes={snapshot.recipes}
             secretStatus={secretStatus}
+            chatHistory={snapshot.chat_history || []}
+            initialSearchQuery={pendingSearchQuery || undefined}
             transcribing={transcribing && (!recordingNoteId || activeNote.id === recordingNoteId)}
             transcribeError={transcribeError}
             recordingStatus={
@@ -1572,7 +1578,10 @@ const MainApp: React.FC = () => {
             onStartRecording={handleStartRecordingInNote}
             onStopRecording={handleStopAndFinish}
             onUpdateNote={handleUpdateNote}
-            onSelectNote={(id) => setActiveNoteId(id)}
+            onSelectNote={(id) => {
+              setPendingSearchQuery('');
+              setActiveNoteId(id);
+            }}
             onCreateNoteInFolder={(folderId) => handleCreateManualNote(folderId)}
             onSaveFolder={handleSaveFolder}
             onDeleteFolder={handleDeleteFolder}
@@ -1640,6 +1649,7 @@ const MainApp: React.FC = () => {
                       space_id: spaceId ?? null,
                       question: q,
                       answer: res.answer,
+                      thinking: res.thinking ?? null,
                       citations: res.citations,
                       actions: res.actions,
                     },

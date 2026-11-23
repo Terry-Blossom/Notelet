@@ -10,7 +10,6 @@ import {
   Loader2,
   Mic,
   RefreshCw,
-  Shield,
   Sparkles,
 } from 'lucide-react';
 import { AppSettings, AsrModelInfo, Folder, Note, SecretStatus, StorageStats, UpdateCheckResult } from '../types';
@@ -43,7 +42,7 @@ interface SettingsViewProps {
   onExportObsidianZip?: () => void;
 }
 
-type SettingsTab = 'asr' | 'llm' | 'shortcuts' | 'privacy' | 'update';
+type SettingsTab = 'asr' | 'llm' | 'shortcuts' | 'storage' | 'import' | 'update';
 type AsrCategory = 'whisper' | 'parakeet' | 'qwen' | 'cloud';
 
 const OpenAILogo: React.FC = () => (
@@ -104,7 +103,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [compressingAudio, setCompressingAudio] = useState(false);
 
   useEffect(() => {
-    if (tab === 'privacy' && isTauriRuntime()) {
+    if (tab === 'storage' && isTauriRuntime()) {
       void apiGetStorageStats()
         .then((st) => setStorageStats(st))
         .catch(() => {
@@ -301,16 +300,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     );
   };
 
-  const navItems: {
-    id: SettingsTab;
-    label: string;
-    icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  const navGroups: {
+    heading: string;
+    items: {
+      id: SettingsTab;
+      label: string;
+      icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+    }[];
   }[] = [
-    { id: 'asr', label: '音声認識 (ASR)', icon: Mic },
-    { id: 'llm', label: 'AI・要約 (LLM)', icon: Sparkles },
-    { id: 'shortcuts', label: 'ショートカット', icon: Keyboard },
-    { id: 'privacy', label: 'データ管理', icon: Shield },
-    { id: 'update', label: 'アップデート', icon: RefreshCw },
+    {
+      heading: 'AIモデル',
+      items: [
+        { id: 'asr', label: '音声認識 (ASR)', icon: Mic },
+        { id: 'llm', label: 'エージェント (LLM)', icon: Sparkles },
+      ],
+    },
+    {
+      heading: 'データ管理',
+      items: [
+        { id: 'storage', label: 'ストレージ', icon: HardDrive },
+        { id: 'import', label: 'インポート', icon: Download },
+      ],
+    },
+    {
+      heading: '一般',
+      items: [
+        { id: 'shortcuts', label: 'ショートカット・再生', icon: Keyboard },
+        { id: 'update', label: 'アップデート', icon: RefreshCw },
+      ],
+    },
   ];
 
   const activeLlmSecretMeta =
@@ -332,26 +350,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     <div style={{ display: 'flex', width: '100%', height: '100%' }}>
       {/* Left Sidebar Navigation */}
       <aside className="settings-sidebar" aria-label="設定メニュー">
-        <div className="settings-sidebar-title">設定</div>
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = tab === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={`nav-item ${isActive ? 'active' : ''}`}
-              onClick={() => setTab(item.id)}
-            >
-              <Icon size={15} strokeWidth={1.5} />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
+        {navGroups.map((group) => (
+          <div key={group.heading} style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '10px' }}>
+            <div className="settings-sidebar-title">{group.heading}</div>
+            {group.items.map((item) => {
+              const Icon = item.icon;
+              const isActive = tab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`nav-item ${isActive ? 'active' : ''}`}
+                  onClick={() => setTab(item.id)}
+                >
+                  <Icon size={15} strokeWidth={1.5} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </aside>
 
       {/* Right Content Body */}
-      <div className="settings-body">
+      <div className="settings-body" style={{ scrollbarGutter: 'stable' }}>
         {statusMessage && (
           <div className="status-chip ok" style={{ alignSelf: 'flex-start' }}>
             <Check size={14} strokeWidth={1.5} />
@@ -361,27 +383,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* 1. ASR Settings — Categorized */}
         {tab === 'asr' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-              <div>
-                <h2 className="section-title">音声認識モデル</h2>
-                <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                  エンジン別にカテゴリ分けされています。用途に合わせて選択してください。
-                </p>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className="text-muted">認識言語</span>
-                <select
-                  className="select"
-                  style={{ width: '148px', height: '36px', padding: '0 12px', lineHeight: '1.2' }}
-                  value={settings.language}
-                  onChange={(e) => update({ language: e.target.value })}
-                >
-                  <option value="ja">日本語 (ja)</option>
-                  <option value="en">英語 (en)</option>
-                  <option value="auto">自動判定</option>
-                </select>
-              </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <h2 className="section-title">音声認識 (ASR) モデル</h2>
+              <p className="text-muted" style={{ margin: '4px 0 0' }}>
+                エンジン別にカテゴリ分けされています。用途に合わせて選択してください。
+              </p>
+            </div>
+
+            <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '10px 14px' }}>
+              <span className="text-muted" style={{ fontWeight: 500 }}>認識言語（全モデル共通）</span>
+              <select
+                className="select"
+                style={{ width: '160px', height: '34px', padding: '0 12px', lineHeight: '1.2' }}
+                value={settings.language}
+                onChange={(e) => update({ language: e.target.value })}
+              >
+                <option value="ja">日本語 (ja)</option>
+                <option value="en">英語 (en)</option>
+                <option value="auto">自動判定</option>
+              </select>
             </div>
 
             {/* Category Tabs */}
@@ -523,13 +544,55 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {/* Category 3: Local Qwen */}
             {asrCategory === 'qwen' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <div>
+                    <strong style={{ fontSize: '12px' }}>実行エンジン（sherpa-onnx-offline）</strong>
+                    <div className="text-muted">
+                      {settings.parakeet_cli_path
+                        ? `設定済み: ${settings.parakeet_cli_path}`
+                        : 'Qwen3-ASR は Parakeet と共通の sherpa-onnx-offline 実行エンジンが必要です'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ height: '28px', fontSize: '12px' }}
+                    disabled={downloadProgress['runtime:parakeet'] !== undefined}
+                    onClick={() => onInstallRuntime('parakeet')}
+                  >
+                    {downloadProgress['runtime:parakeet'] !== undefined ? (
+                      <Loader2 size={13} strokeWidth={1.5} className="spin" />
+                    ) : (
+                      <Download size={13} strokeWidth={1.5} />
+                    )}
+                    {settings.parakeet_cli_path
+                      ? '導入済み'
+                      : downloadProgress['runtime:parakeet'] !== undefined
+                      ? `導入中 (${downloadProgress['runtime:parakeet']}%)`
+                      : 'ワンクリック導入'}
+                  </button>
+                </div>
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {qwenModels.map(renderModelRow)}
                 </div>
+
+                <details style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  <summary style={{ cursor: 'pointer' }}>実行バイナリのパスを手動で指定する</summary>
+                  <div style={{ marginTop: '8px' }}>
+                    <input
+                      type="text"
+                      className="input mono-num"
+                      placeholder="例: C:\tools\sherpa-onnx-offline.exe"
+                      value={settings.parakeet_cli_path}
+                      onChange={(e) => update({ parakeet_cli_path: e.target.value })}
+                    />
+                  </div>
+                </details>
               </div>
             )}
 
-            {/* Category 3: Cloud ASR */}
+            {/* Category 4: Cloud ASR */}
             {asrCategory === 'cloud' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <label className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
@@ -556,9 +619,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {tab === 'llm' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div>
-              <h2 className="section-title">AI・要約 (LLM) 設定</h2>
+              <h2 className="section-title">エージェント (LLM) 設定</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                要約やAIチャットで使用するプロバイダーを選択してください（音声ファイルは送信されません）。
+                要約・チャット検索・ノート操作エージェントで使用するプロバイダーを選択してください（音声ファイルは送信されません）。
               </p>
             </div>
 
@@ -796,14 +859,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 />
               </div>
             </div>
+            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <strong style={{ fontSize: '13px' }}>音声再生設定</strong>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.silence_skip_enabled)}
+                  onChange={(e) => update({ silence_skip_enabled: e.target.checked })}
+                />
+                <span>無音スキップ機能を有効にする（再生時に無音区間を自動で早送り）</span>
+              </label>
+            </div>
           </div>
         )}
 
-        {/* 4. Data & Privacy */}
-        {tab === 'privacy' && (
+        {/* 4. Data Management: Storage */}
+        {tab === 'storage' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div>
-              <h2 className="section-title">データ管理・セキュリティ</h2>
+              <h2 className="section-title">ストレージ管理</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
                 録音ファイルの容量管理・軽量化や話者ラベル、データの暗号化・バックアップを管理します。
               </p>
@@ -969,7 +1043,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               )}
             </div>
+          </div>
+        )}
 
+        {/* 5. Data Management: Import */}
+        {tab === 'import' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div>
+              <h2 className="section-title">データインポート</h2>
+              <p className="text-muted" style={{ margin: '4px 0 0' }}>
+                外部ノートアプリ（Granola 等）からのデータ移行を行います。
+              </p>
+            </div>
             {onImportNotes && (
               <GranolaImportCard
                 folders={folders}
@@ -980,7 +1065,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* 5. App Update */}
+        {/* 6. App Update */}
         {tab === 'update' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div>
@@ -993,7 +1078,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.11.1'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.12.0'}</strong>
                 </div>
                 <button
                   type="button"

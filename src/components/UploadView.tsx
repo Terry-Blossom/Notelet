@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Upload, FileAudio, Loader2, Link2 } from 'lucide-react';
 import { AppSettings, AsrModelInfo, Folder, Note } from '../types';
-import { GranolaImportCard } from './GranolaImportCard';
 
 interface UploadViewProps {
   settings: AppSettings;
@@ -24,9 +23,6 @@ export const UploadView: React.FC<UploadViewProps> = ({
   onUploadAndTranscribe,
   onUploadUrlAndTranscribe,
   onGoSettings,
-  folders = [],
-  existingNotes = [],
-  onImportNotes,
 }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState('');
@@ -153,14 +149,6 @@ export const UploadView: React.FC<UploadViewProps> = ({
           </div>
         )}
       </section>
-
-      {onImportNotes && (
-        <GranolaImportCard
-          folders={folders}
-          existingNotes={existingNotes}
-          onImportNotes={onImportNotes}
-        />
-      )}
     </div>
   );
 };

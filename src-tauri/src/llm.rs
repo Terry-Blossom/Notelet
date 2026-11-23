@@ -844,6 +844,95 @@ fn infer_local_chat_actions(notes: &[Note], folders: &[Folder], question: &str) 
     specs
 }
 
+fn is_greeting_or_trivial_query(question: &str) -> bool {
+    let q = question.trim().to_lowercase();
+    if q.is_empty() {
+        return true;
+    }
+    let trivial = [
+        "あ", "あー", "え", "お", "ん", "はい", "いいえ", "ok", "okay", "hi", "hello", "hey",
+        "こんにちは", "こんばんは", "おはよう", "おはようございます", "ありがとう", "ありがとうございます",
+        "よろしく", "お願いします", "テスト", "test",
+    ];
+    if trivial.contains(&q.as_str()) {
+        return true;
+    }
+    q.chars().count() <= 2 && !q.contains('?') && !q.contains('？')
+}
+
+fn extract_thinking_and_clean(raw: &str) -> (Option<String>, String) {
+    if let Some(start) = raw.find("<think>") {
+        let after_start = &raw[start + "<think>".len()..];
+        if let Some(end_rel) = after_start.find("</think>") {
+            let thinking = after_start[..end_rel].trim().to_string();
+            let before = raw[..start].trim_end();
+            let after = after_start[end_rel + "</think>".len()..].trim_start();
+            let cleaned = if before.is_empty() {
+                after.to_string()
+            } else if after.is_empty() {
+                before.to_string()
+            } else {
+                format!("{before}\n\n{after}")
+            };
+            let opt = if thinking.is_empty() { None } else { Some(thinking) };
+            return (opt, cleaned);
+        }
+    }
+    (None, raw.to_string())
+}
+
+fn filter_and_renumber_used_citations(
+    answer: &str,
+    candidates: &[ChatCitation],
+) -> (String, Vec<ChatCitation>) {
+    if candidates.is_empty() {
+        return (answer.to_string(), Vec::new());
+    }
+    // Scan [N] markers in order of appearance
+    let mut used_indices: Vec<usize> = Vec::new();
+    let bytes = answer.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 1 && j < bytes.len() && bytes[j] == b']' {
+                if let Ok(num) = answer[i + 1..j].parse::<usize>() {
+                    if num >= 1 && num <= candidates.len() && !used_indices.contains(&(num - 1)) {
+                        used_indices.push(num - 1);
+                    }
+                }
+                i = j + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    if used_indices.is_empty() {
+        return (answer.to_string(), Vec::new());
+    }
+
+    let mut renumbered_citations = Vec::with_capacity(used_indices.len());
+    let mut updated_answer = answer.to_string();
+    // Replace via temporary placeholders to avoid collisions during renumbering
+    for (new_idx, &old_idx) in used_indices.iter().enumerate() {
+        let old_marker = format!("[{}]", old_idx + 1);
+        let temp_marker = format!("__KOENOTE_CITE_{}__", new_idx + 1);
+        updated_answer = updated_answer.replace(&old_marker, &temp_marker);
+        renumbered_citations.push(candidates[old_idx].clone());
+    }
+    for new_idx in 0..used_indices.len() {
+        let temp_marker = format!("__KOENOTE_CITE_{}__", new_idx + 1);
+        let final_marker = format!("[{}]", new_idx + 1);
+        updated_answer = updated_answer.replace(&temp_marker, &final_marker);
+    }
+
+    (updated_answer, renumbered_citations)
+}
+
 pub async fn chat_with_notes_and_actions(
     settings: &AppSettings,
     notes: &[Note],
@@ -853,6 +942,7 @@ pub async fn chat_with_notes_and_actions(
     let mut citations = Vec::new();
     let mut context = String::new();
     let q_lower = question.to_lowercase();
+    let trivial_query = is_greeting_or_trivial_query(question);
 
     for note in notes.iter().take(16) {
         let note_title = if note.title.trim().is_empty() {
@@ -864,9 +954,9 @@ pub async fn chat_with_notes_and_actions(
             .iter()
             .find(|f| f.id == note.folder_id)
             .map(|f| f.name.as_str())
-            .unwrap_or(&note.folder_id);
+            .unwrap_or("一般");
         context.push_str(&format!(
-            "\n=== ノート: {} (ID: {}, カテゴリ: {}, タグ: [{}]) ===\n",
+            "\n=== ノート: {} (ref:{}, カテゴリ: {}, タグ: [{}]) ===\n",
             note_title,
             note.id,
             folder_name,
@@ -874,7 +964,8 @@ pub async fn chat_with_notes_and_actions(
         ));
         if !note.summary.trim().is_empty() {
             context.push_str(&format!("[要約] {}\n", note.summary.trim()));
-            if citations.len() < 8
+            if !trivial_query
+                && citations.len() < 8
                 && q_lower
                     .split_whitespace()
                     .any(|w| !w.is_empty() && note.summary.to_lowercase().contains(w))
@@ -890,7 +981,8 @@ pub async fn chat_with_notes_and_actions(
         if !note.manual_notes.trim().is_empty() {
             let clean_memo = strip_html_tags(&note.manual_notes);
             context.push_str(&format!("[メモ] {}\n", clean_memo));
-            if citations.len() < 8
+            if !trivial_query
+                && citations.len() < 8
                 && (q_lower
                     .split_whitespace()
                     .any(|w| !w.is_empty() && clean_memo.to_lowercase().contains(w))
@@ -907,7 +999,8 @@ pub async fn chat_with_notes_and_actions(
         for seg in &note.segments {
             let ts = format_ms(seg.start_ms);
             context.push_str(&format!("[{ts}] {}: {}\n", seg.speaker, seg.text));
-            if citations.len() < 8
+            if !trivial_query
+                && citations.len() < 8
                 && (q_lower
                     .split_whitespace()
                     .any(|w| !w.is_empty() && seg.text.to_lowercase().contains(w))
@@ -923,7 +1016,7 @@ pub async fn chat_with_notes_and_actions(
         }
     }
 
-    if citations.is_empty() {
+    if citations.is_empty() && !trivial_query {
         for note in notes.iter().take(4) {
             let note_title = if note.title.trim().is_empty() {
                 "無題のノート".to_string()
@@ -957,16 +1050,36 @@ pub async fn chat_with_notes_and_actions(
 
     if settings.llm_provider == "none" || settings.llm_provider.trim().is_empty() {
         let specs = infer_local_chat_actions(notes, folders, question);
-        let answer = if specs.is_empty() {
-            build_local_fallback_answer(notes, question, &citations, None)
-        } else {
-            "ご指示の内容に基づき、Notelet のデータを更新しました。".to_string()
-        };
+        if !specs.is_empty() {
+            return Ok((
+                ChatAnswer {
+                    answer: "ご指示の内容に基づき、Notelet のデータを更新しました。".to_string(),
+                    citations: Vec::new(),
+                    actions: Vec::new(),
+                    thinking: Some("ユーザーの編集指示を解析し、対象ノート・カテゴリへの変更を適用しました。".to_string()),
+                },
+                specs,
+            ));
+        }
+        if trivial_query {
+            return Ok((
+                ChatAnswer {
+                    answer: "こんにちは！ノートの内容に関する質問や、タイトル・カテゴリ・タグの編集などをお気軽にご指示ください。".to_string(),
+                    citations: Vec::new(),
+                    actions: Vec::new(),
+                    thinking: Some("挨拶・短文のため引用検索はスキップしました。".to_string()),
+                },
+                Vec::new(),
+            ));
+        }
+        let answer = build_local_fallback_answer(notes, question, &citations, None);
+        let (final_answer, used_citations) = filter_and_renumber_used_citations(&answer, &citations);
         return Ok((
             ChatAnswer {
-                answer,
-                citations,
+                answer: final_answer,
+                citations: used_citations,
                 actions: Vec::new(),
+                thinking: Some(format!("ローカル検索を実行し、{}件の関連箇所を確認しました。", citations.len())),
             },
             specs,
         ));
@@ -974,54 +1087,71 @@ pub async fn chat_with_notes_and_actions(
 
     let folder_list = folders
         .iter()
-        .map(|f| format!("- {} (ID: {})", f.name, f.id))
+        .map(|f| format!("- {} (ref:{})", f.name, f.id))
         .collect::<Vec<_>>()
         .join("\n");
-    let citation_list = citations
-        .iter()
-        .enumerate()
-        .map(|(i, c)| format!("[{}] {} ({}): {}", i + 1, c.note_title, c.timestamp, c.excerpt))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let citation_list = if citations.is_empty() {
+        "（引用候補なし）".to_string()
+    } else {
+        citations
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("[{}] {} ({}): {}", i + 1, c.note_title, c.timestamp, c.excerpt))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
 
     let sys = r#"あなたは Notelet（KoeNote）の検索・編集エージェントアシスタントです。
-以下の2つのルールを厳密に守ってください：
+以下のルールを厳密に守ってください：
 
-1. **インライン引用印の付与**:
-   与えられたノートの記録に基づいてMarkdown形式で回答してください。各情報の根拠となった引用番号（[1], [2] 等）を、**その情報を述べている文章や箇条書きの文末に必ず `[1]` のように印を付けてください**。
+1. **思考プロセスの出力**:
+   回答の先頭に `<think>...</think>` タグを置き、その中に簡潔な思考プロセス（どのノート・情報を見てどう判断したか）を日本語で書いてください。その後にユーザー向けの回答を書いてください。
 
-2. **Notelet データ操作アクション**:
+2. **内部IDを回答に出力しない**:
+   回答本文や思考プロセスの中で、`ID: personal`、`フォルダID: personal`、`note-...`、`folder-...`、`ref:...` のようなシステム内部IDを絶対にユーザーに見せないでください。必ず人間が読むノートタイトルやカテゴリ名（例：「一般」「会議」）のみを使ってください。
+
+3. **インライン引用印の付与（必要な場合のみ）**:
+   ノートの具体的な事実・発言を引用して回答する場合のみ、根拠となった引用番号（`[1]`, `[2]` 等）を該当する文章や箇条書きの文末に付けてください。挨拶・一般的な会話・操作完了報告など、ノートの引用が不要な回答には `[1]` 等を一切付けないでください。
+
+4. **Notelet データ操作アクション**:
    ユーザーからノートのタイトル訂正・カテゴリ（フォルダ）の作成/変更/移動/削除・タグ追加/削除・要約/メモの書き換え・話者名変更・アクション項目追加・ノート作成/削除などの操作依頼があった場合は、回答の最後に次のコードブロック形式で JSON アクション配列を出力してください（操作依頼がない場合は出力不要です）：
 ```koenote-actions
 [
-  {"type": "rename_note", "note_id": "対象ID", "title": "新しいタイトル"},
-  {"type": "move_note_folder", "note_id": "対象ID", "folder_name": "カテゴリ名"},
+  {"type": "rename_note", "note_id": "対象ref", "title": "新しいタイトル"},
+  {"type": "move_note_folder", "note_id": "対象ref", "folder_name": "カテゴリ名"},
   {"type": "create_folder", "name": "新しいカテゴリ名"},
-  {"type": "rename_folder", "folder_id": "対象ID", "name": "新しいカテゴリ名"},
-  {"type": "delete_folder", "folder_id": "対象ID"},
-  {"type": "add_tags", "note_id": "対象ID", "tags": ["タグ1"]},
-  {"type": "remove_tags", "note_id": "対象ID", "tags": ["タグ1"]},
-  {"type": "update_summary", "note_id": "対象ID", "summary": "新しい要約"},
-  {"type": "update_manual_notes", "note_id": "対象ID", "manual_notes": "新しいメモ"},
-  {"type": "rename_speaker", "note_id": "対象ID", "from_speaker": "旧話者名", "to_speaker": "新話者名"},
-  {"type": "add_action_item", "note_id": "対象ID", "text": "タスク内容", "assignee": "担当者"},
+  {"type": "rename_folder", "folder_id": "対象ref", "name": "新しいカテゴリ名"},
+  {"type": "delete_folder", "folder_id": "対象ref"},
+  {"type": "add_tags", "note_id": "対象ref", "tags": ["タグ1"]},
+  {"type": "remove_tags", "note_id": "対象ref", "tags": ["タグ1"]},
+  {"type": "update_summary", "note_id": "対象ref", "summary": "新しい要約"},
+  {"type": "update_manual_notes", "note_id": "対象ref", "manual_notes": "新しいメモ"},
+  {"type": "rename_speaker", "note_id": "対象ref", "from_speaker": "旧話者名", "to_speaker": "新話者名"},
+  {"type": "add_action_item", "note_id": "対象ref", "text": "タスク内容", "assignee": "担当者"},
   {"type": "create_note", "title": "新規タイトル", "folder_name": "カテゴリ名", "summary": "要約"},
-  {"type": "delete_note", "note_id": "対象ID"}
+  {"type": "delete_note", "note_id": "対象ref"}
 ]
 ```"#;
 
     let user = format!(
-        "質問・指示: {question}\n\n利用可能なカテゴリ（フォルダ）:\n{folder_list}\n\n引用候補番号:\n{citation_list}\n\n参照ノート:\n{context}"
+        "質問・指示: {question}\n\n利用可能なカテゴリ:\n{folder_list}\n\n引用候補番号:\n{citation_list}\n\n参照ノート:\n{context}"
     );
     match call_llm(settings, sys, &user).await {
         Ok(raw_answer) => {
-            let (clean_answer, specs) = extract_actions_and_clean_answer(&raw_answer);
-            let annotated = ensure_inline_citation_markers(&clean_answer, &citations);
+            let (thinking, without_think) = extract_thinking_and_clean(&raw_answer);
+            let (clean_answer, specs) = extract_actions_and_clean_answer(&without_think);
+            let annotated = if !trivial_query && specs.is_empty() && !citations.is_empty() {
+                ensure_inline_citation_markers(&clean_answer, &citations)
+            } else {
+                clean_answer
+            };
+            let (final_answer, used_citations) = filter_and_renumber_used_citations(&annotated, &citations);
             Ok((
                 ChatAnswer {
-                    answer: annotated,
-                    citations,
+                    answer: final_answer,
+                    citations: used_citations,
                     actions: Vec::new(),
+                    thinking,
                 },
                 specs,
             ))
@@ -1029,11 +1159,13 @@ pub async fn chat_with_notes_and_actions(
         Err(err) => {
             let specs = infer_local_chat_actions(notes, folders, question);
             let answer = build_local_fallback_answer(notes, question, &citations, Some(&err));
+            let (final_answer, used_citations) = filter_and_renumber_used_citations(&answer, &citations);
             Ok((
                 ChatAnswer {
-                    answer,
-                    citations,
+                    answer: final_answer,
+                    citations: used_citations,
                     actions: Vec::new(),
+                    thinking: Some("クラウドLLM接続に失敗したため、ローカル検索結果で回答を構成しました。".to_string()),
                 },
                 specs,
             ))

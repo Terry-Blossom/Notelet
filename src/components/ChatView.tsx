@@ -5,6 +5,7 @@ import {
   Check,
   CheckSquare,
   FileText,
+  Loader2,
   Plus,
   Search,
   Trash2,
@@ -12,7 +13,7 @@ import {
 import { AppSettings, ChatActionResult, ChatAnswer, ChatCitation, ChatHistoryItem, Folder, Note } from '../types';
 import { formatDateTime } from '../lib/format';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
-import { confirmDeleteDialog } from './ConfirmDialog';
+import { confirmActionDialog, confirmDeleteDialog } from './ConfirmDialog';
 import { isTauriRuntime } from '../lib/tauri';
 
 interface ChatViewProps {
@@ -30,7 +31,8 @@ interface ChatViewProps {
 interface ActiveTurn {
   id: string;
   question: string;
-  answer: ChatAnswer;
+  answer?: ChatAnswer;
+  pending?: boolean;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -89,22 +91,43 @@ export const ChatView: React.FC<ChatViewProps> = ({
     [chatHistory, selectedHistoryId]
   );
 
+  const handleCitationNavigate = async (c: ChatCitation) => {
+    const ok = await confirmActionDialog(
+      `「${c.note_title}」に移動しますか？`,
+      c.excerpt ? `該当箇所 [${c.timestamp}]: ${c.excerpt}` : `該当箇所: ${c.timestamp}`,
+      'ノートを開く'
+    );
+    if (ok) {
+      onOpenNote(c.note_id);
+    }
+  };
+
   const handleAsk = async () => {
     const q = question.trim();
     if (!q || busy) return;
     setBusy(true);
     setStreamingText('');
     setError(null);
-    if (selectedHistoryId && activeHistoryItem) {
-      setTurns([
-        {
-          id: activeHistoryItem.id,
-          question: activeHistoryItem.question,
-          answer: { answer: activeHistoryItem.answer, citations: activeHistoryItem.citations },
-        },
-      ]);
+    const pendingId = `pending-${Date.now()}`;
+    const carriedTurns: ActiveTurn[] =
+      selectedHistoryId && activeHistoryItem
+        ? [
+            {
+              id: activeHistoryItem.id,
+              question: activeHistoryItem.question,
+              answer: {
+                answer: activeHistoryItem.answer,
+                citations: activeHistoryItem.citations,
+                actions: activeHistoryItem.actions,
+                thinking: activeHistoryItem.thinking,
+              },
+            },
+          ]
+        : turns;
+    if (selectedHistoryId) {
       setSelectedHistoryId(null);
     }
+    setTurns([...carriedTurns, { id: pendingId, question: q, pending: true }]);
     setQuestion('');
     try {
       const spaceId = selectedSpaceId === 'all' ? null : selectedSpaceId;
@@ -112,15 +135,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
         .filter((n) => !spaceId || n.folder_id === spaceId)
         .map((n) => n.id);
       const res = await onChatAcrossNotes(targetIds, q, spaceId);
-      setTurns((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          question: q,
-          answer: res,
-        },
-      ]);
+      setTurns((prev) =>
+        prev.map((t) => (t.id === pendingId ? { ...t, answer: res, pending: false } : t))
+      );
     } catch (err) {
+      setTurns((prev) => prev.filter((t) => t.id !== pendingId));
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
@@ -170,7 +189,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             <button
               key={`${c.note_id}-${idx}`}
               type="button"
-              onClick={() => onOpenNote(c.note_id)}
+              onClick={() => void handleCitationNavigate(c)}
               style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -314,12 +333,35 @@ export const ChatView: React.FC<ChatViewProps> = ({
           />
         </div>
 
-        {filteredHistory.length === 0 ? (
+        {filteredHistory.length === 0 && !busy ? (
           <div className="text-muted" style={{ paddingTop: '8px', fontSize: '13px' }}>
             履歴はありません
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {turns
+              .filter((t) => t.pending)
+              .map((t) => (
+                <div
+                  key={t.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--bg-subtle)',
+                  }}
+                >
+                  <Loader2 size={14} strokeWidth={1.75} className="spin" style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {t.question}
+                    </div>
+                    <div className="text-muted" style={{ fontSize: '11px' }}>思考中...</div>
+                  </div>
+                </div>
+              ))}
             {filteredHistory.map((item) => {
               const isSelected = selectedHistoryId === item.id;
               const isChecked = selectedIds.includes(item.id);
@@ -466,79 +508,104 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {activeHistoryItem ? (
-            <div
-              style={{
-                padding: '16px',
-                borderRadius: '12px',
-                border: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-subtle)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
-              }}
-            >
-              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                Q. {activeHistoryItem.question}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div
+                style={{
+                  alignSelf: 'flex-end',
+                  maxWidth: '82%',
+                  padding: '10px 14px',
+                  borderRadius: '14px 14px 4px 14px',
+                  backgroundColor: '#111111',
+                  color: '#ffffff',
+                  fontSize: '13.5px',
+                  lineHeight: 1.5,
+                }}
+              >
+                {activeHistoryItem.question}
               </div>
-              <StreamingMarkdownArticle
-                content={activeHistoryItem.answer}
-                isGenerating={false}
-                animateOnChange={false}
-                citations={activeHistoryItem.citations}
-                onCitationClick={(c) => onOpenNote(c.note_id)}
-              />
-              {renderActions(activeHistoryItem.actions)}
-              {renderCitations(activeHistoryItem.citations)}
+              <div
+                style={{
+                  alignSelf: 'flex-start',
+                  maxWidth: '92%',
+                  padding: '14px 16px',
+                  borderRadius: '14px 14px 14px 4px',
+                  border: '1px solid var(--border-subtle)',
+                  backgroundColor: 'var(--bg-subtle)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}
+              >
+                <StreamingMarkdownArticle
+                  content={activeHistoryItem.answer}
+                  isGenerating={false}
+                  animateOnChange={false}
+                  citations={activeHistoryItem.citations}
+                  thinking={activeHistoryItem.thinking}
+                  onCitationClick={(c) => void handleCitationNavigate(c)}
+                />
+                {renderActions(activeHistoryItem.actions)}
+                {renderCitations(activeHistoryItem.citations)}
+              </div>
             </div>
-          ) : turns.length > 0 || busy ? (
-            <>
+          ) : turns.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {turns.map((t) => (
-                <div
-                  key={t.id}
-                  style={{
-                    padding: '16px',
-                    borderRadius: '12px',
-                    border: '1px solid var(--border-subtle)',
-                    backgroundColor: 'var(--bg-subtle)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '12px',
-                  }}
-                >
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Q. {t.question}
+                <div key={t.id} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div
+                    style={{
+                      alignSelf: 'flex-end',
+                      maxWidth: '82%',
+                      padding: '10px 14px',
+                      borderRadius: '14px 14px 4px 14px',
+                      backgroundColor: '#111111',
+                      color: '#ffffff',
+                      fontSize: '13.5px',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {t.question}
                   </div>
-                  <StreamingMarkdownArticle
-                    content={t.answer.answer}
-                    isGenerating={false}
-                    animateOnChange
-                    citations={t.answer.citations}
-                    onCitationClick={(c) => onOpenNote(c.note_id)}
-                  />
-                  {renderActions(t.answer.actions)}
-                  {renderCitations(t.answer.citations)}
+                  <div
+                    style={{
+                      alignSelf: 'flex-start',
+                      maxWidth: '92%',
+                      padding: '14px 16px',
+                      borderRadius: '14px 14px 14px 4px',
+                      border: '1px solid var(--border-subtle)',
+                      backgroundColor: 'var(--bg-subtle)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                    }}
+                  >
+                    {t.pending ? (
+                      <StreamingMarkdownArticle
+                        content={streamingText}
+                        isGenerating={!streamingText}
+                        animateOnChange={false}
+                      />
+                    ) : t.answer ? (
+                      <>
+                        <StreamingMarkdownArticle
+                          content={t.answer.answer}
+                          isGenerating={false}
+                          animateOnChange
+                          citations={t.answer.citations}
+                          thinking={t.answer.thinking}
+                          onCitationClick={(c) => void handleCitationNavigate(c)}
+                        />
+                        {renderActions(t.answer.actions)}
+                        {renderCitations(t.answer.citations)}
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               ))}
-              {busy && (
-                <div
-                  style={{
-                    padding: '16px',
-                    borderRadius: '12px',
-                    border: '1px solid var(--border-subtle)',
-                    backgroundColor: 'var(--bg-subtle)',
-                  }}
-                >
-                  <StreamingMarkdownArticle
-                    content={streamingText}
-                    isGenerating={!streamingText}
-                    animateOnChange={false}
-                  />
-                </div>
-              )}
-            </>
+            </div>
           ) : (
             <div style={{ padding: '24px 0', color: 'var(--text-muted)' }}>
-              下の入力欄から「{activeSpaceName}」について何でも質問するか、左側の履歴から過去の回答を開けます。
+              下の入力欄から「{activeSpaceName}」について何でも質問するか、左側の履歴から過去の会話を引き継げます。
             </div>
           )}
         </div>
