@@ -1,14 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ChatCitation } from '../types';
 
 interface StreamingMarkdownArticleProps {
   content: string;
   isGenerating?: boolean;
   animateOnChange?: boolean;
   placeholder?: string;
+  citations?: ChatCitation[];
+  onCitationClick?: (citation: ChatCitation) => void;
 }
 
-function renderInlineMarkdown(text: string): React.ReactNode[] {
-  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+function renderInlineMarkdown(
+  text: string,
+  citations?: ChatCitation[],
+  onCitationClick?: (citation: ChatCitation) => void
+): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[\d+\])/g);
   return parts.map((part, idx) => {
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
       return <strong key={idx}>{part.slice(2, -2)}</strong>;
@@ -20,6 +27,29 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
         </code>
       );
     }
+    const citeMatch = part.match(/^\[(\d+)\]$/);
+    if (citeMatch && citations && citations.length > 0) {
+      const num = Number(citeMatch[1]);
+      const citation = citations[num - 1];
+      if (citation) {
+        const tooltip = `${citation.note_title} [${citation.timestamp}]: ${citation.excerpt}`;
+        return (
+          <button
+            key={idx}
+            type="button"
+            className="inline-citation-badge"
+            title={tooltip}
+            aria-label={`引用 ${num}: ${citation.note_title}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onCitationClick?.(citation);
+            }}
+          >
+            {num}
+          </button>
+        );
+      }
+    }
     return <React.Fragment key={idx}>{part}</React.Fragment>;
   });
 }
@@ -29,6 +59,8 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
   isGenerating = false,
   animateOnChange = false,
   placeholder = '',
+  citations,
+  onCitationClick,
 }) => {
   const [displayedText, setDisplayedText] = useState(content);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -81,7 +113,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
         elements.push(
           <ul key={`${keyPrefix}-ul`} className="md-article-list">
             {listItems.map((item, idx) => (
-              <li key={idx}>{renderInlineMarkdown(item)}</li>
+              <li key={idx}>{renderInlineMarkdown(item, citations, onCitationClick)}</li>
             ))}
           </ul>
         );
@@ -91,7 +123,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
         elements.push(
           <ol key={`${keyPrefix}-ol`} className="md-article-list">
             {orderedItems.map((item, idx) => (
-              <li key={idx}>{renderInlineMarkdown(item)}</li>
+              <li key={idx}>{renderInlineMarkdown(item, citations, onCitationClick)}</li>
             ))}
           </ol>
         );
@@ -137,7 +169,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
         flushLists(`h3-${idx}`);
         elements.push(
           <h4 key={`h3-${idx}`} className="md-article-h3">
-            {renderInlineMarkdown(trimmed.slice(4))}
+            {renderInlineMarkdown(trimmed.slice(4), citations, onCitationClick)}
           </h4>
         );
         return;
@@ -147,7 +179,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
         flushLists(`h2-${idx}`);
         elements.push(
           <h3 key={`h2-${idx}`} className="md-article-h2">
-            {renderInlineMarkdown(trimmed.slice(3))}
+            {renderInlineMarkdown(trimmed.slice(3), citations, onCitationClick)}
           </h3>
         );
         return;
@@ -157,7 +189,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
         flushLists(`h1-${idx}`);
         elements.push(
           <h2 key={`h1-${idx}`} className="md-article-h1">
-            {renderInlineMarkdown(trimmed.slice(2))}
+            {renderInlineMarkdown(trimmed.slice(2), citations, onCitationClick)}
           </h2>
         );
         return;
@@ -179,7 +211,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
         flushLists(`bq-${idx}`);
         elements.push(
           <blockquote key={`bq-${idx}`} className="md-article-quote">
-            {renderInlineMarkdown(trimmed.slice(2))}
+            {renderInlineMarkdown(trimmed.slice(2), citations, onCitationClick)}
           </blockquote>
         );
         return;
@@ -188,7 +220,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
       flushLists(`p-${idx}`);
       elements.push(
         <p key={`p-${idx}`} className="md-article-p">
-          {renderInlineMarkdown(trimmed)}
+          {renderInlineMarkdown(trimmed, citations, onCitationClick)}
         </p>
       );
     });
@@ -203,7 +235,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
     }
 
     return elements;
-  }, [displayedText]);
+  }, [displayedText, citations, onCitationClick]);
 
   if (isGenerating && !displayedText.trim()) {
     return (

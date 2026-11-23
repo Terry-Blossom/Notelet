@@ -227,9 +227,17 @@ export interface ChatCitation {
   excerpt: string;
 }
 
+export interface ChatActionResult {
+  action: string;
+  target_id?: string | null;
+  description: string;
+  success: boolean;
+}
+
 export interface ChatAnswer {
   answer: string;
   citations: ChatCitation[];
+  actions?: ChatActionResult[];
 }
 
 export interface ChatHistoryItem {
@@ -239,6 +247,7 @@ export interface ChatHistoryItem {
   question: string;
   answer: string;
   citations: ChatCitation[];
+  actions?: ChatActionResult[];
 }
 
 export interface AppDataSnapshot {

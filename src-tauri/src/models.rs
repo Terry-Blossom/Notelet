@@ -359,9 +359,19 @@ pub struct ChatCitation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatActionResult {
+    pub action: String,
+    pub target_id: Option<String>,
+    pub description: String,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatAnswer {
     pub answer: String,
     pub citations: Vec<ChatCitation>,
+    #[serde(default)]
+    pub actions: Vec<ChatActionResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,6 +382,8 @@ pub struct ChatHistoryItem {
     pub question: String,
     pub answer: String,
     pub citations: Vec<ChatCitation>,
+    #[serde(default)]
+    pub actions: Vec<ChatActionResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -2,13 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowUp,
+  Check,
   CheckSquare,
   FileText,
   Plus,
   Search,
   Trash2,
 } from 'lucide-react';
-import { AppSettings, ChatAnswer, ChatCitation, ChatHistoryItem, Folder, Note } from '../types';
+import { AppSettings, ChatActionResult, ChatAnswer, ChatCitation, ChatHistoryItem, Folder, Note } from '../types';
 import { formatDateTime } from '../lib/format';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 import { confirmDeleteDialog } from './ConfirmDialog';
@@ -135,6 +136,20 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const allSelected =
     filteredHistory.length > 0 && filteredHistory.every((h) => selectedIds.includes(h.id));
 
+  const renderActions = (actions?: ChatActionResult[]) => {
+    if (!actions || actions.length === 0) return null;
+    return (
+      <div className="chat-actions-bar">
+        {actions.map((a, idx) => (
+          <span key={idx} className="chat-action-chip">
+            <Check size={12} strokeWidth={2} color="var(--accent)" />
+            <span>{a.description}</span>
+          </span>
+        ))}
+      </div>
+    );
+  };
+
   const renderCitations = (citations: ChatCitation[]) => {
     if (!citations || citations.length === 0) return null;
     return (
@@ -168,6 +183,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <span className="inline-citation-badge" style={{ marginLeft: 0, verticalAlign: 'middle' }}>
+                  {idx + 1}
+                </span>
                 <FileText size={13} strokeWidth={1.75} style={{ color: 'var(--text-secondary)' }} />
                 <strong style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
                   {c.note_title}
@@ -466,7 +484,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 content={activeHistoryItem.answer}
                 isGenerating={false}
                 animateOnChange={false}
+                citations={activeHistoryItem.citations}
+                onCitationClick={(c) => onOpenNote(c.note_id)}
               />
+              {renderActions(activeHistoryItem.actions)}
               {renderCitations(activeHistoryItem.citations)}
             </div>
           ) : turns.length > 0 || busy ? (
@@ -491,7 +512,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     content={t.answer.answer}
                     isGenerating={false}
                     animateOnChange
+                    citations={t.answer.citations}
+                    onCitationClick={(c) => onOpenNote(c.note_id)}
                   />
+                  {renderActions(t.answer.actions)}
                   {renderCitations(t.answer.citations)}
                 </div>
               ))}

@@ -32,6 +32,7 @@ import {
 import {
   AppSettings,
   CalendarEventItem,
+  ChatActionResult,
   ChatAnswer,
   ChatCitation,
   Folder,
@@ -64,6 +65,7 @@ interface PopupChatMessage {
   role: 'user' | 'assistant';
   text: string;
   citations?: ChatCitation[];
+  actions?: ChatActionResult[];
   createdAt: string;
 }
 
@@ -824,7 +826,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 updatedAt: now,
                 messages: [
                   ...s.messages,
-                  { role: 'assistant', text: res.answer, citations: res.citations, createdAt: now },
+                  { role: 'assistant', text: res.answer, citations: res.citations, actions: res.actions, createdAt: now },
                 ],
               }
             : s
@@ -987,7 +989,25 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     <span>{m.text}</span>
                   ) : (
                     <>
-                      <StreamingMarkdownArticle content={m.text} isGenerating={false} />
+                      <StreamingMarkdownArticle
+                        content={m.text}
+                        isGenerating={false}
+                        citations={m.citations}
+                        onCitationClick={(c) => {
+                          setViewingFolderId(null);
+                          onSelectNote?.(c.note_id);
+                        }}
+                      />
+                      {m.actions && m.actions.length > 0 && (
+                        <div className="chat-actions-bar">
+                          {m.actions.map((a, aIdx) => (
+                            <span key={aIdx} className="chat-action-chip">
+                              <Check size={12} strokeWidth={2} color="var(--accent)" />
+                              <span>{a.description}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {m.citations && m.citations.length > 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingTop: '8px', borderTop: '1px solid var(--ns-border-sidebar)' }}>
                           <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--ns-text-muted)' }}>
@@ -1013,6 +1033,9 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                               }}
                             >
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                <span className="inline-citation-badge" style={{ marginLeft: 0, verticalAlign: 'middle' }}>
+                                  {cIdx + 1}
+                                </span>
                                 <FileText size={12} strokeWidth={1.75} />
                                 <strong style={{ fontSize: '12px', fontWeight: 600 }}>{c.note_title}</strong>
                                 {c.timestamp && (
@@ -1454,7 +1477,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           updatedAt: now,
                           messages: [
                             ...s.messages,
-                            { role: 'assistant', text: res.answer, citations: res.citations, createdAt: now },
+                            { role: 'assistant', text: res.answer, citations: res.citations, actions: res.actions, createdAt: now },
                           ],
                         }
                       : s

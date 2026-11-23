@@ -1361,7 +1361,13 @@ const MainApp: React.FC = () => {
             onUploadFile={handleUploadAndTranscribe}
             onSaveFolder={handleSaveFolder}
             onDeleteFolder={handleDeleteFolder}
-            onChatSpace={apiChatNotes}
+            onChatSpace={async (ids, q, spaceId) => {
+              const res = await apiChatNotes(ids, q, spaceId);
+              if (isTauriRuntime() && res.actions && res.actions.length > 0) {
+                await refreshAll();
+              }
+              return res;
+            }}
             onGoSettings={() => setSettingsOpen(true)}
           />
         )}
@@ -1387,6 +1393,7 @@ const MainApp: React.FC = () => {
                       question: q,
                       answer: res.answer,
                       citations: res.citations,
+                      actions: res.actions,
                     },
                     ...(prev.chat_history || []),
                   ],
@@ -1634,6 +1641,7 @@ const MainApp: React.FC = () => {
                       question: q,
                       answer: res.answer,
                       citations: res.citations,
+                      actions: res.actions,
                     },
                     ...(prev.chat_history || []),
                   ],

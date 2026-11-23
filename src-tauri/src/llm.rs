@@ -1,7 +1,9 @@
 use crate::models::{
-    ActionItem, AppSettings, ChatAnswer, ChatCitation, LiveAssistResult, Note, TranscriptSegment,
+    ActionItem, AppSettings, ChatAnswer, ChatCitation, Folder, LiveAssistResult, Note,
+    TranscriptSegment,
 };
 use crate::secrets;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -593,10 +595,10 @@ fn build_local_fallback_answer(
             "ローカル検索で関連する箇所が {} 件見つかりました:",
             citations.len()
         ));
-        for c in citations {
+        for (idx, c) in citations.iter().enumerate() {
             lines.push(format!(
-                "・{} [{}]: {}",
-                c.note_title, c.timestamp, c.excerpt
+                "- **{}** [{}]: {} [{}]",
+                c.note_title, c.timestamp, c.excerpt, idx + 1
             ));
         }
     }
@@ -645,11 +647,209 @@ fn extract_sentence_excerpt(text: &str, query_lower: &str) -> String {
     clean.chars().take(200).collect()
 }
 
-pub async fn chat_with_notes(
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChatActionSpec {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub note_id: Option<String>,
+    pub folder_id: Option<String>,
+    pub folder_name: Option<String>,
+    pub title: Option<String>,
+    pub name: Option<String>,
+    pub summary: Option<String>,
+    pub manual_notes: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub from_speaker: Option<String>,
+    pub to_speaker: Option<String>,
+    pub text: Option<String>,
+    pub assignee: Option<String>,
+}
+
+fn extract_actions_and_clean_answer(raw: &str) -> (String, Vec<ChatActionSpec>) {
+    let marker = "```koenote-actions";
+    if let Some(start_idx) = raw.find(marker) {
+        let after_marker = &raw[start_idx + marker.len()..];
+        if let Some(end_rel) = after_marker.find("```") {
+            let json_block = after_marker[..end_rel].trim();
+            let specs = serde_json::from_str::<Vec<ChatActionSpec>>(json_block).unwrap_or_default();
+            let before = raw[..start_idx].trim_end();
+            let after = after_marker[end_rel + 3..].trim_start();
+            let cleaned = if after.is_empty() {
+                before.to_string()
+            } else {
+                format!("{before}\n\n{after}")
+            };
+            return (cleaned, specs);
+        }
+    }
+    (raw.to_string(), Vec::new())
+}
+
+fn has_inline_citation_marker(text: &str, count: usize) -> bool {
+    for i in 1..=count {
+        if text.contains(&format!("[{i}]")) {
+            return true;
+        }
+    }
+    false
+}
+
+fn ensure_inline_citation_markers(answer: &str, citations: &[ChatCitation]) -> String {
+    if citations.is_empty() || has_inline_citation_marker(answer, citations.len()) {
+        return answer.to_string();
+    }
+
+    let mut out_lines = Vec::new();
+    for line in answer.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("```") {
+            out_lines.push(line.to_string());
+            continue;
+        }
+        let line_low = trimmed.to_lowercase();
+        let mut best_idx: Option<usize> = None;
+        let mut best_score = 0usize;
+        for (idx, c) in citations.iter().enumerate() {
+            let mut score = 0usize;
+            if !c.note_title.is_empty() && line_low.contains(&c.note_title.to_lowercase()) {
+                score += 3;
+            }
+            for token in c.excerpt.split(|ch: char| ch.is_whitespace() || ch == '、' || ch == '。') {
+                let t = token.trim().to_lowercase();
+                if t.chars().count() >= 3 && line_low.contains(&t) {
+                    score += 1;
+                }
+            }
+            if score > best_score {
+                best_score = score;
+                best_idx = Some(idx);
+            }
+        }
+        if let Some(idx) = best_idx {
+            out_lines.push(format!("{line} [{}]", idx + 1));
+        } else {
+            out_lines.push(line.to_string());
+        }
+    }
+    out_lines.join("\n")
+}
+
+fn parse_quoted_value(text: &str) -> Option<String> {
+    for (open, close) in [('「', '」'), ('『', '』'), ('"', '"'), ('\'', '\'')] {
+        if let Some(s) = text.find(open) {
+            let rest = &text[s + open.len_utf8()..];
+            if let Some(e) = rest.find(close) {
+                let val = rest[..e].trim();
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn infer_local_chat_actions(notes: &[Note], folders: &[Folder], question: &str) -> Vec<ChatActionSpec> {
+    let mut specs = Vec::new();
+    let default_note_id = notes.first().map(|n| n.id.clone());
+    let quoted = parse_quoted_value(question);
+
+    if (question.contains("タイトル") || question.contains("名前"))
+        && (question.contains("変更") || question.contains("訂正") || question.contains("直して") || question.contains("変えて"))
+    {
+        if let (Some(nid), Some(new_title)) = (default_note_id.clone(), quoted.clone()) {
+            specs.push(ChatActionSpec {
+                kind: "rename_note".into(),
+                note_id: Some(nid),
+                folder_id: None,
+                folder_name: None,
+                title: Some(new_title),
+                name: None,
+                summary: None,
+                manual_notes: None,
+                tags: None,
+                from_speaker: None,
+                to_speaker: None,
+                text: None,
+                assignee: None,
+            });
+        }
+    } else if (question.contains("カテゴリ") || question.contains("フォルダ"))
+        && (question.contains("作成") || question.contains("作って") || question.contains("追加"))
+    {
+        if let Some(fname) = quoted.clone() {
+            specs.push(ChatActionSpec {
+                kind: "create_folder".into(),
+                note_id: None,
+                folder_id: None,
+                folder_name: Some(fname.clone()),
+                title: None,
+                name: Some(fname),
+                summary: None,
+                manual_notes: None,
+                tags: None,
+                from_speaker: None,
+                to_speaker: None,
+                text: None,
+                assignee: None,
+            });
+        }
+    } else if (question.contains("カテゴリ") || question.contains("フォルダ"))
+        && (question.contains("移動") || question.contains("変更") || question.contains("移して"))
+    {
+        if let Some(nid) = default_note_id.clone() {
+            let target_folder = quoted.clone().or_else(|| {
+                folders
+                    .iter()
+                    .find(|f| question.contains(&f.name))
+                    .map(|f| f.name.clone())
+            });
+            if let Some(fname) = target_folder {
+                specs.push(ChatActionSpec {
+                    kind: "move_note_folder".into(),
+                    note_id: Some(nid),
+                    folder_id: None,
+                    folder_name: Some(fname),
+                    title: None,
+                    name: None,
+                    summary: None,
+                    manual_notes: None,
+                    tags: None,
+                    from_speaker: None,
+                    to_speaker: None,
+                    text: None,
+                    assignee: None,
+                });
+            }
+        }
+    } else if question.contains("タグ") && (question.contains("追加") || question.contains("付けて")) {
+        if let (Some(nid), Some(tag)) = (default_note_id.clone(), quoted.clone()) {
+            specs.push(ChatActionSpec {
+                kind: "add_tags".into(),
+                note_id: Some(nid),
+                folder_id: None,
+                folder_name: None,
+                title: None,
+                name: None,
+                summary: None,
+                manual_notes: None,
+                tags: Some(vec![tag]),
+                from_speaker: None,
+                to_speaker: None,
+                text: None,
+                assignee: None,
+            });
+        }
+    }
+    specs
+}
+
+pub async fn chat_with_notes_and_actions(
     settings: &AppSettings,
     notes: &[Note],
+    folders: &[Folder],
     question: &str,
-) -> Result<ChatAnswer, String> {
+) -> Result<(ChatAnswer, Vec<ChatActionSpec>), String> {
     let mut citations = Vec::new();
     let mut context = String::new();
     let q_lower = question.to_lowercase();
@@ -660,7 +860,18 @@ pub async fn chat_with_notes(
         } else {
             note.title.clone()
         };
-        context.push_str(&format!("\n=== ノート: {} (ID: {}) ===\n", note_title, note.id));
+        let folder_name = folders
+            .iter()
+            .find(|f| f.id == note.folder_id)
+            .map(|f| f.name.as_str())
+            .unwrap_or(&note.folder_id);
+        context.push_str(&format!(
+            "\n=== ノート: {} (ID: {}, カテゴリ: {}, タグ: [{}]) ===\n",
+            note_title,
+            note.id,
+            folder_name,
+            note.tags.join(", ")
+        ));
         if !note.summary.trim().is_empty() {
             context.push_str(&format!("[要約] {}\n", note.summary.trim()));
             if citations.len() < 8
@@ -726,6 +937,13 @@ pub async fn chat_with_notes(
                     timestamp: format_ms(seg.start_ms),
                     excerpt: extract_sentence_excerpt(&seg.text, &q_lower),
                 });
+            } else if !note.summary.trim().is_empty() {
+                citations.push(ChatCitation {
+                    note_id: note.id.clone(),
+                    note_title,
+                    timestamp: "要約".to_string(),
+                    excerpt: extract_sentence_excerpt(&note.summary, &q_lower),
+                });
             } else if !note.manual_notes.trim().is_empty() {
                 citations.push(ChatCitation {
                     note_id: note.id.clone(),
@@ -738,17 +956,97 @@ pub async fn chat_with_notes(
     }
 
     if settings.llm_provider == "none" || settings.llm_provider.trim().is_empty() {
-        let answer = build_local_fallback_answer(notes, question, &citations, None);
-        return Ok(ChatAnswer { answer, citations });
+        let specs = infer_local_chat_actions(notes, folders, question);
+        let answer = if specs.is_empty() {
+            build_local_fallback_answer(notes, question, &citations, None)
+        } else {
+            "ご指示の内容に基づき、Notelet のデータを更新しました。".to_string()
+        };
+        return Ok((
+            ChatAnswer {
+                answer,
+                citations,
+                actions: Vec::new(),
+            },
+            specs,
+        ));
     }
 
-    let sys = "あなたはノート検索・質問応答アシスタントです。与えられたノートの記録だけに基づいて、見出し(## や ###)・箇条書き(- )・太字(**...**)を使った読みやすいMarkdown記事形式で回答してください。記録にない情報は「記録に見当たりません」と答え、推測で補わないでください。各情報の根拠となった引用元ノート名・タイムスタンプ・該当する元の文章を「> 『該当する文章』（出典: ノート名 [MM:SS]）」のように文章レベルで明記してください。";
-    let user = format!("質問: {question}\n\n参照ノート:\n{context}");
+    let folder_list = folders
+        .iter()
+        .map(|f| format!("- {} (ID: {})", f.name, f.id))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let citation_list = citations
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!("[{}] {} ({}): {}", i + 1, c.note_title, c.timestamp, c.excerpt))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let sys = r#"あなたは Notelet（KoeNote）の検索・編集エージェントアシスタントです。
+以下の2つのルールを厳密に守ってください：
+
+1. **インライン引用印の付与**:
+   与えられたノートの記録に基づいてMarkdown形式で回答してください。各情報の根拠となった引用番号（[1], [2] 等）を、**その情報を述べている文章や箇条書きの文末に必ず `[1]` のように印を付けてください**。
+
+2. **Notelet データ操作アクション**:
+   ユーザーからノートのタイトル訂正・カテゴリ（フォルダ）の作成/変更/移動/削除・タグ追加/削除・要約/メモの書き換え・話者名変更・アクション項目追加・ノート作成/削除などの操作依頼があった場合は、回答の最後に次のコードブロック形式で JSON アクション配列を出力してください（操作依頼がない場合は出力不要です）：
+```koenote-actions
+[
+  {"type": "rename_note", "note_id": "対象ID", "title": "新しいタイトル"},
+  {"type": "move_note_folder", "note_id": "対象ID", "folder_name": "カテゴリ名"},
+  {"type": "create_folder", "name": "新しいカテゴリ名"},
+  {"type": "rename_folder", "folder_id": "対象ID", "name": "新しいカテゴリ名"},
+  {"type": "delete_folder", "folder_id": "対象ID"},
+  {"type": "add_tags", "note_id": "対象ID", "tags": ["タグ1"]},
+  {"type": "remove_tags", "note_id": "対象ID", "tags": ["タグ1"]},
+  {"type": "update_summary", "note_id": "対象ID", "summary": "新しい要約"},
+  {"type": "update_manual_notes", "note_id": "対象ID", "manual_notes": "新しいメモ"},
+  {"type": "rename_speaker", "note_id": "対象ID", "from_speaker": "旧話者名", "to_speaker": "新話者名"},
+  {"type": "add_action_item", "note_id": "対象ID", "text": "タスク内容", "assignee": "担当者"},
+  {"type": "create_note", "title": "新規タイトル", "folder_name": "カテゴリ名", "summary": "要約"},
+  {"type": "delete_note", "note_id": "対象ID"}
+]
+```"#;
+
+    let user = format!(
+        "質問・指示: {question}\n\n利用可能なカテゴリ（フォルダ）:\n{folder_list}\n\n引用候補番号:\n{citation_list}\n\n参照ノート:\n{context}"
+    );
     match call_llm(settings, sys, &user).await {
-        Ok(answer) => Ok(ChatAnswer { answer, citations }),
+        Ok(raw_answer) => {
+            let (clean_answer, specs) = extract_actions_and_clean_answer(&raw_answer);
+            let annotated = ensure_inline_citation_markers(&clean_answer, &citations);
+            Ok((
+                ChatAnswer {
+                    answer: annotated,
+                    citations,
+                    actions: Vec::new(),
+                },
+                specs,
+            ))
+        }
         Err(err) => {
+            let specs = infer_local_chat_actions(notes, folders, question);
             let answer = build_local_fallback_answer(notes, question, &citations, Some(&err));
-            Ok(ChatAnswer { answer, citations })
+            Ok((
+                ChatAnswer {
+                    answer,
+                    citations,
+                    actions: Vec::new(),
+                },
+                specs,
+            ))
         }
     }
 }
+
+pub async fn chat_with_notes(
+    settings: &AppSettings,
+    notes: &[Note],
+    question: &str,
+) -> Result<ChatAnswer, String> {
+    let (ans, _) = chat_with_notes_and_actions(settings, notes, &[], question).await?;
+    Ok(ans)
+}
+
