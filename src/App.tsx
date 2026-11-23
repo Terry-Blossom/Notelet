@@ -828,6 +828,22 @@ const MainApp: React.FC = () => {
     }
   };
 
+  const handleImportNotes = async (notesToImport: Note[]) => {
+    if (notesToImport.length === 0) return;
+    if (isTauriRuntime()) {
+      let latest = snapshot;
+      for (const note of notesToImport) {
+        latest = await apiSaveNote(note);
+      }
+      setSnapshot(latest);
+    } else {
+      setSnapshot((prev) => ({
+        ...prev,
+        notes: [...notesToImport, ...prev.notes],
+      }));
+    }
+  };
+
   const handleUploadAndTranscribe = async (file: File) => {
     const newNote = createEmptyNote();
     newNote.title = file.name.replace(/\.[^/.]+$/, '') || 'アップロード録音';
@@ -1038,6 +1054,9 @@ const MainApp: React.FC = () => {
               setSnapshot((prev) => ({ ...prev, notes: [], audit_logs: [] }));
             }
           }}
+          folders={snapshot.folders}
+          notes={snapshot.notes}
+          onImportNotes={handleImportNotes}
         />
       </div>
     </div>
@@ -1390,6 +1409,9 @@ const MainApp: React.FC = () => {
             onUploadAndTranscribe={handleUploadAndTranscribe}
             onUploadUrlAndTranscribe={handleUploadUrlAndTranscribe}
             onGoSettings={() => setSettingsOpen(true)}
+            folders={snapshot.folders}
+            existingNotes={snapshot.notes}
+            onImportNotes={handleImportNotes}
           />
         )}
 

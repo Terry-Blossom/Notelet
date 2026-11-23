@@ -13,7 +13,8 @@ import {
   Shield,
   Sparkles,
 } from 'lucide-react';
-import { AppSettings, AsrModelInfo, SecretStatus, StorageStats, UpdateCheckResult } from '../types';
+import { AppSettings, AsrModelInfo, Folder, Note, SecretStatus, StorageStats, UpdateCheckResult } from '../types';
+import { GranolaImportCard } from './GranolaImportCard';
 import {
   apiCompressRetainedAudio,
   apiGetStorageStats,
@@ -35,6 +36,9 @@ interface SettingsViewProps {
   onSetSecret: (key: string, value: string) => Promise<void>;
   onExportAll: () => Promise<void>;
   onPurgeAll: () => Promise<void>;
+  folders?: Folder[];
+  notes?: Note[];
+  onImportNotes?: (notes: Note[]) => Promise<void>;
 }
 
 type SettingsTab = 'asr' | 'llm' | 'shortcuts' | 'privacy' | 'update';
@@ -74,6 +78,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSetSecret,
   onExportAll,
   onPurgeAll,
+  folders = [],
+  notes = [],
+  onImportNotes,
 }) => {
   const [tab, setTab] = useState<SettingsTab>('asr');
   const [asrCategory, setAsrCategory] = useState<AsrCategory>(() => {
@@ -921,6 +928,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               )}
             </div>
+
+            {onImportNotes && (
+              <GranolaImportCard
+                folders={folders}
+                existingNotes={notes}
+                onImportNotes={onImportNotes}
+              />
+            )}
           </div>
         )}
 
@@ -937,7 +952,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.8'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.9'}</strong>
                 </div>
                 <button
                   type="button"
