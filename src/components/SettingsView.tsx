@@ -39,6 +39,8 @@ interface SettingsViewProps {
   folders?: Folder[];
   notes?: Note[];
   onImportNotes?: (notes: Note[]) => Promise<void>;
+  onRestoreBackup?: (jsonText: string) => Promise<void>;
+  onExportObsidianZip?: () => void;
 }
 
 type SettingsTab = 'asr' | 'llm' | 'shortcuts' | 'privacy' | 'update';
@@ -81,6 +83,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   folders = [],
   notes = [],
   onImportNotes,
+  onRestoreBackup,
+  onExportObsidianZip,
 }) => {
   const [tab, setTab] = useState<SettingsTab>('asr');
   const [asrCategory, setAsrCategory] = useState<AsrCategory>(() => {
@@ -887,6 +891,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   />
                 </div>
               </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '4px' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.enable_local_diarization)}
+                  onChange={(e) => update({ enable_local_diarization: e.target.checked })}
+                />
+                <span>ローカルASR（Whisper / Parakeet等）で簡易話者分離を有効にする</span>
+              </label>
             </div>
 
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -904,6 +916,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <button type="button" className="btn btn-secondary" onClick={onExportAll}>
                 全データをJSONエクスポート
               </button>
+
+              {onExportObsidianZip && (
+                <button type="button" className="btn btn-secondary" onClick={onExportObsidianZip}>
+                  Markdown / Obsidian 一括エクスポート (ZIP)
+                </button>
+              )}
+
+              {onRestoreBackup && (
+                <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+                  JSON バックアップから復元
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      try {
+                        const text = await file.text();
+                        await onRestoreBackup(text);
+                        flash('JSON バックアップを復元・マージしました');
+                      } catch (err) {
+                        flash(err instanceof Error ? err.message : String(err));
+                      }
+                    }}
+                  />
+                </label>
+              )}
 
               {!confirmPurge ? (
                 <button type="button" className="btn btn-danger" onClick={() => setConfirmPurge(true)}>
@@ -952,7 +993,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.9.9'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.10.0'}</strong>
                 </div>
                 <button
                   type="button"

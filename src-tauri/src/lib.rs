@@ -440,7 +440,7 @@ async fn transcribe_recording(
 
     let raw_path = std::path::PathBuf::from(&wav_path);
     let (path, detected_dur_sec) = storage::normalize_media_to_16k_wav(&raw_path);
-    let (mut segments, diarization_supported, model_name) =
+    let (mut segments, mut diarization_supported, model_name) =
         asr::transcribe_wav(&path, &settings, &dictionary).await?;
 
     let default_speaker = if settings.user_speaker_name.trim().is_empty() {
@@ -448,6 +448,16 @@ async fn transcribe_recording(
     } else {
         settings.user_speaker_name.trim().to_string()
     };
+    let remote_speaker = if settings.remote_speaker_name.trim().is_empty() {
+        "相手".to_string()
+    } else {
+        settings.remote_speaker_name.trim().to_string()
+    };
+    if !diarization_supported && settings.enable_local_diarization {
+        if asr::apply_local_heuristic_diarization(&mut segments, &default_speaker, &remote_speaker) {
+            diarization_supported = true;
+        }
+    }
     for seg in &mut segments {
         if seg.speaker.trim().is_empty() {
             seg.speaker = default_speaker.clone();
@@ -751,6 +761,10 @@ fn get_secret_status_cmd() -> serde_json::Value {
         "notion_access_token": notion::is_connected(),
         "slack_webhook_url": secrets::has_secret("slack_webhook_url"),
         "github_update_token": secrets::has_secret("github_update_token"),
+        "granola_api_key": secrets::has_secret("granola_api_key"),
+        "github_issue_token": secrets::has_secret("github_issue_token"),
+        "linear_api_key": secrets::has_secret("linear_api_key"),
+        "jira_api_token": secrets::has_secret("jira_api_token"),
     })
 }
 
@@ -1112,8 +1126,13 @@ fn compress_retained_audio_cmd(state: State<AppState>) -> Result<serde_json::Val
 }
 
 #[tauri::command]
-fn get_upcoming_calendar_events_cmd() -> Vec<CalendarEventMock> {
+async fn get_upcoming_calendar_events_cmd(state: State<'_, AppState>) -> Result<Vec<CalendarEventMock>, String> {
     use chrono::{Local, Timelike};
+    let ics_url = {
+        let data = state.data.lock().unwrap();
+        data.settings.calendar_ics_url.clone()
+    };
+
     let now = Local::now();
     let hour = now.hour();
     let mut events = Vec::new();
@@ -1127,6 +1146,12 @@ fn get_upcoming_calendar_events_cmd() -> Vec<CalendarEventMock> {
             participants: vec!["自分".to_string(), "相手".to_string()],
             provider: active_app,
         });
+    }
+
+    if !ics_url.trim().is_empty() {
+        if let Ok(remote_events) = integrations::fetch_ics_calendar_events(&ics_url).await {
+            events.extend(remote_events);
+        }
     }
 
     // Parse local calendar.ics if user placed one in app_data_dir
@@ -1168,7 +1193,50 @@ fn get_upcoming_calendar_events_cmd() -> Vec<CalendarEventMock> {
         participants: vec!["自分".to_string(), "相手".to_string()],
         provider: "Outlook Calendar".to_string(),
     });
-    events
+    Ok(events)
+}
+
+#[tauri::command]
+fn read_granola_local_cache_cmd() -> Result<String, String> {
+    integrations::read_granola_local_cache()
+}
+
+#[tauri::command]
+async fn fetch_granola_notes_cmd(api_key: Option<String>) -> Result<String, String> {
+    integrations::fetch_granola_notes_api(api_key).await
+}
+
+#[tauri::command]
+async fn create_issue_from_action_cmd(
+    state: State<'_, AppState>,
+    provider: String,
+    title: String,
+    body: String,
+) -> Result<models::IssueCreateResult, String> {
+    let settings = {
+        let data = state.data.lock().unwrap();
+        data.settings.clone()
+    };
+    let result = integrations::create_issue_from_action(&provider, &settings, &title, &body).await?;
+    let mut data = state.data.lock().unwrap();
+    storage::append_audit(&mut data, "issue_created", &format!("{}:{}", result.provider, result.key));
+    storage::save_snapshot(&data)?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn restore_backup_snapshot(
+    state: State<'_, AppState>,
+    snapshot: AppDataSnapshot,
+) -> Result<AppDataSnapshot, String> {
+    let mut data = state.data.lock().unwrap();
+    data.notes = snapshot.notes;
+    data.folders = snapshot.folders;
+    data.dictionary = snapshot.dictionary;
+    data.recipes = snapshot.recipes;
+    storage::append_audit(&mut data, "backup_restored", &format!("notes={}", data.notes.len()));
+    storage::save_snapshot(&data)?;
+    Ok(data.clone())
 }
 
 fn detect_active_meeting() -> Option<String> {
@@ -1420,6 +1488,10 @@ pub fn run() {
             open_storage_folder_cmd,
             compress_retained_audio_cmd,
             get_upcoming_calendar_events_cmd,
+            read_granola_local_cache_cmd,
+            fetch_granola_notes_cmd,
+            create_issue_from_action_cmd,
+            restore_backup_snapshot,
             check_app_update,
             install_app_update,
         ])

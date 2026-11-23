@@ -59,6 +59,7 @@ import {
   apiPauseRecording,
   apiPurgeAllData,
   apiResumeRecording,
+  apiRestoreBackupSnapshot,
   apiRunRecipe,
   apiSaveRecipe,
   apiSaveFolder,
@@ -80,6 +81,7 @@ import {
   isTauriRuntime,
 } from './lib/tauri';
 import { createEmptyNote, findNoteSearchMatches, formatMs } from './lib/format';
+import { exportNotesAsObsidianZip, mergeKoeNoteBackupJson } from './lib/noteExportImport';
 import { HomeView } from './components/HomeView';
 import { ConfirmDialogHost } from './components/ConfirmDialog';
 import { RecordingView } from './components/RecordingView';
@@ -1057,6 +1059,23 @@ const MainApp: React.FC = () => {
           folders={snapshot.folders}
           notes={snapshot.notes}
           onImportNotes={handleImportNotes}
+          onRestoreBackup={async (jsonText: string) => {
+            const merged = mergeKoeNoteBackupJson(jsonText, snapshot);
+            if (isTauriRuntime()) {
+              setSnapshot(await apiRestoreBackupSnapshot(merged.snapshot));
+            } else {
+              setSnapshot(merged.snapshot);
+            }
+          }}
+          onExportObsidianZip={() => {
+            const blob = exportNotesAsObsidianZip(snapshot.notes, snapshot.folders);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'koenote-obsidian-markdown.zip';
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
         />
       </div>
     </div>

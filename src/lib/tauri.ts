@@ -10,6 +10,7 @@ import {
   DictionaryEntry,
   Folder,
   IntegrationAdapterInfo,
+  IssueCreateResult,
   LiveAssistResult,
   Note,
   NotionTarget,
@@ -256,4 +257,24 @@ export async function apiCompressRetainedAudio(): Promise<{
 
 export async function apiGetUpcomingCalendarEvents(): Promise<CalendarEventItem[]> {
   return invoke<CalendarEventItem[]>('get_upcoming_calendar_events_cmd');
+}
+
+export async function apiReadGranolaLocalCache(): Promise<string> {
+  return invoke<string>('read_granola_local_cache_cmd');
+}
+
+export async function apiFetchGranolaNotes(apiKey?: string): Promise<string> {
+  return invoke<string>('fetch_granola_notes_cmd', { apiKey: apiKey ?? null });
+}
+
+export async function apiCreateIssueFromAction(
+  provider: string,
+  title: string,
+  body: string
+): Promise<IssueCreateResult> {
+  return invoke<IssueCreateResult>('create_issue_from_action_cmd', { provider, title, body });
+}
+
+export async function apiRestoreBackupSnapshot(snapshot: AppDataSnapshot): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>('restore_backup_snapshot', { snapshot });
 }

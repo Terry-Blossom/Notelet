@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { AlertTriangle, Check, FileSpreadsheet, FileText, Loader2, Upload } from 'lucide-react';
+import { AlertTriangle, Check, CloudDownload, FileSpreadsheet, FileText, FolderSearch, Loader2, Upload } from 'lucide-react';
 import { Folder, Note } from '../types';
-import { GranolaImportParseResult, parseGranolaImportFiles } from '../lib/granolaImport';
+import { GranolaImportFileInput, GranolaImportParseResult, parseGranolaImportFiles } from '../lib/granolaImport';
 import { formatDateTime } from '../lib/format';
+import { unzipTextFiles } from '../lib/zip';
+import { apiFetchGranolaNotes, apiReadGranolaLocalCache, isTauriRuntime } from '../lib/tauri';
 
 interface GranolaImportCardProps {
   folders: Folder[];
@@ -23,6 +25,8 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
   const [fileNames, setFileNames] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [loadingSource, setLoadingSource] = useState(false);
+  const [granolaApiKey, setGranolaApiKey] = useState('');
   const [importedCount, setImportedCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,14 +36,24 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
 
     setError(null);
     setImportedCount(null);
+    setLoadingSource(true);
 
     try {
-      const inputs = await Promise.all(
-        files.map(async (f) => ({
-          name: f.name,
-          content: await f.text(),
-        }))
-      );
+      const inputs: GranolaImportFileInput[] = [];
+      for (const f of files) {
+        if (f.name.toLowerCase().endsWith('.zip')) {
+          const buf = await f.arrayBuffer();
+          const entries = await unzipTextFiles(buf);
+          for (const entry of entries) {
+            const lower = entry.name.toLowerCase();
+            if (lower.endsWith('.csv') || lower.endsWith('.json') || lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt')) {
+              inputs.push({ name: entry.name, content: entry.content });
+            }
+          }
+        } else {
+          inputs.push({ name: f.name, content: await f.text() });
+        }
+      }
       const res = parseGranolaImportFiles(inputs, {
         folderId: targetFolderId,
         existingNotes,
@@ -48,6 +62,46 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
       setParseResult(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingSource(false);
+    }
+  };
+
+  const handleLoadLocalCache = async () => {
+    setError(null);
+    setImportedCount(null);
+    setLoadingSource(true);
+    try {
+      const raw = await apiReadGranolaLocalCache();
+      const res = parseGranolaImportFiles([{ name: 'cache-v3.json', content: raw }], {
+        folderId: targetFolderId,
+        existingNotes,
+      });
+      setFileNames(['ローカルキャッシュ (cache-v3.json)']);
+      setParseResult(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingSource(false);
+    }
+  };
+
+  const handleFetchApi = async () => {
+    setError(null);
+    setImportedCount(null);
+    setLoadingSource(true);
+    try {
+      const raw = await apiFetchGranolaNotes(granolaApiKey.trim() || undefined);
+      const res = parseGranolaImportFiles([{ name: 'granola-api.json', content: raw }], {
+        folderId: targetFolderId,
+        existingNotes,
+      });
+      setFileNames(['Granola API']);
+      setParseResult(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingSource(false);
     }
   };
 
@@ -80,7 +134,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
             Granola からインポート
           </h3>
           <p className="text-muted" style={{ margin: '4px 0 0' }}>
-            Granola のエクスポートファイル（CSV / JSON / Markdown）またはローカルキャッシュ（<code>cache-v3.json</code>）を読み込みます。
+            Granola のエクスポートファイル（CSV / JSON / Markdown / ZIP）またはローカルキャッシュ（<code>cache-v3.json</code>）を読み込みます。
           </p>
         </div>
         {folders.length > 0 && (
@@ -140,8 +194,8 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
         <Upload size={20} strokeWidth={1.5} color="var(--accent)" />
         <div style={{ fontWeight: 600, fontSize: '14px' }}>
           {fileNames.length > 0
-            ? `${fileNames.length} 件のファイルを選択中: ${fileNames.join(', ')}`
-            : 'CSV / JSON / Markdown ファイルを選択またはドロップ（複数選択可）'}
+            ? `${fileNames.length} 件のソースを選択中: ${fileNames.join(', ')}`
+            : 'CSV / JSON / Markdown / ZIP ファイルを選択またはドロップ（複数選択可）'}
         </div>
         <div className="text-muted" style={{ fontSize: '12px' }}>
           Granola: Settings ＞ Profile ＞ Generate CSV、または <code>cache-v3.json</code>（macOS: ~/Library/Application Support/Granola/ / Windows: %APPDATA%\Granola\）
@@ -149,7 +203,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
         <input
           type="file"
           multiple
-          accept=".csv,.json,.md,.markdown,.txt,text/csv,application/json,text/markdown"
+          accept=".csv,.json,.md,.markdown,.txt,.zip,text/csv,application/json,text/markdown,application/zip"
           style={{ display: 'none' }}
           onChange={(e) => {
             if (e.target.files && e.target.files.length > 0) {
@@ -159,6 +213,37 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
           }}
         />
       </label>
+
+      {isTauriRuntime() && (
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={loadingSource || importing}
+            onClick={handleLoadLocalCache}
+          >
+            {loadingSource ? <Loader2 size={14} strokeWidth={1.5} className="spin" /> : <FolderSearch size={14} strokeWidth={1.5} />}
+            ローカルキャッシュを自動読み込み
+          </button>
+          <input
+            type="password"
+            className="input"
+            style={{ flex: '1 1 200px' }}
+            placeholder="Granola API キー（保存済みなら空欄で取得可）"
+            value={granolaApiKey}
+            onChange={(e) => setGranolaApiKey(e.target.value)}
+          />
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={loadingSource || importing}
+            onClick={handleFetchApi}
+          >
+            <CloudDownload size={14} strokeWidth={1.5} />
+            API から取得
+          </button>
+        </div>
+      )}
 
       {importedCount !== null && (
         <div className="status-chip ok" style={{ alignSelf: 'flex-start' }}>

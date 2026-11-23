@@ -241,6 +241,27 @@ pub struct AppSettings {
     pub user_speaker_name: String,
     #[serde(default)]
     pub remote_speaker_name: String,
+    #[serde(default)]
+    pub calendar_ics_url: String,
+    #[serde(default)]
+    pub github_repo: String,
+    #[serde(default)]
+    pub linear_team_id: String,
+    #[serde(default)]
+    pub jira_base_url: String,
+    #[serde(default)]
+    pub jira_email: String,
+    #[serde(default)]
+    pub jira_project_key: String,
+    #[serde(default)]
+    pub enable_local_diarization: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueCreateResult {
+    pub provider: String,
+    pub key: String,
+    pub url: String,
 }
 
 impl Default for AppSettings {
@@ -285,6 +306,13 @@ impl Default for AppSettings {
             main_window_height: None,
             user_speaker_name: "自分".to_string(),
             remote_speaker_name: "相手".to_string(),
+            calendar_ics_url: String::new(),
+            github_repo: String::new(),
+            linear_team_id: String::new(),
+            jira_base_url: String::new(),
+            jira_email: String::new(),
+            jira_project_key: String::new(),
+            enable_local_diarization: false,
         }
     }
 }

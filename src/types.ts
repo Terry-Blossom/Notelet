@@ -167,6 +167,19 @@ export interface AppSettings {
   main_window_height?: number | null;
   user_speaker_name?: string;
   remote_speaker_name?: string;
+  calendar_ics_url?: string;
+  github_repo?: string;
+  linear_team_id?: string;
+  jira_base_url?: string;
+  jira_email?: string;
+  jira_project_key?: string;
+  enable_local_diarization?: boolean;
+}
+
+export interface IssueCreateResult {
+  provider: string;
+  key: string;
+  url: string;
 }
 
 export interface StorageStats {
@@ -256,6 +269,10 @@ export interface SecretStatus {
   notion_access_token: boolean;
   slack_webhook_url: boolean;
   github_update_token?: boolean;
+  granola_api_key?: boolean;
+  github_issue_token?: boolean;
+  linear_api_key?: boolean;
+  jira_api_token?: boolean;
 }
 
 export interface UpdateCheckResult {

@@ -337,6 +337,134 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
           </details>
         )}
       </section>
+
+      {/* Calendar ICS */}
+      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <h2 className="section-title">カレンダー連携 (ICS URL)</h2>
+        <p className="text-muted" style={{ margin: 0 }}>
+          Google Calendar や Outlook の非公開 ICS URL を登録すると、ホーム画面の予定リストに会議予定と参加者が自動反映されます。
+        </p>
+        <input
+          type="url"
+          className="input"
+          placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
+          value={settings.calendar_ics_url ?? ''}
+          onChange={(e) => update({ calendar_ics_url: e.target.value })}
+        />
+      </section>
+
+      {/* Issue Tracker: GitHub / Linear / Jira */}
+      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div>
+          <h2 className="section-title">Issue / タスク起票連携 (GitHub / Linear / Jira)</h2>
+          <p className="text-muted" style={{ margin: '4px 0 0' }}>
+            ノート内のアクション項目からワンクリックで Issue を作成できます。
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <label className="text-muted">GitHub Issues</label>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <input
+              className="input"
+              style={{ flex: '1 1 180px' }}
+              placeholder="owner/repo (例: otetcham/koenote)"
+              value={settings.github_repo ?? ''}
+              onChange={(e) => update({ github_repo: e.target.value })}
+            />
+            <input
+              type="password"
+              className="input"
+              style={{ flex: '1 1 200px' }}
+              placeholder={secretStatus?.github_issue_token ? 'GitHub PAT（保存済み）' : 'GitHub Personal Access Token'}
+              value={secretInputs['github_issue_token'] || ''}
+              onChange={(e) => setSecretInputs((p) => ({ ...p, github_issue_token: e.target.value }))}
+            />
+            <button type="button" className="btn btn-secondary" onClick={() => saveKey('github_issue_token')}>
+              保存
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <label className="text-muted">Linear</label>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <input
+              className="input"
+              style={{ flex: '1 1 180px' }}
+              placeholder="Linear Team ID"
+              value={settings.linear_team_id ?? ''}
+              onChange={(e) => update({ linear_team_id: e.target.value })}
+            />
+            <input
+              type="password"
+              className="input"
+              style={{ flex: '1 1 200px' }}
+              placeholder={secretStatus?.linear_api_key ? 'Linear API Key（保存済み）' : 'Linear API Key (lin_api_...)'}
+              value={secretInputs['linear_api_key'] || ''}
+              onChange={(e) => setSecretInputs((p) => ({ ...p, linear_api_key: e.target.value }))}
+            />
+            <button type="button" className="btn btn-secondary" onClick={() => saveKey('linear_api_key')}>
+              保存
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <label className="text-muted">Jira</label>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <input
+              className="input"
+              style={{ flex: '1 1 200px' }}
+              placeholder="https://your-domain.atlassian.net"
+              value={settings.jira_base_url ?? ''}
+              onChange={(e) => update({ jira_base_url: e.target.value })}
+            />
+            <input
+              className="input"
+              style={{ flex: '1 1 160px' }}
+              placeholder="Jira Email"
+              value={settings.jira_email ?? ''}
+              onChange={(e) => update({ jira_email: e.target.value })}
+            />
+            <input
+              className="input"
+              style={{ flex: '0 1 110px' }}
+              placeholder="Project Key"
+              value={settings.jira_project_key ?? ''}
+              onChange={(e) => update({ jira_project_key: e.target.value })}
+            />
+            <input
+              type="password"
+              className="input"
+              style={{ flex: '1 1 180px' }}
+              placeholder={secretStatus?.jira_api_token ? 'Jira API Token（保存済み）' : 'Jira API Token'}
+              value={secretInputs['jira_api_token'] || ''}
+              onChange={(e) => setSecretInputs((p) => ({ ...p, jira_api_token: e.target.value }))}
+            />
+            <button type="button" className="btn btn-secondary" onClick={() => saveKey('jira_api_token')}>
+              保存
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Granola API */}
+      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <h2 className="section-title">Granola API キー（インポート用）</h2>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input
+            type="password"
+            className="input"
+            placeholder={secretStatus?.granola_api_key ? 'Granola API Key（保存済み）' : 'Granola API Key'}
+            value={secretInputs['granola_api_key'] || ''}
+            onChange={(e) => setSecretInputs((p) => ({ ...p, granola_api_key: e.target.value }))}
+          />
+          <button type="button" className="btn btn-secondary" onClick={() => saveKey('granola_api_key')}>
+            保存
+          </button>
+        </div>
+      </section>
     </div>
   );
 };

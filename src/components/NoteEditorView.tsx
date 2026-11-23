@@ -53,6 +53,7 @@ import { NotionSyncBadge } from './NotionSyncBadge';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 import { confirmDeleteDialog } from './ConfirmDialog';
 import {
+  apiCreateIssueFromAction,
   apiGetUpcomingCalendarEvents,
   apiLiveAssist,
   apiReadNoteAudio,
@@ -2428,6 +2429,47 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     <Link2 size={15} strokeWidth={1.75} />
                     <span>Webhook 送信</span>
                   </button>
+                  {isTauriRuntime() && (
+                    <>
+                      {(['github', 'linear', 'jira'] as const)
+                        .filter((p) => {
+                          if (p === 'github') return Boolean(settings.github_repo?.trim());
+                          if (p === 'linear') return Boolean(settings.linear_team_id?.trim());
+                          return Boolean(settings.jira_project_key?.trim());
+                        })
+                        .map((provider) => (
+                          <button
+                            key={provider}
+                            type="button"
+                            className="note-sidebar-item"
+                            onClick={async () => {
+                              try {
+                                const firstAction = note.action_items[0]?.text;
+                                const issueTitle = firstAction
+                                  ? `[${note.title || '会議'}] ${firstAction}`
+                                  : note.title || '無題のノート';
+                                const issueBody = [
+                                  note.summary ? `## 要約\n${note.summary}` : '',
+                                  note.action_items.length > 0
+                                    ? `## アクション項目\n${note.action_items.map((a) => `- [${a.done ? 'x' : ' '}] ${a.text}`).join('\n')}`
+                                    : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join('\n\n');
+                                const res = await apiCreateIssueFromAction(provider, issueTitle, issueBody);
+                                notify(`${res.provider.toUpperCase()} Issue ${res.key} を起票しました`);
+                                setShareOpen(false);
+                              } catch (e) {
+                                notify(e instanceof Error ? e.message : String(e));
+                              }
+                            }}
+                          >
+                            <GitMerge size={15} strokeWidth={1.75} />
+                            <span>{provider === 'github' ? 'GitHub Issue 起票' : provider === 'linear' ? 'Linear Issue 起票' : 'Jira Task 起票'}</span>
+                          </button>
+                        ))}
+                    </>
+                  )}
                 </div>
               )}
             </div>
