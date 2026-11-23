@@ -744,11 +744,12 @@ fn apply_chat_actions(
                         if let Some(note) = data.notes.iter_mut().find(|n| n.id == nid) {
                             note.folder_id = fid;
                             note.updated_at = now.clone();
+                            let note_title = note.title.clone();
                             storage::append_audit(data, "chat_move_folder", &format!("{nid} -> {fname}"));
                             results.push(models::ChatActionResult {
                                 action: "move_note_folder".into(),
                                 target_id: Some(nid),
-                                description: format!("ノート「{}」をカテゴリ「{fname}」へ移動しました", note.title),
+                                description: format!("ノート「{note_title}」をカテゴリ「{fname}」へ移動しました"),
                                 success: true,
                             });
                         }
@@ -1536,7 +1537,8 @@ fn restore_backup_snapshot(
     data.folders = snapshot.folders;
     data.dictionary = snapshot.dictionary;
     data.recipes = snapshot.recipes;
-    storage::append_audit(&mut data, "backup_restored", &format!("notes={}", data.notes.len()));
+    let notes_count = data.notes.len();
+    storage::append_audit(&mut data, "backup_restored", &format!("notes={notes_count}"));
     storage::save_snapshot(&data)?;
     Ok(data.clone())
 }
