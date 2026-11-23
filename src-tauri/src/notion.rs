@@ -206,7 +206,10 @@ pub async fn ensure_database_schema(database_id: &str) -> Result<(), String> {
     if database_id.trim().is_empty() {
         return Ok(());
     }
-    let token = require_notion_token()?;
+    let token = match secrets::get_secret("notion_access_token")? {
+        Some(t) => t,
+        None => return Ok(()),
+    };
     let client = reqwest::Client::new();
     let db_url = format!("https://api.notion.com/v1/databases/{database_id}");
     let resp = client
