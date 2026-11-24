@@ -1227,3 +1227,51 @@ button:disabled {
   border: 1px solid var(--border-subtle);
   color: var(--text-primary);
 }
+
+.wiki-term-btn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 0;
+  margin: 0 1px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.wiki-term-text {
+  border-bottom: 1.5px dotted var(--text-muted, #737373);
+}
+
+.wiki-term-btn:hover .wiki-term-text {
+  border-bottom-color: var(--text-primary, #111111);
+}
+
+.wiki-term-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  background-color: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  vertical-align: super;
+  margin-left: 1px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.wiki-term-btn:hover .wiki-term-mark {
+  background-color: #111111;
+  color: #ffffff;
+  border-color: #111111;
+}

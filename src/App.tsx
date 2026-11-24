@@ -551,12 +551,18 @@ const MainApp: React.FC = () => {
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const [globalDragOver, setGlobalDragOver] = useState(false);
   const notionDebounceTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const notionCatchupStartedRef = React.useRef(false);
-  const notionPullStartedRef = React.useRef(false);
+  const notionSyncInFlightRef = React.useRef<Set<string>>(new Set());
+  const notionRetryBackoffRef = React.useRef<Record<string, { attempts: number; nextAt: number }>>({});
+  const notionPullInFlightRef = React.useRef(false);
+  const lastNotionPullAtRef = React.useRef(0);
+  const snapshotNotesRef = React.useRef(snapshot.notes);
+  snapshotNotesRef.current = snapshot.notes;
 
   const syncNoteToNotion = useCallback(
     async (noteId: string, silent = false) => {
       if (!isTauriRuntime()) return;
+      if (notionSyncInFlightRef.current.has(noteId)) return;
+      notionSyncInFlightRef.current.add(noteId);
       setSnapshot((prev) => ({
         ...prev,
         notes: prev.notes.map((n) =>
@@ -567,11 +573,18 @@ const MainApp: React.FC = () => {
       }));
       try {
         const updated = await apiNotionSaveNote(noteId);
+        delete notionRetryBackoffRef.current[noteId];
         setSnapshot((prev) => ({
           ...prev,
           notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
         }));
       } catch (err) {
+        const prevAttempts = notionRetryBackoffRef.current[noteId]?.attempts ?? 0;
+        const delayMs = Math.min(60000, 8000 * Math.pow(2, prevAttempts));
+        notionRetryBackoffRef.current[noteId] = {
+          attempts: prevAttempts + 1,
+          nextAt: Date.now() + delayMs,
+        };
         setSnapshot((prev) => ({
           ...prev,
           notes: prev.notes.map((n) =>
@@ -588,6 +601,8 @@ const MainApp: React.FC = () => {
           ),
         }));
         if (!silent) throw err;
+      } finally {
+        notionSyncInFlightRef.current.delete(noteId);
       }
     },
     []
@@ -597,6 +612,7 @@ const MainApp: React.FC = () => {
     (noteId: string, immediate = false) => {
       if (!isTauriRuntime()) return;
       if (!secretStatus?.notion_access_token || !snapshot.settings.notion_target_id) return;
+      delete notionRetryBackoffRef.current[noteId];
       const existingTimer = notionDebounceTimersRef.current[noteId];
       if (existingTimer) clearTimeout(existingTimer);
       if (immediate) {
@@ -610,35 +626,99 @@ const MainApp: React.FC = () => {
     [secretStatus?.notion_access_token, snapshot.settings.notion_target_id, syncNoteToNotion]
   );
 
-  // Catch-up sync for past unsynced or failed notes when Notion is configured
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!secretStatus?.notion_access_token || !snapshot.settings.notion_target_id) return;
-    if (notionCatchupStartedRef.current) return;
-    const pending = snapshot.notes.filter(
-      (n) => n.notion_sync.status === 'not_synced' || n.notion_sync.status === 'failed'
-    );
-    if (pending.length === 0) return;
-    notionCatchupStartedRef.current = true;
-    void (async () => {
+  const pullFromNotionIfConfigured = useCallback(
+    async (force = false) => {
+      if (!isTauriRuntime()) return;
+      if (!secretStatus?.notion_access_token || !snapshot.settings.notion_target_id) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      if (notionPullInFlightRef.current) return;
+      const now = Date.now();
+      if (!force && now - lastNotionPullAtRef.current < 5000) return;
+      notionPullInFlightRef.current = true;
+      lastNotionPullAtRef.current = now;
+      try {
+        const snap = await apiNotionPullNotes();
+        setSnapshot(snap);
+      } catch {
+        // transient pull errors will be retried on next tick/focus
+      } finally {
+        notionPullInFlightRef.current = false;
+      }
+    },
+    [secretStatus?.notion_access_token, snapshot.settings.notion_target_id]
+  );
+
+  const retryPendingNotionSyncs = useCallback(
+    async (ignoreBackoff = false) => {
+      if (!isTauriRuntime()) return;
+      if (!secretStatus?.notion_access_token || !snapshot.settings.notion_target_id) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      const now = Date.now();
+      const pending = snapshotNotesRef.current.filter((n) => {
+        if (n.notion_sync.status !== 'not_synced' && n.notion_sync.status !== 'failed') {
+          return false;
+        }
+        if (notionSyncInFlightRef.current.has(n.id)) return false;
+        if (ignoreBackoff) return true;
+        const backoff = notionRetryBackoffRef.current[n.id];
+        return !backoff || backoff.nextAt <= now;
+      });
       for (const n of pending) {
         await syncNoteToNotion(n.id, true);
       }
-    })();
-  }, [secretStatus?.notion_access_token, snapshot.settings.notion_target_id, snapshot.notes, syncNoteToNotion]);
+    },
+    [secretStatus?.notion_access_token, snapshot.settings.notion_target_id, syncNoteToNotion]
+  );
 
-  // Auto-pull notes and spaces from Notion on startup when configured
+  // Initial + periodic retry & bidirectional pull sync (no restart required)
   useEffect(() => {
     if (!isTauriRuntime()) return;
     if (!secretStatus?.notion_access_token || !snapshot.settings.notion_target_id) return;
-    if (notionPullStartedRef.current) return;
-    notionPullStartedRef.current = true;
-    void apiNotionPullNotes()
-      .then((snap) => setSnapshot(snap))
-      .catch(() => {
-        // ignore transient startup pull error
-      });
-  }, [secretStatus?.notion_access_token, snapshot.settings.notion_target_id]);
+
+    void pullFromNotionIfConfigured(true);
+    void retryPendingNotionSyncs(true);
+
+    let tickCount = 0;
+    const timer = window.setInterval(() => {
+      tickCount += 1;
+      void retryPendingNotionSyncs(false);
+      if (tickCount % 2 === 0) {
+        void pullFromNotionIfConfigured(false);
+      }
+    }, 10000);
+
+    const handleWakeSync = () => {
+      notionRetryBackoffRef.current = {};
+      void retryPendingNotionSyncs(true);
+      void pullFromNotionIfConfigured(true);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        handleWakeSync();
+      }
+    };
+
+    window.addEventListener('focus', handleWakeSync);
+    window.addEventListener('online', handleWakeSync);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', handleWakeSync);
+      window.removeEventListener('online', handleWakeSync);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [
+    secretStatus?.notion_access_token,
+    snapshot.settings.notion_target_id,
+    pullFromNotionIfConfigured,
+    retryPendingNotionSyncs,
+  ]);
+
+  // Reflect remote Notion edits promptly when switching active note
+  useEffect(() => {
+    if (!activeNoteId) return;
+    void pullFromNotionIfConfigured(false);
+  }, [activeNoteId, pullFromNotionIfConfigured]);
 
   const refreshAll = useCallback(async () => {
     if (!isTauriRuntime()) return;

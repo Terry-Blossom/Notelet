@@ -188,6 +188,18 @@ export async function apiNotionPullNotes(): Promise<AppDataSnapshot> {
   return invoke<AppDataSnapshot>('notion_pull_notes');
 }
 
+export async function apiFetchNotionNoteContent(noteId: string): Promise<Note> {
+  return invoke<Note>('fetch_notion_note_content', { noteId });
+}
+
+export async function apiSetNoteStorageMode(noteId: string, notionOnly: boolean): Promise<Note> {
+  return invoke<Note>('set_note_storage_mode', { noteId, notionOnly });
+}
+
+export async function apiPurgeSyncedLocalNotes(): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>('purge_synced_local_notes');
+}
+
 export async function apiListIntegrationAdapters(): Promise<IntegrationAdapterInfo[]> {
   return invoke<IntegrationAdapterInfo[]>('list_integration_adapters');
 }

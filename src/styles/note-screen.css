@@ -698,8 +698,8 @@
   padding: 8px 12px 8px 20px;
   border-radius: 28px;
   background-color: #ffffff;
-  border: 1px solid var(--ns-border-pill);
-  box-shadow: var(--ns-shadow-input);
+  border: 1.5px solid #1a1a1a;
+  box-shadow: var(--ns-shadow-input, 0 2px 8px rgba(0, 0, 0, 0.08));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -714,12 +714,12 @@
   font-size: 14px;
   line-height: 22px;
   max-height: 120px;
-  color: var(--ns-text-primary);
+  color: var(--ns-text-primary, #1a1a1a);
   padding: 4px 0;
 }
 
 .note-composer-input::placeholder {
-  color: var(--ns-text-muted);
+  color: var(--ns-text-muted, #9a9a9a);
 }
 
 .note-composer-input:focus {

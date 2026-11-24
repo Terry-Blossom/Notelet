@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChatCitation } from '../types';
+import { openWikipediaWithConfirm, splitTextWithWikiTerms } from '../lib/wikiTerms';
 
 interface StreamingMarkdownArticleProps {
   content: string;
@@ -11,15 +12,49 @@ interface StreamingMarkdownArticleProps {
   thinking?: string | null;
 }
 
+function renderTextWithWiki(
+  text: string,
+  keyPrefix: string,
+  seenTerms: Set<string>
+): React.ReactNode {
+  const parts = splitTextWithWikiTerms(text, seenTerms);
+  if (parts.length === 1 && !parts[0].term) {
+    return text;
+  }
+  return parts.map((p, i) => {
+    if (!p.term) {
+      return <React.Fragment key={`${keyPrefix}-t-${i}`}>{p.text}</React.Fragment>;
+    }
+    const term = p.term;
+    return (
+      <button
+        key={`${keyPrefix}-w-${i}`}
+        type="button"
+        className="wiki-term-btn"
+        title={`「${term}」を Wikipedia で調べる`}
+        aria-label={`用語「${term}」を Wikipedia で調べる`}
+        onClick={(e) => {
+          e.stopPropagation();
+          void openWikipediaWithConfirm(term);
+        }}
+      >
+        <span className="wiki-term-text">{p.text}</span>
+        <span className="wiki-term-mark" aria-hidden="true">W</span>
+      </button>
+    );
+  });
+}
+
 function renderInlineMarkdown(
   text: string,
   citations?: ChatCitation[],
-  onCitationClick?: (citation: ChatCitation) => void
+  onCitationClick?: (citation: ChatCitation) => void,
+  seenTerms: Set<string> = new Set()
 ): React.ReactNode[] {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[\d+\])/g);
   return parts.map((part, idx) => {
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
-      return <strong key={idx}>{part.slice(2, -2)}</strong>;
+      return <strong key={idx}>{renderTextWithWiki(part.slice(2, -2), `b-${idx}`, seenTerms)}</strong>;
     }
     if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
       return (
@@ -51,7 +86,7 @@ function renderInlineMarkdown(
         );
       }
     }
-    return <React.Fragment key={idx}>{part}</React.Fragment>;
+    return <React.Fragment key={idx}>{renderTextWithWiki(part, `p-${idx}`, seenTerms)}</React.Fragment>;
   });
 }
 

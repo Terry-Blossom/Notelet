@@ -652,9 +652,237 @@ fn extract_rich_text(arr: Option<&Vec<Value>>) -> String {
         .join("")
 }
 
+async fn notion_send_with_retry<F>(build_req: F) -> Result<reqwest::Response, String>
+where
+    F: Fn() -> reqwest::RequestBuilder,
+{
+    let mut attempt = 0u32;
+    loop {
+        let resp_res = build_req().send().await;
+        match resp_res {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.as_u16() == 429 || status.is_server_error() {
+                    if attempt < 3 {
+                        let retry_after_secs = resp
+                            .headers()
+                            .get("retry-after")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.trim().parse::<u64>().ok())
+                            .unwrap_or(1 + attempt as u64);
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            (retry_after_secs * 1000).min(8000),
+                        ))
+                        .await;
+                        attempt += 1;
+                        continue;
+                    }
+                }
+                return Ok(resp);
+            }
+            Err(e) => {
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(600 * (attempt as u64 + 1))).await;
+                    attempt += 1;
+                    continue;
+                }
+                return Err(format!("Notion 通信エラー: {e}"));
+            }
+        }
+    }
+}
+
+fn parse_blocks_into_note_parts(
+    blocks: &[Value],
+    space_name: &mut String,
+    summary: &mut String,
+    manual_notes: &mut String,
+    segments: &mut Vec<TranscriptSegment>,
+    child_page_ids: &mut Vec<String>,
+) {
+    let mut section = "";
+    for b in blocks {
+        let btype = b["type"].as_str().unwrap_or("");
+        if btype == "child_page" {
+            if let Some(cid) = b["id"].as_str() {
+                if !cid.is_empty() {
+                    child_page_ids.push(cid.to_string());
+                }
+            }
+            continue;
+        }
+        if btype == "heading_2" {
+            let h = extract_rich_text(b["heading_2"]["rich_text"].as_array());
+            if h.contains("要約") {
+                section = "summary";
+            } else if h.contains("メモ") {
+                section = "memo";
+            } else if h.contains("文字起こし") {
+                section = "transcript";
+            }
+            continue;
+        }
+        if btype == "paragraph" {
+            let text = extract_rich_text(b["paragraph"]["rich_text"].as_array());
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(sp) = trimmed.strip_prefix("スペース:") {
+                let sp_trim = sp.trim();
+                if !sp_trim.is_empty() {
+                    *space_name = sp_trim.to_string();
+                }
+                continue;
+            }
+            match section {
+                "summary" if trimmed != "（要約なし）" => {
+                    if !summary.is_empty() {
+                        summary.push('\n');
+                    }
+                    summary.push_str(trimmed);
+                }
+                "memo" if trimmed != "（メモなし）" && trimmed != "（手入力メモなし）" => {
+                    if !manual_notes.is_empty() {
+                        manual_notes.push_str("<br>");
+                    }
+                    manual_notes.push_str(trimmed);
+                }
+                "transcript" if trimmed != "（文字起こしなし）" => {
+                    let body = if let Some(rest) = trimmed.strip_prefix('[') {
+                        if let Some(pos) = rest.find(']') {
+                            rest[pos + 1..].trim()
+                        } else {
+                            trimmed
+                        }
+                    } else {
+                        trimmed
+                    };
+                    if !body.is_empty() {
+                        segments.push(TranscriptSegment {
+                            id: Uuid::new_v4().to_string(),
+                            start_ms: (segments.len() as u64) * 5000,
+                            end_ms: ((segments.len() as u64) + 1) * 5000,
+                            speaker: String::new(),
+                            text: body.to_string(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+async fn fetch_page_blocks_parsed(
+    client: &reqwest::Client,
+    token: &str,
+    page_id: &str,
+) -> (String, String, String, Vec<TranscriptSegment>) {
+    let mut space_name = "一般".to_string();
+    let mut summary = String::new();
+    let mut manual_notes = String::new();
+    let mut segments = Vec::new();
+    let mut child_page_ids = Vec::new();
+
+    let blocks_url = format!("https://api.notion.com/v1/blocks/{page_id}/children?page_size=100");
+    if let Ok(b_resp) = notion_send_with_retry(|| {
+        client
+            .get(&blocks_url)
+            .bearer_auth(token)
+            .header("Notion-Version", NOTION_VERSION)
+    })
+    .await
+    {
+        if let Ok(b_json) = b_resp.json::<Value>().await {
+            if let Some(blocks) = b_json["results"].as_array() {
+                parse_blocks_into_note_parts(
+                    blocks,
+                    &mut space_name,
+                    &mut summary,
+                    &mut manual_notes,
+                    &mut segments,
+                    &mut child_page_ids,
+                );
+            }
+        }
+    }
+
+    // If this page is a portal with Part X/Y child pages, fetch their blocks too
+    for cid in child_page_ids {
+        let child_url = format!("https://api.notion.com/v1/blocks/{cid}/children?page_size=100");
+        if let Ok(c_resp) = notion_send_with_retry(|| {
+            client
+                .get(&child_url)
+                .bearer_auth(token)
+                .header("Notion-Version", NOTION_VERSION)
+        })
+        .await
+        {
+            if let Ok(c_json) = c_resp.json::<Value>().await {
+                if let Some(blocks) = c_json["results"].as_array() {
+                    let mut dummy_children = Vec::new();
+                    parse_blocks_into_note_parts(
+                        blocks,
+                        &mut space_name,
+                        &mut summary,
+                        &mut manual_notes,
+                        &mut segments,
+                        &mut dummy_children,
+                    );
+                }
+            }
+        }
+    }
+
+    (space_name, summary, manual_notes, segments)
+}
+
+pub async fn fetch_notion_page_for_viewer(
+    page_id: &str,
+) -> Result<(String, String, String, String, Vec<TranscriptSegment>, String), String> {
+    let token = secrets::get_secret("notion_access_token")?
+        .ok_or_else(|| "Notion が未接続です。".to_string())?;
+    let client = reqwest::Client::new();
+    let page_url = format!("https://api.notion.com/v1/pages/{page_id}");
+    let resp = notion_send_with_retry(|| {
+        client
+            .get(&page_url)
+            .bearer_auth(&token)
+            .header("Notion-Version", NOTION_VERSION)
+    })
+    .await?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let b = resp.text().await.unwrap_or_default();
+        return Err(format!("Notion ページ取得エラー ({s}): {b}"));
+    }
+    let page: Value = resp.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
+    let updated_at = page["last_edited_time"]
+        .as_str()
+        .unwrap_or(&Utc::now().to_rfc3339())
+        .to_string();
+    let mut title = String::new();
+    if let Some(props) = page["properties"].as_object() {
+        for (_k, pv) in props {
+            if pv["type"].as_str() == Some("title") {
+                title = extract_rich_text(pv["title"].as_array());
+                break;
+            }
+        }
+    }
+    if title.trim().is_empty() {
+        title = "無題のノート".to_string();
+    }
+    let (space_name, summary, manual_notes, segments) =
+        fetch_page_blocks_parsed(&client, &token, page_id).await;
+    Ok((title, space_name, summary, manual_notes, segments, updated_at))
+}
+
 pub async fn pull_notes_from_notion(
     settings: &AppSettings,
-) -> Result<Vec<(Note, String)>, String> {
+    known_timestamps: &std::collections::HashMap<String, String>,
+) -> Result<Vec<(Note, String, bool)>, String> {
     let token = secrets::get_secret("notion_access_token")?
         .ok_or_else(|| "Notion が未接続です。".to_string())?;
     if settings.notion_target_id.trim().is_empty() || settings.notion_target_type != "database" {
@@ -666,28 +894,46 @@ pub async fn pull_notes_from_notion(
         "https://api.notion.com/v1/databases/{}/query",
         settings.notion_target_id
     );
-    let resp = client
-        .post(&query_url)
-        .bearer_auth(&token)
-        .header("Notion-Version", NOTION_VERSION)
-        .json(&json!({ "page_size": 50 }))
-        .send()
-        .await
-        .map_err(|e| format!("Notion 読み込み通信エラー: {e}"))?;
 
-    if !resp.status().is_success() {
-        let s = resp.status();
-        let b = resp.text().await.unwrap_or_default();
-        return Err(format!("Notion データベース取得エラー ({s}): {b}"));
+    let mut all_pages: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10 {
+        let body = if let Some(ref c) = cursor {
+            json!({ "page_size": 100, "start_cursor": c })
+        } else {
+            json!({ "page_size": 100 })
+        };
+        let resp = notion_send_with_retry(|| {
+            client
+                .post(&query_url)
+                .bearer_auth(&token)
+                .header("Notion-Version", NOTION_VERSION)
+                .json(&body)
+        })
+        .await?;
+
+        if !resp.status().is_success() {
+            let s = resp.status();
+            let b = resp.text().await.unwrap_or_default();
+            return Err(format!("Notion データベース取得エラー ({s}): {b}"));
+        }
+
+        let v: Value = resp.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
+        if let Some(pages) = v["results"].as_array() {
+            all_pages.extend(pages.iter().cloned());
+        }
+        if v["has_more"].as_bool() == Some(true) {
+            cursor = v["next_cursor"].as_str().map(|s| s.to_string());
+            if cursor.is_none() {
+                break;
+            }
+        } else {
+            break;
+        }
     }
 
-    let v: Value = resp.json().await.map_err(|e| format!("応答解析失敗: {e}"))?;
     let mut out = Vec::new();
-    let Some(pages) = v["results"].as_array() else {
-        return Ok(out);
-    };
-
-    for page in pages {
+    for page in all_pages {
         let page_id = page["id"].as_str().unwrap_or("").to_string();
         if page_id.is_empty() {
             continue;
@@ -715,88 +961,18 @@ pub async fn pull_notes_from_notion(
             title = "無題のノート".to_string();
         }
 
-        let mut space_name = "一般".to_string();
-        let mut summary = String::new();
-        let mut manual_notes = String::new();
-        let mut segments = Vec::new();
+        // Skip block fetch if local copy is already up-to-date or newer
+        let unchanged = known_timestamps
+            .get(&page_id)
+            .map(|local_ts| local_ts == &updated_at)
+            .unwrap_or(false);
 
-        let blocks_url = format!("https://api.notion.com/v1/blocks/{page_id}/children?page_size=100");
-        if let Ok(b_resp) = client
-            .get(&blocks_url)
-            .bearer_auth(&token)
-            .header("Notion-Version", NOTION_VERSION)
-            .send()
-            .await
-        {
-            if let Ok(b_json) = b_resp.json::<Value>().await {
-                if let Some(blocks) = b_json["results"].as_array() {
-                    let mut section = "";
-                    for b in blocks {
-                        let btype = b["type"].as_str().unwrap_or("");
-                        if btype == "heading_2" {
-                            let h = extract_rich_text(b["heading_2"]["rich_text"].as_array());
-                            if h.contains("要約") {
-                                section = "summary";
-                            } else if h.contains("メモ") {
-                                section = "memo";
-                            } else if h.contains("文字起こし") {
-                                section = "transcript";
-                            }
-                            continue;
-                        }
-                        if btype == "paragraph" {
-                            let text = extract_rich_text(b["paragraph"]["rich_text"].as_array());
-                            let trimmed = text.trim();
-                            if trimmed.is_empty() {
-                                continue;
-                            }
-                            if let Some(sp) = trimmed.strip_prefix("スペース:") {
-                                let sp_trim = sp.trim();
-                                if !sp_trim.is_empty() {
-                                    space_name = sp_trim.to_string();
-                                }
-                                continue;
-                            }
-                            match section {
-                                "summary" if trimmed != "（要約なし）" => {
-                                    if !summary.is_empty() {
-                                        summary.push('\n');
-                                    }
-                                    summary.push_str(trimmed);
-                                }
-                                "memo" if trimmed != "（メモなし）" && trimmed != "（手入力メモなし）" => {
-                                    if !manual_notes.is_empty() {
-                                        manual_notes.push_str("<br>");
-                                    }
-                                    manual_notes.push_str(trimmed);
-                                }
-                                "transcript" if trimmed != "（文字起こしなし）" => {
-                                    let body = if let Some(rest) = trimmed.strip_prefix('[') {
-                                        if let Some(pos) = rest.find(']') {
-                                            rest[pos + 1..].trim()
-                                        } else {
-                                            trimmed
-                                        }
-                                    } else {
-                                        trimmed
-                                    };
-                                    if !body.is_empty() {
-                                        segments.push(TranscriptSegment {
-                                            id: Uuid::new_v4().to_string(),
-                                            start_ms: (segments.len() as u64) * 5000,
-                                            end_ms: ((segments.len() as u64) + 1) * 5000,
-                                            speaker: String::new(),
-                                            text: body.to_string(),
-                                        });
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let (space_name, summary, manual_notes, segments, blocks_loaded) = if unchanged {
+            ("一般".to_string(), String::new(), String::new(), Vec::new(), false)
+        } else {
+            let (sp, sum, man, segs) = fetch_page_blocks_parsed(&client, &token, &page_id).await;
+            (sp, sum, man, segs, true)
+        };
 
         let note = Note {
             id: Uuid::new_v4().to_string(),
@@ -827,8 +1003,13 @@ pub async fn pull_notes_from_notion(
             },
             audio_path: None,
             audio_encrypted: false,
+            storage_mode: if settings.notion_viewer_mode {
+                "notion_only".to_string()
+            } else {
+                "local".to_string()
+            },
         };
-        out.push((note, space_name));
+        out.push((note, space_name, blocks_loaded));
     }
 
     Ok(out)

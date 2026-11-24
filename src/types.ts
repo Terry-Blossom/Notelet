@@ -94,6 +94,7 @@ export interface Note {
   notion_sync: NotionSyncState;
   audio_path: string | null;
   audio_encrypted: boolean;
+  storage_mode?: 'local' | 'notion_only';
 }
 
 export interface Folder {
@@ -175,6 +176,7 @@ export interface AppSettings {
   jira_project_key?: string;
   enable_local_diarization?: boolean;
   silence_skip_enabled?: boolean;
+  notion_viewer_mode?: boolean;
 }
 
 export interface IssueCreateResult {

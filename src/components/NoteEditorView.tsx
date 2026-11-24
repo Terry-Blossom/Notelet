@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   ClipboardPaste,
+  Cloud,
   Copy,
   FileText,
   Folder as FolderIcon,
@@ -55,8 +56,10 @@ import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 import { confirmActionDialog, confirmDeleteDialog } from './ConfirmDialog';
 import {
   apiCreateIssueFromAction,
+  apiFetchNotionNoteContent,
   apiGetUpcomingCalendarEvents,
   apiReadNoteAudio,
+  apiSetNoteStorageMode,
   isTauriRuntime,
 } from '../lib/tauri';
 
@@ -259,10 +262,40 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [calendarMenuOpen, setCalendarMenuOpen] = useState<boolean>(false);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEventItem[]>([]);
   const [streamingChatText, setStreamingChatText] = useState<string>('');
+  const [viewerNote, setViewerNote] = useState<Note | null>(null);
+  const [viewerLoading, setViewerLoading] = useState<boolean>(false);
+  const [viewerError, setViewerError] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const inNoteSearchInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlCacheRef = useRef<Record<string, string>>({});
+
+  const reloadNotionViewer = async () => {
+    if (!isTauriRuntime() || note.storage_mode !== 'notion_only' || !note.notion_sync.page_id) {
+      return;
+    }
+    setViewerLoading(true);
+    setViewerError(null);
+    try {
+      const fetched = await apiFetchNotionNoteContent(note.id);
+      setViewerNote(fetched);
+      if (fetched.title && fetched.title !== titleDraft) {
+        setTitleDraft(fetched.title);
+      }
+    } catch (err) {
+      setViewerError(String(err));
+    } finally {
+      setViewerLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setViewerNote(null);
+    setViewerError(null);
+    if (note.storage_mode === 'notion_only' && isTauriRuntime() && note.notion_sync.page_id) {
+      void reloadNotionViewer();
+    }
+  }, [note.id, note.storage_mode, note.updated_at]);
 
   useEffect(() => {
     if (initialSearchQuery && initialSearchQuery.trim()) {
@@ -347,7 +380,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   // Sync rich memo HTML when note or activeTab switches
   useEffect(() => {
     if (activeTab === 'memo' && memoEditorRef.current) {
-      const targetHtml = note.manual_notes || '';
+      const sourceMemo =
+        note.storage_mode === 'notion_only' && viewerNote && viewerNote.id === note.id
+          ? viewerNote.manual_notes
+          : note.manual_notes;
+      const targetHtml = sourceMemo || '';
       if (
         document.activeElement !== memoEditorRef.current &&
         memoEditorRef.current.innerHTML !== targetHtml
@@ -355,7 +392,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         memoEditorRef.current.innerHTML = targetHtml;
       }
     }
-  }, [note.id, activeTab, note.manual_notes]);
+  }, [note.id, activeTab, note.manual_notes, note.storage_mode, viewerNote]);
 
   const saveMemoHtml = (html: string) => {
     if (html === note.manual_notes) return;
@@ -450,13 +487,18 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     prevExtRecRef.current = isExternalRecording;
   }, [isExternalRecording]);
 
+  const effectiveNote =
+    note.storage_mode === 'notion_only' && viewerNote && viewerNote.id === note.id
+      ? viewerNote
+      : note;
+
   const displayedSegments = useMemo(() => {
     if (isRecording) {
-      const merged = [...note.segments, ...externalLiveSegments, ...localFallbackSegments];
+      const merged = [...effectiveNote.segments, ...externalLiveSegments, ...localFallbackSegments];
       if (merged.length > 0) return merged;
     }
-    return note.segments;
-  }, [isRecording, externalLiveSegments, localFallbackSegments, note.segments]);
+    return effectiveNote.segments;
+  }, [isRecording, externalLiveSegments, localFallbackSegments, effectiveNote.segments]);
 
   const totalDurationMs = useMemo(() => {
     if (note.duration_sec > 0) return note.duration_sec * 1000;
@@ -565,13 +607,28 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         return;
       }
       try {
-        let dataUrl = audioUrlCacheRef.current[note.id];
-        if (!dataUrl) {
-          dataUrl = await apiReadNoteAudio(note.id);
-          audioUrlCacheRef.current[note.id] = dataUrl;
+        let playUrl = audioUrlCacheRef.current[note.id];
+        if (!playUrl) {
+          const dataUrl = await apiReadNoteAudio(note.id);
+          if (dataUrl.startsWith('data:')) {
+            const commaIdx = dataUrl.indexOf(',');
+            const header = dataUrl.slice(5, commaIdx);
+            const mime = header.split(';')[0] || 'audio/wav';
+            const b64 = dataUrl.slice(commaIdx + 1);
+            const bin = atob(b64);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i += 1) {
+              bytes[i] = bin.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: mime });
+            playUrl = URL.createObjectURL(blob);
+          } else {
+            playUrl = dataUrl;
+          }
+          audioUrlCacheRef.current[note.id] = playUrl;
         }
         if (!audioRef.current) {
-          const el = new Audio(dataUrl);
+          const el = new Audio(playUrl);
           el.addEventListener('timeupdate', () => {
             setPlaybackMs(Math.round(el.currentTime * 1000));
           });
@@ -580,8 +637,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             setPlaybackMs(0);
           });
           audioRef.current = el;
-        } else if (audioRef.current.src !== dataUrl) {
-          audioRef.current.src = dataUrl;
+        } else if (audioRef.current.src !== playUrl) {
+          audioRef.current.src = playUrl;
         }
         audioRef.current.playbackRate = playbackRate;
         const seekSec = ((startMs ?? playbackMs) || 0) / 1000;
@@ -2568,6 +2625,42 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     type="button"
                     className="note-sidebar-item"
                     onClick={async () => {
+                      const toNotionOnly = note.storage_mode !== 'notion_only';
+                      const ok = await confirmActionDialog(
+                        toNotionOnly
+                          ? 'このノートを「Notionのみ（ローカル削除）」にしますか？'
+                          : 'このノートをローカルにも保存しますか？',
+                        toNotionOnly
+                          ? 'Notion に同期したうえでローカルの音声・本文データを削除し、オンラインビュワーとして閲覧します。'
+                          : 'Notion から本文を取得してローカルに保存します。',
+                        toNotionOnly ? 'Notionのみにする' : 'ローカルに保存'
+                      );
+                      if (!ok) return;
+                      if (isTauriRuntime()) {
+                        const updated = await apiSetNoteStorageMode(note.id, toNotionOnly);
+                        onUpdateNote(updated);
+                      } else {
+                        onUpdateNote({ ...note, storage_mode: toNotionOnly ? 'notion_only' : 'local' });
+                      }
+                      notify(
+                        toNotionOnly
+                          ? 'Notionのみ（オンラインビュワー）に切り替えました'
+                          : 'ローカルに保存しました'
+                      );
+                      setShareOpen(false);
+                    }}
+                  >
+                    <Cloud size={15} strokeWidth={1.75} />
+                    <span>
+                      {note.storage_mode === 'notion_only'
+                        ? 'ローカルにダウンロード'
+                        : 'Notionのみにする（ローカル削除）'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="note-sidebar-item"
+                    onClick={async () => {
                       await onShareSlack(note.id);
                       notify('Slack に送信しました');
                       setShareOpen(false);
@@ -2670,6 +2763,59 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           >
             <Check size={14} strokeWidth={1.75} />
             <span>{toast}</span>
+          </div>
+        )}
+
+        {note.storage_mode === 'notion_only' && (
+          <div
+            style={{
+              marginTop: '10px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+              flexWrap: 'wrap',
+              padding: '8px 12px',
+              borderRadius: '10px',
+              backgroundColor: '#F3F4F6',
+              border: '1px solid #E5E7EB',
+              fontSize: '12.5px',
+              color: 'var(--ns-text-secondary)',
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <Cloud size={14} strokeWidth={1.75} />
+              <strong>オンライン閲覧中（Notionのみ）</strong>
+              {viewerLoading && <span>— Notion から読み込み中...</span>}
+              {viewerError && <span style={{ color: '#B91C1C' }}>— 読み込み失敗: {viewerError}</span>}
+            </span>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ height: '26px', fontSize: '12px', padding: '0 10px' }}
+                disabled={viewerLoading}
+                onClick={() => void reloadNotionViewer()}
+              >
+                最新を読み込む
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ height: '26px', fontSize: '12px', padding: '0 10px' }}
+                onClick={async () => {
+                  if (isTauriRuntime()) {
+                    const updated = await apiSetNoteStorageMode(note.id, false);
+                    onUpdateNote(updated);
+                  } else {
+                    onUpdateNote({ ...note, storage_mode: 'local' });
+                  }
+                  notify('ローカルに保存しました');
+                }}
+              >
+                ローカルに保存
+              </button>
+            </div>
           </div>
         )}
 
@@ -2849,7 +2995,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
                   <div aria-label="要約内容" style={{ padding: '4px 0' }}>
                     <StreamingMarkdownArticle
-                      content={isSummarizingThisNote ? '' : note.summary}
+                      content={isSummarizingThisNote ? '' : effectiveNote.summary}
                       isGenerating={isSummarizingThisNote}
                       animateOnChange
                       placeholder="要約はまだ生成されていません（下のボタンまたは右上から生成できます）"

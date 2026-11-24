@@ -14,10 +14,12 @@ import {
 } from 'lucide-react';
 import { AppSettings, AsrModelInfo, Folder, Note, SecretStatus, StorageStats, UpdateCheckResult } from '../types';
 import { GranolaImportCard } from './GranolaImportCard';
+import { confirmActionDialog } from './ConfirmDialog';
 import {
   apiCompressRetainedAudio,
   apiGetStorageStats,
   apiOpenStorageFolder,
+  apiPurgeSyncedLocalNotes,
   isTauriRuntime,
 } from '../lib/tauri';
 
@@ -941,6 +943,48 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
 
+            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <strong style={{ fontSize: '13px' }}>Notion オンラインビュワーモード</strong>
+                  <p className="text-muted" style={{ margin: '2px 0 0', fontSize: '12px' }}>
+                    Google Keep のように、同期済みノートの本体や録音音声をローカルから削除し、Notion 上のデータを直接閲覧します。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ height: '28px', fontSize: '12px' }}
+                  onClick={async () => {
+                    const ok = await confirmActionDialog(
+                      '同期済みノートのローカルデータを削除して「Notionのみ」にしますか？',
+                      'Notion 上のデータは保持され、Notelet からオンライン閲覧できます。',
+                      '整理する'
+                    );
+                    if (!ok) return;
+                    if (isTauriRuntime()) {
+                      await apiPurgeSyncedLocalNotes();
+                      const stats = await apiGetStorageStats();
+                      setStorageStats(stats);
+                    }
+                    flash('同期済みノートを Notion オンラインのみに整理しました');
+                  }}
+                >
+                  同期済みノートのローカルデータを整理
+                </button>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.notion_viewer_mode)}
+                  onChange={(e) => {
+                    update({ notion_viewer_mode: e.target.checked });
+                  }}
+                />
+                <span>Notion 同期後にローカルの本文・音声を自動削除する</span>
+              </label>
+            </div>
+
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <strong style={{ fontSize: '13px' }}>既定の話者ラベル（自動振り分け用）</strong>
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
@@ -1078,7 +1122,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.12.0'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.13.0'}</strong>
                 </div>
                 <button
                   type="button"

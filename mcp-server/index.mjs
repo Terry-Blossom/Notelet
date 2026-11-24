@@ -164,7 +164,7 @@ function handleRequest(req) {
         },
         serverInfo: {
           name: 'koenote-mcp',
-          version: '0.12.0',
+          version: '0.13.0',
         },
       },
     };

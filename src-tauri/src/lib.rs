@@ -357,9 +357,23 @@ fn read_note_audio(state: State<AppState>, note_id: String) -> Result<String, St
         }
     };
     let bytes = storage::read_retained_audio_bytes(&audio_path, encrypted)?;
+    let ext = std::path::Path::new(&audio_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime = match ext.as_str() {
+        "mp3" => "audio/mpeg",
+        "m4a" | "mp4" => "audio/mp4",
+        "ogg" | "opus" => "audio/ogg",
+        "webm" => "audio/webm",
+        "flac" => "audio/flac",
+        "aac" => "audio/aac",
+        _ => "audio/wav",
+    };
     use base64::Engine as _;
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-    Ok(format!("data:audio/wav;base64,{encoded}"))
+    Ok(format!("data:{mime};base64,{encoded}"))
 }
 
 #[tauri::command]
@@ -962,6 +976,7 @@ fn apply_chat_actions(
                     notion_sync: models::NotionSyncState::default(),
                     audio_path: None,
                     audio_encrypted: false,
+                    storage_mode: "local".to_string(),
                 };
                 storage::upsert_note(data, note);
                 results.push(models::ChatActionResult {
@@ -1112,6 +1127,21 @@ async fn notion_search_targets(query: String) -> Result<Vec<NotionTarget>, Strin
     notion::search_targets(&query).await
 }
 
+fn strip_local_note_body(note: &mut Note) {
+    if let Some(ref p) = note.audio_path {
+        let _ = std::fs::remove_file(p);
+    }
+    note.audio_path = None;
+    note.audio_encrypted = false;
+    note.segments.clear();
+    note.summary.clear();
+    note.manual_notes.clear();
+    note.decisions.clear();
+    note.action_items.clear();
+    note.follow_up_draft.clear();
+    note.storage_mode = "notion_only".to_string();
+}
+
 #[tauri::command]
 async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result<Note, String> {
     let (settings, mut note, folder_name) = {
@@ -1139,6 +1169,9 @@ async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result
             note.notion_sync.last_synced_at = Some(synced_at);
             note.notion_sync.status = "synced".to_string();
             note.notion_sync.last_error = None;
+            if settings.notion_viewer_mode || note.storage_mode == "notion_only" {
+                strip_local_note_body(&mut note);
+            }
             let mut data = state.data.lock().unwrap();
             storage::upsert_note(&mut data, note.clone());
             storage::append_audit(&mut data, "notion_synced", &format!("note_id={}", note.id));
@@ -1156,6 +1189,101 @@ async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result
     }
 }
 
+#[tauri::command]
+async fn fetch_notion_note_content(
+    state: State<'_, AppState>,
+    note_id: String,
+) -> Result<Note, String> {
+    let mut note = {
+        let data = state.data.lock().unwrap();
+        data.notes
+            .iter()
+            .find(|n| n.id == note_id)
+            .cloned()
+            .ok_or_else(|| "ノートが見つかりません".to_string())?
+    };
+    let page_id = note
+        .notion_sync
+        .page_id
+        .clone()
+        .ok_or_else(|| "このノートはまだ Notion に保存されていません".to_string())?;
+    let (title, _space_name, summary, manual_notes, segments, updated_at) =
+        notion::fetch_notion_page_for_viewer(&page_id).await?;
+    note.title = title;
+    note.summary = summary;
+    note.manual_notes = manual_notes;
+    note.segments = segments;
+    note.updated_at = updated_at;
+    Ok(note)
+}
+
+#[tauri::command]
+async fn set_note_storage_mode(
+    state: State<'_, AppState>,
+    note_id: String,
+    notion_only: bool,
+) -> Result<Note, String> {
+    let (settings, mut note, folder_name) = {
+        let data = state.data.lock().unwrap();
+        let n = data
+            .notes
+            .iter()
+            .find(|x| x.id == note_id)
+            .cloned()
+            .ok_or_else(|| "ノートが見つかりません".to_string())?;
+        let fname = data
+            .folders
+            .iter()
+            .find(|f| f.id == n.folder_id)
+            .map(|f| f.name.clone())
+            .unwrap_or_else(|| "一般".to_string());
+        (data.settings.clone(), n, fname)
+    };
+
+    if notion_only {
+        if note.notion_sync.page_id.is_none() || note.notion_sync.status != "synced" {
+            let (page_id, page_url, synced_at) =
+                notion::save_note_to_notion(&note, &folder_name, &settings).await?;
+            note.notion_sync.page_id = Some(page_id);
+            note.notion_sync.page_url = Some(page_url);
+            note.notion_sync.database_id = Some(settings.notion_target_id.clone());
+            note.notion_sync.last_synced_at = Some(synced_at);
+            note.notion_sync.status = "synced".to_string();
+            note.notion_sync.last_error = None;
+        }
+        strip_local_note_body(&mut note);
+    } else {
+        if let Some(ref page_id) = note.notion_sync.page_id {
+            let (title, _space_name, summary, manual_notes, segments, updated_at) =
+                notion::fetch_notion_page_for_viewer(page_id).await?;
+            note.title = title;
+            note.summary = summary;
+            note.manual_notes = manual_notes;
+            note.segments = segments;
+            note.updated_at = updated_at;
+        }
+        note.storage_mode = "local".to_string();
+    }
+
+    let mut data = state.data.lock().unwrap();
+    storage::upsert_note(&mut data, note.clone());
+    storage::save_snapshot(&data)?;
+    Ok(note)
+}
+
+#[tauri::command]
+async fn purge_synced_local_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot, String> {
+    let mut data = state.data.lock().unwrap();
+    for n in &mut data.notes {
+        if n.notion_sync.status == "synced" && n.notion_sync.page_id.is_some() {
+            strip_local_note_body(n);
+        }
+    }
+    storage::append_audit(&mut data, "purge_synced_local_notes", "converted synced notes to notion_only");
+    storage::save_snapshot(&data)?;
+    Ok(data.clone())
+}
+
 fn parse_rfc3339_millis(s: &str) -> i64 {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.timestamp_millis())
@@ -1164,14 +1292,20 @@ fn parse_rfc3339_millis(s: &str) -> i64 {
 
 #[tauri::command]
 async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot, String> {
-    let settings = {
+    let (settings, known_timestamps) = {
         let data = state.data.lock().unwrap();
-        data.settings.clone()
+        let mut map = std::collections::HashMap::new();
+        for n in &data.notes {
+            if let Some(ref pid) = n.notion_sync.page_id {
+                map.insert(pid.clone(), n.updated_at.clone());
+            }
+        }
+        (data.settings.clone(), map)
     };
-    let pulled = notion::pull_notes_from_notion(&settings).await?;
+    let pulled = notion::pull_notes_from_notion(&settings, &known_timestamps).await?;
 
     let mut pulled_page_ids = std::collections::HashSet::new();
-    for (n, _) in &pulled {
+    for (n, _, _) in &pulled {
         if let Some(pid) = &n.notion_sync.page_id {
             pulled_page_ids.insert(pid.clone());
         }
@@ -1213,7 +1347,7 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
             storage::delete_note(&mut data, &nid);
         }
 
-        for (mut note, space_name) in pulled {
+        for (mut note, space_name, blocks_loaded) in pulled {
             let notion_ts = parse_rfc3339_millis(&note.updated_at);
             let page_id_opt = note.notion_sync.page_id.clone();
 
@@ -1238,21 +1372,22 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
                 }
             }
 
-            // Find or create folder for space_name
-            let folder_id = if let Some(existing_f) = data.folders.iter().find(|f| f.name == space_name) {
-                existing_f.id.clone()
-            } else {
-                let new_f = Folder {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    name: space_name.clone(),
-                    is_shared: false,
-                    permission: "owner".to_string(),
+            if blocks_loaded {
+                let folder_id = if let Some(existing_f) = data.folders.iter().find(|f| f.name == space_name) {
+                    existing_f.id.clone()
+                } else {
+                    let new_f = Folder {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        name: space_name.clone(),
+                        is_shared: false,
+                        permission: "owner".to_string(),
+                    };
+                    let id = new_f.id.clone();
+                    data.folders.push(new_f);
+                    id
                 };
-                let id = new_f.id.clone();
-                data.folders.push(new_f);
-                id
-            };
-            note.folder_id = folder_id;
+                note.folder_id = folder_id;
+            }
 
             if let Some(ref page_id) = page_id_opt {
                 if let Some(existing_n) = data
@@ -1260,20 +1395,31 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
                     .iter_mut()
                     .find(|n| n.notion_sync.page_id.as_ref() == Some(page_id))
                 {
+                    if !blocks_loaded {
+                        // Unchanged remote timestamp -> only refresh title/sync status
+                        existing_n.title = note.title;
+                        existing_n.notion_sync.status = "synced".to_string();
+                        existing_n.notion_sync.last_error = None;
+                        continue;
+                    }
                     let local_ts = parse_rfc3339_millis(&existing_n.updated_at);
                     if notion_ts > local_ts {
                         // Notion is newer -> update local note
                         existing_n.title = note.title;
                         existing_n.folder_id = note.folder_id;
                         existing_n.updated_at = note.updated_at;
-                        existing_n.summary = note.summary;
-                        existing_n.manual_notes = note.manual_notes;
-                        if !note.segments.is_empty() {
-                            existing_n.segments = note.segments;
+                        if existing_n.storage_mode != "notion_only" && !data.settings.notion_viewer_mode {
+                            existing_n.summary = note.summary;
+                            existing_n.manual_notes = note.manual_notes;
+                            if !note.segments.is_empty() {
+                                existing_n.segments = note.segments;
+                            }
+                        } else {
+                            strip_local_note_body(existing_n);
                         }
                         existing_n.notion_sync.status = "synced".to_string();
                         existing_n.notion_sync.last_error = None;
-                    } else if local_ts > notion_ts {
+                    } else if local_ts > notion_ts && existing_n.storage_mode != "notion_only" {
                         // Local is newer -> keep local and push back to Notion
                         let existing_clone = existing_n.clone();
                         let folder_name = data
@@ -1286,6 +1432,9 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
                     }
                     continue;
                 }
+            }
+            if data.settings.notion_viewer_mode {
+                strip_local_note_body(&mut note);
             }
             data.notes.push(note);
         }
@@ -1772,6 +1921,9 @@ pub fn run() {
             notion_search_targets,
             notion_save_note,
             notion_pull_notes,
+            fetch_notion_note_content,
+            set_note_storage_mode,
+            purge_synced_local_notes,
             list_integration_adapters,
             share_to_slack_cmd,
             send_webhook_cmd,

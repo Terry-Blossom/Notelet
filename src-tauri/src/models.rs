@@ -132,6 +132,12 @@ pub struct Note {
     pub notion_sync: NotionSyncState,
     pub audio_path: Option<String>,
     pub audio_encrypted: bool,
+    #[serde(default = "default_storage_mode")]
+    pub storage_mode: String, // "local" | "notion_only"
+}
+
+fn default_storage_mode() -> String {
+    "local".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,6 +263,8 @@ pub struct AppSettings {
     pub enable_local_diarization: bool,
     #[serde(default)]
     pub silence_skip_enabled: bool,
+    #[serde(default)]
+    pub notion_viewer_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -316,6 +324,7 @@ impl Default for AppSettings {
             jira_project_key: String::new(),
             enable_local_diarization: false,
             silence_skip_enabled: false,
+            notion_viewer_mode: false,
         }
     }
 }
