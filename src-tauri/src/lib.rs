@@ -1408,7 +1408,7 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
                         existing_n.title = note.title;
                         existing_n.folder_id = note.folder_id;
                         existing_n.updated_at = note.updated_at;
-                        if existing_n.storage_mode != "notion_only" && !data.settings.notion_viewer_mode {
+                        if existing_n.storage_mode != "notion_only" && !settings.notion_viewer_mode {
                             existing_n.summary = note.summary;
                             existing_n.manual_notes = note.manual_notes;
                             if !note.segments.is_empty() {
