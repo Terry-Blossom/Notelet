@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   Home,
@@ -116,7 +116,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   llm_endpoint: 'http://localhost:11434',
   record_shortcut: 'CommandOrControl+Shift+R',
   voice_typing_shortcut: 'CommandOrControl+Shift+V',
-  delete_audio_after_transcribe: true,
+  delete_audio_after_transcribe: false,
   encrypt_retained_audio: true,
   retention_days: 0,
   participant_notice_enabled: false,
@@ -632,6 +632,7 @@ const MainApp: React.FC = () => {
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string>('');
   const [recordingNoteId, setRecordingNoteId] = useState<string | null>(null);
+  const voiceTypingRef = useRef(false);
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeProgress, setTranscribeProgress] = useState<{
     note_id: string;
@@ -954,11 +955,13 @@ const MainApp: React.FC = () => {
     let unlistenOverlayStop: (() => void) | undefined;
     let unlistenOverlayStart: (() => void) | undefined;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
-      const f1 = await listen<string>('global-shortcut-triggered', () => {
+      const f1 = await listen<{ role?: string }>('global-shortcut-triggered', (event) => {
+        const role = event.payload?.role === 'voice_typing' ? 'voice_typing' : 'record';
         if (recStatus.state === 'recording' || recStatus.state === 'paused') {
+          if (role === 'voice_typing' && !voiceTypingRef.current) return;
           void handleStopAndFinish();
         } else {
-          void handleStartRecording();
+          void handleStartRecording(role === 'voice_typing');
         }
       });
       const f2 = await listen('overlay-stop-recording', () => {
@@ -999,7 +1002,8 @@ const MainApp: React.FC = () => {
     return () => clearInterval(timer);
   }, [recStatus.state]);
 
-  const handleStartRecording = async () => {
+  const handleStartRecording = async (voiceTyping = false) => {
+    voiceTypingRef.current = voiceTyping;
     setTranscribeError(null);
     setLiveManualNotes('');
     setLiveSegments([]);
@@ -1009,7 +1013,7 @@ const MainApp: React.FC = () => {
       setSnapshot((prev) => ({ ...prev, notes: [note, ...prev.notes] }));
       setRecordingNoteId(note.id);
       setActiveNoteId(note.id);
-      setView('editor');
+      if (!voiceTyping) setView('editor');
       return;
     }
     try {
@@ -1018,16 +1022,20 @@ const MainApp: React.FC = () => {
       const nextSnap = await apiSaveNote(note);
       setSnapshot(nextSnap);
       setRecordingNoteId(note.id);
-      setActiveNoteId(note.id);
-      setView('editor');
+      if (!voiceTyping) {
+        setActiveNoteId(note.id);
+        setView('editor');
+      }
       const st = await apiStartRecording(sourceMode, selectedDeviceId || null);
       setRecStatus(st);
     } catch (e) {
+      voiceTypingRef.current = false;
       setBannerMessage(String(e));
     }
   };
 
   const handleStartRecordingInNote = async () => {
+    voiceTypingRef.current = false;
     setTranscribeError(null);
     setLiveSegments([]);
     setRecordingNoteId(activeNoteId);
@@ -1041,6 +1049,7 @@ const MainApp: React.FC = () => {
   };
 
   const handleStopAndFinish = async () => {
+    const isVoiceTyping = voiceTypingRef.current;
     const finalStatus = isTauriRuntime() ? await apiStopRecording() : recStatus;
     setRecStatus(INITIAL_RECORDING_STATUS);
     const targetId = recordingNoteId || activeNoteId;
@@ -1077,14 +1086,20 @@ const MainApp: React.FC = () => {
     if (isTauriRuntime()) {
       const nextSnap = await apiSaveNote(targetNote);
       setSnapshot(nextSnap);
-      setActiveNoteId(targetNote.id);
-      setView('editor');
+      if (!isVoiceTyping) {
+        setActiveNoteId(targetNote.id);
+        setView('editor');
+      }
 
       if (finalStatus.temp_wav_path) {
         setTranscribing(true);
         setTranscribeError(null);
         try {
-          const updatedNote = await apiTranscribeRecording(finalStatus.temp_wav_path, targetNote.id);
+          const updatedNote = await apiTranscribeRecording(
+            finalStatus.temp_wav_path,
+            targetNote.id,
+            Boolean(existing)
+          );
           const nextSegs =
             updatedNote.segments.length > 0 ? updatedNote.segments : capturedLiveSegments;
           const mergedSegments =
@@ -1095,8 +1110,22 @@ const MainApp: React.FC = () => {
           const savedSnap = await apiSaveNote(finalNote);
           setSnapshot(savedSnap);
           setLiveSegments([]);
+          if (isVoiceTyping) {
+            const text = finalNote.segments
+              .map((seg) => seg.text.trim())
+              .filter(Boolean)
+              .join('\n');
+            if (text) {
+              const hint = await apiCopyAndPreparePaste(text);
+              setBannerMessage(hint);
+            } else {
+              setBannerMessage('発話が検出されませんでした。');
+            }
+            voiceTypingRef.current = false;
+          }
           scheduleAutoNotionSync(finalNote.id, true);
         } catch (err) {
+          voiceTypingRef.current = false;
           setTranscribeError(String(err));
           void refreshAll();
         } finally {
@@ -1104,6 +1133,7 @@ const MainApp: React.FC = () => {
         }
       } else {
         setLiveSegments([]);
+        voiceTypingRef.current = false;
         scheduleAutoNotionSync(targetNote.id, true);
       }
     } else {
@@ -1113,8 +1143,11 @@ const MainApp: React.FC = () => {
           ? prev.notes.map((n) => (n.id === targetNote.id ? targetNote : n))
           : [targetNote, ...prev.notes],
       }));
-      setActiveNoteId(targetNote.id);
-      setView('editor');
+      if (!isVoiceTyping) {
+        setActiveNoteId(targetNote.id);
+        setView('editor');
+      }
+      voiceTypingRef.current = false;
     }
   };
 

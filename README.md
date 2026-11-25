@@ -62,7 +62,8 @@ AI プロバイダーの設定前でもカスタムプロンプトを事前保�
 | OS | アーキテクチャ | 音声キャプチャ方式 | 備考 |
 |---|---|---|---|
 | **Windows 10 / 11** | x64 | Windows WASAPI（マイク／システム音声ループバック／両方） | インストーラー（NSIS / MSI）配布 |
-| **macOS** | Apple Silicon（arm64） | CoreAudio（マイク／仮想デバイス経由システム音声／両方） | DMG / App バンドル配布 |
+| **macOS** | Apple Silicon（arm64） / Intel（x64） | CoreAudio（マイク／仮想デバイス経由システム音声／両方） | DMG / App バンドル配布 |
+| **Linux** | x64 | マイク（ALSA / PulseAudio / PipeWire） | AppImage / deb / rpm 配布 |
 
 ---
 
@@ -215,11 +216,12 @@ Notelet/
 ## 開発・テスト・ビルド
 
 ### 前提条件
-- **Node.js**: 18 以上（CI では Node 20 を使用）
+- **Node.js**: 18 以上（CI では Node 24 を使用）
 - **Rust**: stable ツールチェーン
 - **OS 別ビルドツール**:
   - **Windows**: Visual Studio Build Tools（「C++ によるデスクトップ開発」ワークロード）
   - **macOS**: Xcode Command Line Tools
+  - **Linux (Debian/Ubuntu)**: `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libssl-dev libsecret-1-dev`
 
 ### コマンド一覧
 

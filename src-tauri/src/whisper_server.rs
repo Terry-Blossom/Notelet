@@ -6,6 +6,7 @@ use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -51,6 +52,28 @@ struct ServerState {
 }
 
 static WHISPER_SERVER: OnceLock<Mutex<Option<ServerState>>> = OnceLock::new();
+static SERVER_PID: AtomicU32 = AtomicU32::new(0);
+
+fn kill_pid(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status();
+    }
+}
 
 fn server_mutex() -> &'static Mutex<Option<ServerState>> {
     WHISPER_SERVER.get_or_init(|| Mutex::new(None))
@@ -99,6 +122,11 @@ pub(crate) fn find_server_in_dir(dir: &Path) -> Option<PathBuf> {
 pub fn resolve_whisper_server(custom_path: &str) -> Option<PathBuf> {
     if !custom_path.trim().is_empty() {
         let p = PathBuf::from(custom_path.trim());
+        if p.is_dir() {
+            if let Some(found) = find_server_in_dir(&p) {
+                return Some(found);
+            }
+        }
         if p.is_file() {
             if let Some(fname) = p.file_name().and_then(|n| n.to_str()) {
                 if fname.starts_with("whisper-server") {
@@ -180,7 +208,7 @@ fn recent_stderr(log: &Arc<StdMutex<String>>) -> String {
     }
 }
 
-async fn spawn_and_wait(
+async fn spawn_once(
     server_bin: &Path,
     model_path: &Path,
     language: &str,
@@ -267,6 +295,7 @@ async fn spawn_and_wait(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("whisper-server の起動に失敗しました: {e}"))?;
+    SERVER_PID.store(child.id(), Ordering::SeqCst);
 
     let stderr_log = Arc::new(StdMutex::new(String::new()));
     if let Some(mut stderr_pipe) = child.stderr.take() {
@@ -300,6 +329,7 @@ async fn spawn_and_wait(
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     while Instant::now() < deadline {
         if let Ok(Some(status)) = child.try_wait() {
+            SERVER_PID.store(0, Ordering::SeqCst);
             tokio::time::sleep(Duration::from_millis(50)).await;
             let detail = recent_stderr(&stderr_log);
             return Err(format!(
@@ -327,6 +357,7 @@ async fn spawn_and_wait(
 
     let _ = child.kill();
     let _ = child.wait();
+    SERVER_PID.store(0, Ordering::SeqCst);
     let detail = recent_stderr(&stderr_log);
     Err(format!(
         "whisper-server の起動がタイムアウトしました{}",
@@ -336,6 +367,32 @@ async fn spawn_and_wait(
             format!(": {detail}")
         }
     ))
+}
+
+/// ポート確保とプロセス起動の間に他プロセスが同じポートを掴む競合に備え、
+/// 起動直後に終了した場合だけ新しいポートで数回リトライする。
+async fn spawn_and_wait(
+    server_bin: &Path,
+    model_path: &Path,
+    language: &str,
+    use_gpu: bool,
+    threads: usize,
+) -> Result<ServerState, String> {
+    let mut last_err = String::new();
+    for attempt in 0..3 {
+        match spawn_once(server_bin, model_path, language, use_gpu, threads).await {
+            Ok(state) => return Ok(state),
+            Err(err) => {
+                let retryable = err.contains("起動中に終了しました");
+                last_err = err;
+                if !retryable || attempt == 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+        }
+    }
+    Err(last_err)
 }
 
 async fn ensure_running(
@@ -366,6 +423,7 @@ async fn ensure_running(
         }
         let _ = st.child.kill();
         let _ = st.child.wait();
+        SERVER_PID.store(0, Ordering::SeqCst);
         *guard = None;
     }
 
@@ -403,8 +461,13 @@ pub fn stop_server_sync() {
         if let Some(mut st) = guard.take() {
             let _ = st.child.kill();
             let _ = st.child.wait();
+            SERVER_PID.store(0, Ordering::SeqCst);
+            return;
         }
     }
+    // 起動処理がロックを保持している間でも、PID が分かれば直接終了させる。
+    let pid = SERVER_PID.swap(0, Ordering::SeqCst);
+    kill_pid(pid);
 }
 
 pub async fn stop_server_async() {
@@ -412,6 +475,7 @@ pub async fn stop_server_async() {
     if let Some(mut st) = guard.take() {
         let _ = st.child.kill();
         let _ = st.child.wait();
+        SERVER_PID.store(0, Ordering::SeqCst);
     }
 }
 

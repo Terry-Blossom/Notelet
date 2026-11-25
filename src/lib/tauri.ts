@@ -114,8 +114,12 @@ export async function apiDetectGpuCapabilities(): Promise<GpuCapabilities> {
   return invoke<GpuCapabilities>('detect_gpu_capabilities_cmd');
 }
 
-export async function apiTranscribeRecording(wavPath: string, noteId: string): Promise<Note> {
-  return invoke<Note>('transcribe_recording', { wavPath, noteId });
+export async function apiTranscribeRecording(
+  wavPath: string,
+  noteId: string,
+  append = false
+): Promise<Note> {
+  return invoke<Note>('transcribe_recording', { wavPath, noteId, append });
 }
 
 export async function apiTranscribeUploadedAudio(

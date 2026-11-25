@@ -17,7 +17,7 @@ const baseSettings: AppSettings = {
   llm_endpoint: '',
   record_shortcut: 'CommandOrControl+Shift+R',
   voice_typing_shortcut: 'CommandOrControl+Shift+V',
-  delete_audio_after_transcribe: true,
+  delete_audio_after_transcribe: false,
   encrypt_retained_audio: true,
   retention_days: 0,
   participant_notice_enabled: false,

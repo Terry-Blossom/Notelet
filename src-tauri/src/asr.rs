@@ -1099,6 +1099,11 @@ pub async fn transcribe_wav_with_progress(
     let prompt_terms: Vec<String> = dictionary.iter().map(|d| d.term.clone()).collect();
     let prompt_hint = prompt_terms.join("、");
 
+    // 無音の音声をそのまま推論へ渡すと幻聴テキストが生成されるため、先に発話の有無を確認する。
+    if wav_has_no_speech(wav_path) {
+        return Ok((Vec::new(), false, model.name));
+    }
+
     match model.provider {
         AsrProviderKind::LocalWhisper => {
             let (local_wav, should_cleanup) = ensure_local_wav(wav_path).await?;
@@ -1254,7 +1259,7 @@ pub async fn transcribe_wav_with_progress(
             }
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("Whisper 文字起こしエラー: {stderr}"));
+                return Err(format!("Whisper 文字起こしエラー: {}", summarize_whisper_stderr(&stderr)));
             }
             let json_path = PathBuf::from(format!("{}.json", out_base.to_string_lossy()));
             let raw = fs::read_to_string(&json_path)
@@ -1271,7 +1276,7 @@ pub async fn transcribe_wav_with_progress(
                         .unwrap_or("")
                         .trim()
                         .to_string();
-                    if text.is_empty() {
+                    if text.is_empty() || is_silence_hallucination(&text) {
                         continue;
                     }
                     let start_ms = item
@@ -2449,14 +2454,69 @@ fn is_silence_hallucination(text: &str) -> bool {
             | "最後までご視聴ありがとうございました"
             | "チャンネル登録よろしくお願いします"
             | "チャンネル登録をお願いします"
+            | "チャンネル登録をお願いいたします"
+            | "チャンネル登録よろしくお願いいたします"
             | "高評価よろしくお願いします"
             | "お疲れ様でした"
             | "ありがとうございました"
+            | "本日の会議を始めます"
+            | "こんにちは本日の会議を始めます"
             | "Thank you for watching"
             | "Thanks for watching"
             | "Subscribe"
             | "MBC 뉴스"
     )
+}
+
+fn wav_has_no_speech(path: &Path) -> bool {
+    let Ok(mut reader) = hound::WavReader::open(path) else {
+        return false;
+    };
+    let spec = reader.spec();
+    if spec.sample_format != hound::SampleFormat::Int || spec.bits_per_sample != 16 {
+        return false;
+    }
+    let mut sum = 0f64;
+    let mut count = 0u64;
+    let mut peak = 0i32;
+    for sample in reader.samples::<i16>() {
+        let Ok(v) = sample else {
+            continue;
+        };
+        let abs = (v as i32).abs();
+        sum += abs as f64;
+        count += 1;
+        if abs > peak {
+            peak = abs;
+        }
+    }
+    count > 0 && (sum / count as f64) < 60.0 && peak < 1200
+}
+
+fn summarize_whisper_stderr(raw: &str) -> String {
+    let noise = [
+        "whisper_init",
+        "loading model",
+        "whisper_model_load",
+        "ggml_",
+        "system_info",
+        "main: processing",
+        "WHISPER :",
+        "whisper.cpp",
+    ];
+    let detail = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !noise.iter().any(|n| line.contains(n)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let trimmed: String = detail.chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect();
+    if trimmed.trim().is_empty() {
+        "音声ファイルを読み込めなかったか、文字起こし処理に失敗しました。".to_string()
+    } else {
+        format!("音声ファイルの読み込みまたは文字起こしに失敗しました: {}", trimmed.trim())
+    }
 }
 
 pub async fn prewarm_whisper_server(settings: &AppSettings) {

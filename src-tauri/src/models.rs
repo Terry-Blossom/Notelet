@@ -87,7 +87,7 @@ pub struct AsrModelInfo {
     pub data_handling: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TranscriptSegment {
     pub id: String,
     pub start_ms: u64,
@@ -96,7 +96,7 @@ pub struct TranscriptSegment {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionItem {
     pub id: String,
     pub text: String,

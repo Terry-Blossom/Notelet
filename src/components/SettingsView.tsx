@@ -531,6 +531,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </select>
             </div>
 
+            <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px' }}>
+              <input
+                id="enable-local-diarization"
+                type="checkbox"
+                checked={Boolean(settings.enable_local_diarization)}
+                onChange={(e) => update({ enable_local_diarization: e.target.checked })}
+              />
+              <label htmlFor="enable-local-diarization" style={{ cursor: 'pointer', fontSize: '12.5px' }}>
+                ローカル文字起こしで簡易話者分離を行う（無音の間隔と疑問文から話者A/Bを推定）
+              </label>
+            </div>
+
             <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px 14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
@@ -1405,6 +1417,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onChange={(e) => update({ encrypt_retained_audio: e.target.checked })}
                 />
                 <span>保持する音声ファイルを AES-256-GCM で暗号化する</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={settings.delete_audio_after_transcribe}
+                  onChange={(e) => update({ delete_audio_after_transcribe: e.target.checked })}
+                />
+                <span>文字起こし完了後に保持音声を削除する（テキストのみ保存）</span>
               </label>
             </div>
 

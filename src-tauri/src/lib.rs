@@ -90,9 +90,14 @@ fn save_note(state: State<AppState>, mut note: Note) -> Result<AppDataSnapshot, 
     if let Some(existing) = data.notes.iter().find(|n| n.id == id) {
         let content_changed = existing.title != note.title
             || existing.folder_id != note.folder_id
+            || existing.tags != note.tags
+            || existing.participants != note.participants
             || existing.manual_notes != note.manual_notes
+            || existing.segments != note.segments
             || existing.summary != note.summary
-            || existing.segments.len() != note.segments.len();
+            || existing.decisions != note.decisions
+            || existing.action_items != note.action_items
+            || existing.follow_up_draft != note.follow_up_draft;
         if content_changed && note.notion_sync.status == "synced" {
             note.notion_sync.status = "not_synced".to_string();
         }
@@ -490,6 +495,7 @@ async fn transcribe_recording(
     state: State<'_, AppState>,
     wav_path: String,
     note_id: String,
+    append: Option<bool>,
 ) -> Result<Note, String> {
     let (settings, dictionary, existing_note) = {
         let data = state.data.lock().unwrap();
@@ -498,6 +504,29 @@ async fn transcribe_recording(
     };
 
     let mut note = existing_note.ok_or_else(|| "対象ノートが見つかりません".to_string())?;
+    let append_audio = append.unwrap_or(false);
+    let existing_audio = if append_audio {
+        note.audio_path.as_ref().and_then(|p| {
+            let path = std::path::Path::new(p);
+            if path.exists() {
+                storage::read_retained_audio_bytes(p, note.audio_encrypted).ok()
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    };
+    let existing_duration_ms = existing_audio
+        .as_deref()
+        .and_then(storage::wav_duration_ms)
+        .unwrap_or_else(|| {
+            if append_audio {
+                note.segments.iter().map(|s| s.end_ms).max().unwrap_or(0)
+            } else {
+                0
+            }
+        });
     let mut raw_path = std::path::PathBuf::from(&wav_path);
     let mut used_retained_copy = false;
     let mut cleanup_decrypted: Option<std::path::PathBuf> = None;
@@ -529,6 +558,15 @@ async fn transcribe_recording(
         }),
     );
     let (path, detected_dur_sec) = storage::normalize_media_to_16k_wav(&raw_path);
+    if detected_dur_sec == 0 {
+        if let Some(ref dec) = cleanup_decrypted {
+            let _ = std::fs::remove_file(dec);
+        }
+        if used_retained_copy && path != raw_path {
+            let _ = std::fs::remove_file(&path);
+        }
+        return Err("音声データが含まれていません。ファイルが破損していないか確認してください。".to_string());
+    }
     let trimmed_vad_path = if settings.silence_skip_enabled {
         asr::trim_long_silence_wav(&path)
     } else {
@@ -554,18 +592,29 @@ async fn transcribe_recording(
         let _ = std::fs::remove_file(tv);
     }
 
-    let (segments, _diarization_supported, model_name) = match transcribe_res {
+    let (mut segments, diarization_supported, model_name) = match transcribe_res {
         Ok(ok) => ok,
         Err(err) => {
             if let Some(ref dec) = cleanup_decrypted {
                 let _ = std::fs::remove_file(dec);
             }
+            if used_retained_copy && path != raw_path {
+                let _ = std::fs::remove_file(&path);
+            }
             // Even when transcription fails, preserve the recorded audio so the user can retry
             if !used_retained_copy && path.exists() {
+                let retain_source = if let Some(ref old) = existing_audio {
+                    storage::concat_wav_audio(old, &path).unwrap_or_else(|_| path.clone())
+                } else {
+                    path.clone()
+                };
                 if let Ok((retained_path, encrypted)) =
-                    storage::retain_audio_file(&path, &note.id, settings.encrypt_retained_audio)
+                    storage::retain_audio_file(&retain_source, &note.id, settings.encrypt_retained_audio)
                 {
                     let _ = std::fs::remove_file(&path);
+                    if retain_source != path {
+                        let _ = std::fs::remove_file(&retain_source);
+                    }
                     storage::remove_file_if_exists(&wav_path);
                     note.audio_path = Some(retained_path);
                     note.audio_encrypted = encrypted;
@@ -578,6 +627,31 @@ async fn transcribe_recording(
             return Err(err);
         }
     };
+
+    if append_audio && existing_duration_ms > 0 {
+        for seg in segments.iter_mut() {
+            seg.start_ms = seg.start_ms.saturating_add(existing_duration_ms);
+            seg.end_ms = seg.end_ms.saturating_add(existing_duration_ms);
+        }
+    }
+
+    if settings.enable_local_diarization
+        && matches!(
+            settings.active_asr_provider,
+            models::AsrProviderKind::LocalWhisper
+                | models::AsrProviderKind::LocalParakeet
+                | models::AsrProviderKind::LocalQwen
+        )
+        && asr::apply_local_heuristic_diarization(
+            &mut segments,
+            &settings.user_speaker_name,
+            &settings.remote_speaker_name,
+        )
+    {
+        note.diarization_supported = true;
+    } else {
+        note.diarization_supported = diarization_supported;
+    }
 
     if note.duration_sec == 0 && detected_dur_sec > 0 {
         note.duration_sec = detected_dur_sec;
@@ -600,14 +674,30 @@ async fn transcribe_recording(
             let _ = std::fs::remove_file(&path);
         }
     } else if path.exists() {
+        let retain_source = if let Some(ref old) = existing_audio {
+            storage::concat_wav_audio(old, &path).unwrap_or_else(|_| path.clone())
+        } else {
+            path.clone()
+        };
         if let Ok((retained_path, encrypted)) =
-            storage::retain_audio_file(&path, &note.id, settings.encrypt_retained_audio)
+            storage::retain_audio_file(&retain_source, &note.id, settings.encrypt_retained_audio)
         {
             let _ = std::fs::remove_file(&path);
+            if retain_source != path {
+                let _ = std::fs::remove_file(&retain_source);
+            }
             storage::remove_file_if_exists(&wav_path);
             note.audio_path = Some(retained_path);
             note.audio_encrypted = encrypted;
         }
+    }
+
+    if settings.delete_audio_after_transcribe {
+        if let Some(ref p) = note.audio_path {
+            storage::remove_file_if_exists(p);
+        }
+        note.audio_path = None;
+        note.audio_encrypted = false;
     }
 
     let _ = app.emit(
@@ -640,7 +730,74 @@ async fn transcribe_uploaded_audio(
     let temp_path = temp_dir.join(format!("upload_{}_{}", uuid::Uuid::new_v4(), safe_name));
     std::fs::write(&temp_path, &bytes).map_err(|e| format!("アップロードファイルの一時保存に失敗: {e}"))?;
     let path_str = temp_path.to_string_lossy().to_string();
-    transcribe_recording(app, state, path_str, note_id).await
+    transcribe_recording(app, state, path_str, note_id, Some(false)).await
+}
+
+fn parse_ipv4_part(part: &str) -> Option<u32> {
+    if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).ok()
+    } else if part.len() > 1 && part.starts_with('0') {
+        u32::from_str_radix(&part[1..], 8).ok()
+    } else {
+        part.parse::<u32>().ok()
+    }
+}
+
+fn parse_obfuscated_ipv4(host: &str) -> Option<std::net::Ipv4Addr> {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.is_empty() || parts.len() > 4 {
+        return None;
+    }
+    let values: Vec<u32> = parts
+        .iter()
+        .map(|p| parse_ipv4_part(p))
+        .collect::<Option<Vec<_>>>()?;
+    let addr = match values.as_slice() {
+        [a] => *a,
+        [a, b] if *a <= 0xff && *b <= 0xff_ffff => (*a << 24) | *b,
+        [a, b, c] if *a <= 0xff && *b <= 0xff && *c <= 0xffff => {
+            (*a << 24) | (*b << 16) | *c
+        }
+        [a, b, c, d] if values.iter().all(|v| *v <= 0xff) => {
+            (*a << 24) | (*b << 16) | (*c << 8) | *d
+        }
+        _ => return None,
+    };
+    Some(std::net::Ipv4Addr::from(addr))
+}
+
+fn is_blocked_remote_host(host: &str) -> bool {
+    let h = host
+        .trim_matches(['[', ']'])
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if h == "localhost" || h.ends_with(".localhost") || h.ends_with(".local") {
+        return true;
+    }
+    let blocked_v4 = |v4: std::net::Ipv4Addr| {
+        v4.is_loopback()
+            || v4.is_private()
+            || v4.is_link_local()
+            || v4.is_unspecified()
+            || v4.is_broadcast()
+            || v4.octets()[0] == 0
+    };
+    let parsed = h
+        .parse::<std::net::IpAddr>()
+        .ok()
+        .or_else(|| parse_obfuscated_ipv4(&h).map(std::net::IpAddr::V4));
+    match parsed {
+        Some(std::net::IpAddr::V4(v4)) => blocked_v4(v4),
+        Some(std::net::IpAddr::V6(v6)) => {
+            let seg0 = v6.segments()[0];
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (seg0 & 0xfe00) == 0xfc00
+                || (seg0 & 0xffc0) == 0xfe80
+                || v6.to_ipv4_mapped().map(blocked_v4).unwrap_or(false)
+        }
+        None => false,
+    }
 }
 
 #[tauri::command]
@@ -657,22 +814,7 @@ async fn transcribe_uploaded_url(
         return Err("有効な http:// または https:// の動画・音声リンクを入力してください。".to_string());
     }
     if let Some(host) = parsed.host_str() {
-        let h = host.trim_matches(['[', ']']).to_ascii_lowercase();
-        let is_blocked_host = h == "localhost"
-            || h.ends_with(".local")
-            || h.parse::<std::net::IpAddr>().map_or(false, |ip| match ip {
-                std::net::IpAddr::V4(v4) => {
-                    v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
-                }
-                std::net::IpAddr::V6(v6) => {
-                    let seg0 = v6.segments()[0];
-                    v6.is_loopback()
-                        || v6.is_unspecified()
-                        || (seg0 & 0xfe00) == 0xfc00
-                        || (seg0 & 0xffc0) == 0xfe80
-                }
-            });
-        if is_blocked_host {
+        if is_blocked_remote_host(host) {
             return Err("ローカルネットワーク・内部アドレスへのアクセスはセキュリティ上許可されていません。".to_string());
         }
     }
@@ -706,7 +848,7 @@ async fn transcribe_uploaded_url(
             let wav_cand = ytdlp_out.with_extension("wav");
             if wav_cand.exists() {
                 let path_str = wav_cand.to_string_lossy().to_string();
-                return transcribe_recording(app, state, path_str, note_id).await;
+                return transcribe_recording(app, state, path_str, note_id, Some(false)).await;
             }
             downloaded = true;
         }
@@ -731,7 +873,7 @@ async fn transcribe_uploaded_url(
     }
 
     let path_str = temp_path.to_string_lossy().to_string();
-    transcribe_recording(app, state, path_str, note_id).await
+    transcribe_recording(app, state, path_str, note_id, Some(false)).await
 }
 
 #[tauri::command]
@@ -1974,7 +2116,36 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        let _ = app.emit("global-shortcut-triggered", shortcut.to_string());
+                        let role = {
+                            let state = app.state::<AppState>();
+                            let (record, voice) = {
+                                let data = state.data.lock().unwrap();
+                                (
+                                    data.settings.record_shortcut.clone(),
+                                    data.settings.voice_typing_shortcut.clone(),
+                                )
+                            };
+                            let pressed = shortcut.to_string();
+                            let matches = |value: &str| {
+                                value
+                                    .trim()
+                                    .parse::<tauri_plugin_global_shortcut::Shortcut>()
+                                    .map(|s| s.to_string() == pressed)
+                                    .unwrap_or(false)
+                            };
+                            if !voice.trim().is_empty()
+                                && voice.trim() != record.trim()
+                                && matches(&voice)
+                            {
+                                "voice_typing"
+                            } else {
+                                "record"
+                            }
+                        };
+                        let _ = app.emit(
+                            "global-shortcut-triggered",
+                            serde_json::json!({ "role": role, "shortcut": shortcut.to_string() }),
+                        );
                     }
                 })
                 .build(),
