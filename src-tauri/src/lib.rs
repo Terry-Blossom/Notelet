@@ -256,25 +256,10 @@ async fn start_recording(
                 let audio = st_ref.audio.lock().unwrap();
                 audio.take_live_chunk(32_000)
             };
-            if let Some((chunk_path, elapsed_ms, dominant_source)) = chunk_opt {
+            if let Some((chunk_path, elapsed_ms, _dominant_source)) = chunk_opt {
                 let (settings, dictionary) = {
                     let data = st_ref.data.lock().unwrap();
                     (data.settings.clone(), data.dictionary.clone())
-                };
-                let speaker_label = if dominant_source == "system" {
-                    let s = settings.remote_speaker_name.trim();
-                    if s.is_empty() {
-                        "相手".to_string()
-                    } else {
-                        s.to_string()
-                    }
-                } else {
-                    let u = settings.user_speaker_name.trim();
-                    if u.is_empty() {
-                        "自分".to_string()
-                    } else {
-                        u.to_string()
-                    }
                 };
                 let chunk_clone = chunk_path.clone();
                 let res = tokio::task::spawn_blocking(move || {
@@ -290,7 +275,7 @@ async fn start_recording(
                             id: uuid::Uuid::new_v4().to_string(),
                             start_ms,
                             end_ms: elapsed_ms,
-                            speaker: speaker_label,
+                            speaker: String::new(),
                             text,
                         };
                         let _ = app_handle.emit("live-transcript-segment", seg);
@@ -460,29 +445,8 @@ async fn transcribe_recording(
 
     let raw_path = std::path::PathBuf::from(&wav_path);
     let (path, detected_dur_sec) = storage::normalize_media_to_16k_wav(&raw_path);
-    let (mut segments, mut diarization_supported, model_name) =
+    let (segments, _diarization_supported, model_name) =
         asr::transcribe_wav(&path, &settings, &dictionary).await?;
-
-    let default_speaker = if settings.user_speaker_name.trim().is_empty() {
-        "自分".to_string()
-    } else {
-        settings.user_speaker_name.trim().to_string()
-    };
-    let remote_speaker = if settings.remote_speaker_name.trim().is_empty() {
-        "相手".to_string()
-    } else {
-        settings.remote_speaker_name.trim().to_string()
-    };
-    if !diarization_supported && settings.enable_local_diarization {
-        if asr::apply_local_heuristic_diarization(&mut segments, &default_speaker, &remote_speaker) {
-            diarization_supported = true;
-        }
-    }
-    for seg in &mut segments {
-        if seg.speaker.trim().is_empty() {
-            seg.speaker = default_speaker.clone();
-        }
-    }
 
     let mut note = existing_note.ok_or_else(|| "対象ノートが見つかりません".to_string())?;
     if note.duration_sec == 0 && detected_dur_sec > 0 {
@@ -493,7 +457,7 @@ async fn transcribe_recording(
         }
     }
     note.segments = segments;
-    note.diarization_supported = diarization_supported;
+    note.diarization_supported = false;
     note.asr_model_id = settings.active_asr_model_id.clone();
     note.asr_provider_label = model_name;
     note.updated_at = chrono::Utc::now().to_rfc3339();

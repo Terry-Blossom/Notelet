@@ -177,7 +177,37 @@ export interface AppSettings {
   enable_local_diarization?: boolean;
   silence_skip_enabled?: boolean;
   notion_viewer_mode?: boolean;
+  summary_presets?: SummaryPreset[];
 }
+
+export interface SummaryPreset {
+  id: string;
+  name: string;
+  prompt: string;
+}
+
+export const DEFAULT_SUMMARY_PRESETS: SummaryPreset[] = [
+  {
+    id: 'standard',
+    name: '標準議事録',
+    prompt: 'summaryフィールドには「## 概要」「## 議論の要点」「## 今後の進め方」の見出しを使って整理してください。',
+  },
+  {
+    id: '1on1',
+    name: '1on1・面談',
+    prompt: 'summaryフィールドには「## 相手の状況・共有事項」「## 課題・フィードバック」「## 次回までの目標・アクション」の見出しを使って整理してください。',
+  },
+  {
+    id: 'lecture',
+    name: '講義・セミナー',
+    prompt: 'summaryフィールドには「## テーマ・重要概念」「## 講義の要点まとめ」「## 疑問点・復習ポイント」の見出しを使って整理してください。',
+  },
+  {
+    id: 'brainstorm',
+    name: 'ブレスト・アイデア',
+    prompt: 'summaryフィールドには「## 提案されたアイデア一覧」「## 有望案と優先度」「## 次の検証ステップ」の見出しを使って整理してください。',
+  },
+];
 
 export interface IssueCreateResult {
   provider: string;

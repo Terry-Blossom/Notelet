@@ -470,4 +470,59 @@ describe('App & Views', () => {
     expect(summarizeButtonsOnB[0]).not.toBeDisabled();
     resolveSummarizeA();
   });
+
+  it('uses updated chat scope labels, hides speaker separation UI, and supports custom summary presets', () => {
+    const note = createEmptyNote();
+    note.id = 'note-custom';
+    note.title = 'テスト会議';
+    note.folder_id = 'personal';
+    note.segments = [{ id: 's1', start_ms: 0, end_ms: 2000, speaker: '田中', text: '議事録のテストです。' }];
+
+    render(
+      <NoteEditorView
+        note={note}
+        allNotes={[note]}
+        folders={[{ id: 'personal', name: '個人', is_shared: false, permission: 'owner' }]}
+        settings={{
+          ...baseSettings,
+          summary_presets: [
+            { id: 'custom-1', name: '役員報告用', prompt: '結論を3行でまとめてください。' },
+          ],
+          active_template_id: 'custom-1',
+        }}
+        recipes={[]}
+        secretStatus={null}
+        transcribing={false}
+        transcribeError={null}
+        onUpdateNote={vi.fn()}
+        onCopyText={vi.fn()}
+        onPastePrepare={vi.fn()}
+        onSaveToNotion={vi.fn()}
+        onSummarize={vi.fn().mockResolvedValue(undefined)}
+        onDraftFollowup={vi.fn()}
+        onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
+        onChatNote={vi.fn()}
+        onShareSlack={vi.fn()}
+        onSendWebhook={vi.fn()}
+        onAddDictionaryTerm={vi.fn()}
+        onGoSettings={vi.fn()}
+      />
+    );
+
+    // Speaker separation hint is removed
+    expect(screen.queryByText(/話者名をクリック/)).not.toBeInTheDocument();
+
+    // Custom summary preset appears in template selector
+    expect(screen.getByRole('option', { name: '役員報告用' })).toBeInTheDocument();
+
+    // Open chat popup by focusing the chat input
+    const chatInput = screen.getByRole('textbox', { name: 'ノートについて何でも質問' });
+    fireEvent.focus(chatInput);
+    expect(screen.getByRole('button', { name: 'このノート' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'スペース全体' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'アプリ全体' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '個人全体' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Notelet全体' })).not.toBeInTheDocument();
+  });
 });

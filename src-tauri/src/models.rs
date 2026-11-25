@@ -265,6 +265,40 @@ pub struct AppSettings {
     pub silence_skip_enabled: bool,
     #[serde(default)]
     pub notion_viewer_mode: bool,
+    #[serde(default = "default_summary_presets")]
+    pub summary_presets: Vec<SummaryPreset>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummaryPreset {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+}
+
+pub fn default_summary_presets() -> Vec<SummaryPreset> {
+    vec![
+        SummaryPreset {
+            id: "standard".to_string(),
+            name: "標準議事録".to_string(),
+            prompt: "summaryフィールドには「## 概要」「## 議論の要点」「## 今後の進め方」の見出しを使って整理してください。".to_string(),
+        },
+        SummaryPreset {
+            id: "1on1".to_string(),
+            name: "1on1・面談".to_string(),
+            prompt: "summaryフィールドには「## 相手の状況・共有事項」「## 課題・フィードバック」「## 次回までの目標・アクション」の見出しを使って整理してください。".to_string(),
+        },
+        SummaryPreset {
+            id: "lecture".to_string(),
+            name: "講義・セミナー".to_string(),
+            prompt: "summaryフィールドには「## テーマ・重要概念」「## 講義の要点まとめ」「## 疑問点・復習ポイント」の見出しを使って整理してください。".to_string(),
+        },
+        SummaryPreset {
+            id: "brainstorm".to_string(),
+            name: "ブレスト・アイデア".to_string(),
+            prompt: "summaryフィールドには「## 提案されたアイデア一覧」「## 有望案と優先度」「## 次の検証ステップ」の見出しを使って整理してください。".to_string(),
+        },
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -325,6 +359,7 @@ impl Default for AppSettings {
             enable_local_diarization: false,
             silence_skip_enabled: false,
             notion_viewer_mode: false,
+            summary_presets: default_summary_presets(),
         }
     }
 }

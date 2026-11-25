@@ -26,6 +26,7 @@ import {
   AsrModelInfo,
   AudioDeviceInfo,
   AudioSourceMode,
+  DEFAULT_SUMMARY_PRESETS,
   DictionaryEntry,
   IntegrationAdapterInfo,
   Note,
@@ -140,6 +141,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   mcp_enabled: false,
   mcp_scope: 'workspace',
   active_template_id: 'standard',
+  summary_presets: DEFAULT_SUMMARY_PRESETS,
 };
 
 const INITIAL_RECORDING_STATUS: RecordingStatus = {

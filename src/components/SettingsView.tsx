@@ -9,10 +9,12 @@ import {
   Keyboard,
   Loader2,
   Mic,
+  Plus,
   RefreshCw,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
-import { AppSettings, AsrModelInfo, Folder, Note, SecretStatus, StorageStats, UpdateCheckResult } from '../types';
+import { AppSettings, AsrModelInfo, DEFAULT_SUMMARY_PRESETS, Folder, Note, SecretStatus, StorageStats, SummaryPreset, UpdateCheckResult } from '../types';
 import { GranolaImportCard } from './GranolaImportCard';
 import { confirmActionDialog } from './ConfirmDialog';
 import {
@@ -812,19 +814,150 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 )}
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label className="text-muted">独自ルール・カスタムプロンプト（任意）</label>
-                  <textarea
-                    aria-label="独自ルール・カスタムプロンプト"
-                    className="textarea"
-                    rows={3}
-                    placeholder="例: 回答は常に結論から箇条書きで記述してください。専門用語には簡単な補足を添えてください。"
-                    value={settings.llm_custom_prompt || ''}
-                    onChange={(e) => update({ llm_custom_prompt: e.target.value })}
-                  />
-                </div>
               </div>
             )}
+
+            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label className="text-muted" style={{ fontWeight: 600 }}>
+                独自ルール・カスタムプロンプト（事前設定可）
+              </label>
+              <p className="text-muted" style={{ margin: 0, fontSize: '12px' }}>
+                AIプロバイダー設定前でも事前にルールを保存できます。要約・チャット実行時に毎回適用されます。
+              </p>
+              <textarea
+                aria-label="独自ルール・カスタムプロンプト"
+                className="textarea"
+                rows={3}
+                placeholder="例: 回答は常に結論から箇条書きで記述してください。専門用語には簡単な補足を添えてください。"
+                value={settings.llm_custom_prompt || ''}
+                onChange={(e) => update({ llm_custom_prompt: e.target.value })}
+              />
+            </div>
+
+            {(() => {
+              const presets: SummaryPreset[] =
+                settings.summary_presets && settings.summary_presets.length > 0
+                  ? settings.summary_presets
+                  : DEFAULT_SUMMARY_PRESETS;
+              const updatePresets = (nextPresets: SummaryPreset[], nextActiveId?: string) => {
+                update({
+                  summary_presets: nextPresets,
+                  ...(nextActiveId ? { active_template_id: nextActiveId } : {}),
+                });
+              };
+              return (
+                <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <div>
+                      <strong style={{ fontSize: '13px' }}>要約プリセットの作成・編集</strong>
+                      <p className="text-muted" style={{ margin: '2px 0 0', fontSize: '12px' }}>
+                        ノートの要約生成時に選べるプリセットを自由に作成・編集できます。
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ height: '30px', fontSize: '12px' }}
+                        onClick={() => {
+                          const newPreset: SummaryPreset = {
+                            id: `custom-${Date.now()}`,
+                            name: '新しいプリセット',
+                            prompt: 'summaryフィールドには「## 概要」「## 重要ポイント」「## ネクストアクション」の見出しを使って整理してください。',
+                          };
+                          updatePresets([...presets, newPreset]);
+                        }}
+                      >
+                        <Plus size={13} strokeWidth={1.75} />
+                        プリセットを追加
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ height: '30px', fontSize: '12px' }}
+                        onClick={() => updatePresets(DEFAULT_SUMMARY_PRESETS, 'standard')}
+                      >
+                        デフォルトに戻す
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {presets.map((preset) => {
+                      const isDefault = (settings.active_template_id || 'standard') === preset.id;
+                      return (
+                        <div
+                          key={preset.id}
+                          style={{
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '10px',
+                            padding: '12px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px',
+                            backgroundColor: 'var(--bg-subtle)',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <input
+                              type="text"
+                              aria-label={`プリセット名 (${preset.name})`}
+                              className="input"
+                              style={{ flex: 1, minWidth: '160px', height: '32px', fontSize: '13px' }}
+                              value={preset.name}
+                              placeholder="プリセット名"
+                              onChange={(e) => {
+                                const next = presets.map((p) =>
+                                  p.id === preset.id ? { ...p, name: e.target.value } : p
+                                );
+                                updatePresets(next);
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className={`chip-filter ${isDefault ? 'active' : ''}`}
+                              style={{ height: '28px', fontSize: '12px' }}
+                              onClick={() => update({ active_template_id: preset.id })}
+                            >
+                              {isDefault ? '既定のプリセット' : '既定にする'}
+                            </button>
+                            {presets.length > 1 && (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                aria-label={`${preset.name}を削除`}
+                                style={{ height: '28px', padding: '0 8px', color: 'var(--danger)' }}
+                                onClick={() => {
+                                  const next = presets.filter((p) => p.id !== preset.id);
+                                  const nextActive = isDefault ? next[0]?.id : undefined;
+                                  updatePresets(next, nextActive);
+                                }}
+                              >
+                                <Trash2 size={13} strokeWidth={1.75} />
+                              </button>
+                            )}
+                          </div>
+                          <textarea
+                            aria-label={`プリセット指示 (${preset.name})`}
+                            className="textarea"
+                            rows={2}
+                            style={{ fontSize: '12.5px' }}
+                            value={preset.prompt}
+                            placeholder="要約の構成やフォーマットの指示を入力..."
+                            onChange={(e) => {
+                              const next = presets.map((p) =>
+                                p.id === preset.id ? { ...p, prompt: e.target.value } : p
+                              );
+                              updatePresets(next);
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -881,7 +1014,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div>
               <h2 className="section-title">ストレージ管理</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                録音ファイルの容量管理・軽量化や話者ラベル、データの暗号化・バックアップを管理します。
+                録音ファイルの容量管理・軽量化やデータの暗号化・バックアップを管理します。
               </p>
             </div>
 
@@ -982,40 +1115,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   }}
                 />
                 <span>Notion 同期後にローカルの本文・音声を自動削除する</span>
-              </label>
-            </div>
-
-            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <strong style={{ fontSize: '13px' }}>既定の話者ラベル（自動振り分け用）</strong>
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <div style={{ flex: 1, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <label className="text-muted">マイク入力の話者名</label>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="自分"
-                    value={settings.user_speaker_name ?? '自分'}
-                    onChange={(e) => update({ user_speaker_name: e.target.value })}
-                  />
-                </div>
-                <div style={{ flex: 1, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <label className="text-muted">PC本体音声の話者名</label>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="相手"
-                    value={settings.remote_speaker_name ?? '相手'}
-                    onChange={(e) => update({ remote_speaker_name: e.target.value })}
-                  />
-                </div>
-              </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '4px' }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.enable_local_diarization)}
-                  onChange={(e) => update({ enable_local_diarization: e.target.checked })}
-                />
-                <span>ローカルASR（Whisper / Parakeet等）で簡易話者分離を有効にする</span>
               </label>
             </div>
 

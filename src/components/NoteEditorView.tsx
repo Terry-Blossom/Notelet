@@ -37,6 +37,7 @@ import {
   ChatAnswer,
   ChatCitation,
   ChatHistoryItem,
+  DEFAULT_SUMMARY_PRESETS,
   Folder,
   Note,
   Recipe,
@@ -254,11 +255,21 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackMs, setPlaybackMs] = useState(0);
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
-    settings.active_template_id || 'standard'
+  const summaryPresets = useMemo(
+    () =>
+      settings.summary_presets && settings.summary_presets.length > 0
+        ? settings.summary_presets
+        : DEFAULT_SUMMARY_PRESETS,
+    [settings.summary_presets]
   );
-  const [editingSpeakerTarget, setEditingSpeakerTarget] = useState<string | null>(null);
-  const [speakerRenameDraft, setSpeakerRenameDraft] = useState<string>('');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
+    settings.active_template_id || summaryPresets[0]?.id || 'standard'
+  );
+  useEffect(() => {
+    if (!summaryPresets.some((p) => p.id === selectedTemplateId)) {
+      setSelectedTemplateId(summaryPresets[0]?.id || 'standard');
+    }
+  }, [summaryPresets, selectedTemplateId]);
   const [calendarMenuOpen, setCalendarMenuOpen] = useState<boolean>(false);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEventItem[]>([]);
   const [streamingChatText, setStreamingChatText] = useState<string>('');
@@ -434,30 +445,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     } finally {
       setSummarizingByNote((prev) => ({ ...prev, [targetNoteId]: false }));
     }
-  };
-
-  const handleBulkRenameSpeaker = (oldName: string, newNameRaw: string) => {
-    const newName = newNameRaw.trim();
-    if (!newName) return;
-    const oldTrim = oldName.trim();
-    const updatedSegments = note.segments.map((seg) => {
-      const sp = seg.speaker.trim() || '自分';
-      if (sp === oldTrim) {
-        return { ...seg, speaker: newName };
-      }
-      return seg;
-    });
-    const nextParticipants = Array.from(
-      new Set([...note.participants.filter((p) => p !== oldTrim), newName])
-    );
-    onUpdateNote({
-      ...note,
-      segments: updatedSegments,
-      participants: nextParticipants,
-      updated_at: new Date().toISOString(),
-    });
-    setEditingSpeakerTarget(null);
-    notify(`話者「${oldTrim}」をすべて「${newName}」に変更しました`);
   };
 
   // Scroll tracking
@@ -960,7 +947,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   style={{ height: '28px', padding: '0 10px', fontSize: '12px' }}
                   onClick={() => setChatScope('space')}
                 >
-                  {activeFolder.name}全体
+                  スペース全体
                 </button>
                 <button
                   type="button"
@@ -968,7 +955,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   style={{ height: '28px', padding: '0 10px', fontSize: '12px' }}
                   onClick={() => setChatScope('all')}
                 >
-                  Notelet全体
+                  アプリ全体
                 </button>
               </>
             ) : (
@@ -2121,18 +2108,26 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           <div className="note-meta-pills">
             <label
               className="note-meta-pill"
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', position: 'relative' }}
               title="日付を変更"
               onClick={() => {
                 (dateInputRef.current as (HTMLInputElement & { showPicker?: () => void }) | null)?.showPicker?.();
               }}
             >
               <Calendar size={15} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
+              <span>{note.created_at ? note.created_at.slice(0, 10).replace(/-/g, '/') : '日付を選択'}</span>
               <input
                 ref={dateInputRef}
                 type="date"
                 className="note-date-input"
                 aria-label="ノートの日付"
+                style={{
+                  position: 'absolute',
+                  opacity: 0,
+                  width: '1px',
+                  height: '1px',
+                  pointerEvents: 'none',
+                }}
                 value={note.created_at ? note.created_at.slice(0, 10) : ''}
                 onChange={(e) => {
                   if (!e.target.value) return;
@@ -2840,16 +2835,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           >
             {activeTab === 'transcript' && (
               <div aria-live="polite" aria-relevant="additions" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {displayedSegments.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <span className="text-muted" style={{ fontSize: '12px' }}>
-                        話者名をクリックするとノート全体で一括変更できます
-                      </span>
-                    </div>
-                  </div>
-                )}
-
                 {displayedSegments.length === 0 ? (
                   <div className="note-empty-state">
                     まだ文字起こしがありません
@@ -2863,8 +2848,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     {displayedSegments.map((seg) => {
                       const isActiveSeg =
                         isPlaying && playbackMs >= seg.start_ms && playbackMs < seg.end_ms;
-                      const speakerLabel = seg.speaker.trim() || (settings.user_speaker_name || '自分');
-                      const isEditingThisSpeaker = editingSpeakerTarget === speakerLabel;
                       return (
                         <article key={seg.id} className={`note-turn ${isActiveSeg ? 'playing' : ''}`}>
                           <div className="note-turn-meta" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -2886,70 +2869,6 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             <span className="note-turn-time">
                               {formatNoteTimer(seg.start_ms)}
                             </span>
-                            <button
-                              type="button"
-                              className="chip-filter"
-                              style={{ height: '20px', padding: '0 8px', fontSize: '12px' }}
-                              title={`話者「${speakerLabel}」を一括変更`}
-                              onClick={() => {
-                                if (isEditingThisSpeaker) {
-                                  setEditingSpeakerTarget(null);
-                                } else {
-                                  setEditingSpeakerTarget(speakerLabel);
-                                  setSpeakerRenameDraft(speakerLabel);
-                                }
-                              }}
-                            >
-                              {speakerLabel}
-                            </button>
-                            {isEditingThisSpeaker && (
-                              <form
-                                onSubmit={(e) => {
-                                  e.preventDefault();
-                                  handleBulkRenameSpeaker(speakerLabel, speakerRenameDraft);
-                                }}
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}
-                              >
-                                <input
-                                  type="text"
-                                  aria-label="新しい話者名"
-                                  className="input"
-                                  style={{ width: '120px', height: '24px', fontSize: '12px', padding: '0 8px' }}
-                                  value={speakerRenameDraft}
-                                  onChange={(e) => setSpeakerRenameDraft(e.target.value)}
-                                  autoFocus
-                                />
-                                {['自分', '相手', ...note.participants]
-                                  .filter((p, idx, arr) => p && p !== speakerLabel && arr.indexOf(p) === idx)
-                                  .slice(0, 4)
-                                  .map((preset) => (
-                                    <button
-                                      key={preset}
-                                      type="button"
-                                      className="chip-filter"
-                                      style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
-                                      onClick={() => handleBulkRenameSpeaker(speakerLabel, preset)}
-                                    >
-                                      {preset}
-                                    </button>
-                                  ))}
-                                <button
-                                  type="submit"
-                                  className="btn btn-primary"
-                                  style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
-                                >
-                                  一括変更
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost"
-                                  style={{ height: '24px', padding: '0 8px', fontSize: '12px' }}
-                                  onClick={() => setEditingSpeakerTarget(null)}
-                                >
-                                  閉じる
-                                </button>
-                              </form>
-                            )}
                           </div>
                           <p className="note-turn-text">{seg.text}</p>
                         </article>
@@ -2973,10 +2892,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         value={selectedTemplateId}
                         onChange={(e) => setSelectedTemplateId(e.target.value)}
                       >
-                        <option value="standard">標準議事録</option>
-                        <option value="1on1">1on1・面談</option>
-                        <option value="lecture">講義・セミナー</option>
-                        <option value="brainstorm">ブレスト・アイデア</option>
+                        {summaryPresets.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.name}
+                          </option>
+                        ))}
                       </select>
                       {llmConfigured && (
                         <button
@@ -3164,10 +3084,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       value={selectedTemplateId}
                       onChange={(e) => setSelectedTemplateId(e.target.value)}
                     >
-                      <option value="standard">標準議事録</option>
-                      <option value="1on1">1on1・面談</option>
-                      <option value="lecture">講義・セミナー</option>
-                      <option value="brainstorm">ブレスト・アイデア</option>
+                      {summaryPresets.map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.name}
+                        </option>
+                      ))}
                     </select>
                     <button
                       type="button"

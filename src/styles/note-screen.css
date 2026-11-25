@@ -698,7 +698,7 @@
   padding: 8px 12px 8px 20px;
   border-radius: 28px;
   background-color: #ffffff;
-  border: 1.5px solid #1a1a1a;
+  border: 1px solid var(--ns-border-pill, #e6e6e6);
   box-shadow: var(--ns-shadow-input, 0 2px 8px rgba(0, 0, 0, 0.08));
   display: flex;
   align-items: center;

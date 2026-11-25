@@ -427,12 +427,25 @@ pub async fn summarize_note(
                 settings.active_template_id.trim()
             }
         });
-    let tpl_instruction = match tpl {
-        "1on1" => "【1on1・面談テンプレート】summaryフィールドには「## 相手の状況・共有事項」「## 課題・フィードバック」「## 次回までの目標・アクション」の見出しを使って整理してください。",
-        "lecture" => "【講義・セミナーテンプレート】summaryフィールドには「## テーマ・重要概念」「## 講義の要点まとめ」「## 疑問点・復習ポイント」の見出しを使って整理してください。",
-        "brainstorm" => "【ブレスト・アイデアテンプレート】summaryフィールドには「## 提案されたアイデア一覧」「## 有望案と優先度」「## 次の検証ステップ」の見出しを使って整理してください。",
-        _ => "【標準議事録テンプレート】summaryフィールドには「## 概要」「## 議論の要点」「## 今後の進め方」の見出しを使って整理してください。",
-    };
+    let custom_preset_instruction = settings
+        .summary_presets
+        .iter()
+        .find(|p| p.id == tpl)
+        .filter(|p| !p.prompt.trim().is_empty())
+        .map(|p| {
+            let name = if p.name.trim().is_empty() {
+                "カスタム"
+            } else {
+                p.name.trim()
+            };
+            format!("【{name}テンプレート】{}", p.prompt.trim())
+        });
+    let tpl_instruction = custom_preset_instruction.unwrap_or_else(|| match tpl {
+        "1on1" => "【1on1・面談テンプレート】summaryフィールドには「## 相手の状況・共有事項」「## 課題・フィードバック」「## 次回までの目標・アクション」の見出しを使って整理してください。".to_string(),
+        "lecture" => "【講義・セミナーテンプレート】summaryフィールドには「## テーマ・重要概念」「## 講義の要点まとめ」「## 疑問点・復習ポイント」の見出しを使って整理してください。".to_string(),
+        "brainstorm" => "【ブレスト・アイデアテンプレート】summaryフィールドには「## 提案されたアイデア一覧」「## 有望案と優先度」「## 次の検証ステップ」の見出しを使って整理してください。".to_string(),
+        _ => "【標準議事録テンプレート】summaryフィールドには「## 概要」「## 議論の要点」「## 今後の進め方」の見出しを使って整理してください。".to_string(),
+    });
     let sys = format!(
         "あなたは正確な議事録・ノート要約アシスタントです。与えられた文字起こしとメモのみを根拠にし、会話にない事実を推測で補わないでください。{tpl_instruction} 必ずJSONのみで返答し、summaryフィールドは見出し(## )や箇条書き(- )、太字(**強調**)を用いた読みやすいMarkdown記事形式で記述してください: {{\"summary\": \"## 概要\\n...\\n\\n## 要点\\n- ...\", \"decisions\": [\"...\"], \"action_items\": [{{\"text\": \"...\", \"assignee\": \"...\"}}]}}"
     );
