@@ -186,8 +186,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               {m.id === 'whisper-large-v3-turbo-q5' && (
                 <span className="status-chip ok">高精度・推奨</span>
               )}
+              {(m.id === 'whisper-large-v3' || m.id === 'kotoba-whisper-v2') && (
+                <span className="status-chip accent">最高精度 (FP16)</span>
+              )}
+              {(m.id === 'whisper-large-v3-turbo' || m.id === 'whisper-large-v3-q5') && (
+                <span className="status-chip ok">上位モデル</span>
+              )}
               {m.id === 'whisper-small-q5' && (
-                <span className="status-chip">軽量・標準</span>
+                <span className="status-chip">軽量・省メモリ</span>
               )}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>

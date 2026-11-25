@@ -155,7 +155,7 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
         },
         AsrModelInfo {
             id: "whisper-large-v3-turbo-q5".to_string(),
-            name: "Whisper Large v3 Turbo Q5_0 (高精度)".to_string(),
+            name: "Whisper Large v3 Turbo Q5_0 (高精度・バランス)".to_string(),
             provider: AsrProviderKind::LocalWhisper,
             is_local: true,
             languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
@@ -168,8 +168,84 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             supports_realtime: true,
             supports_diarization: false,
             is_compatible: whisper_cli_ok,
-            compatibility_reason: whisper_reason,
+            compatibility_reason: whisper_reason.clone(),
             installed: models_dir.join("ggml-large-v3-turbo-q5_0.bin").exists(),
+            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
+        },
+        AsrModelInfo {
+            id: "kotoba-whisper-v2".to_string(),
+            name: "Kotoba-Whisper v2.0 (FP16・日本語特化上位)".to_string(),
+            provider: AsrProviderKind::LocalWhisper,
+            is_local: true,
+            languages: vec!["日本語".into()],
+            environment: "ローカル CPU / GPU (whisper.cpp)".into(),
+            memory_mb: 2800,
+            license: "Apache-2.0 (kotoba-tech)".into(),
+            size_mb: 1449,
+            download_url: "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-ggml/resolve/main/ggml-kotoba-whisper-v2.0.bin".into(),
+            filename: "ggml-kotoba-whisper-v2.0.bin".into(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: whisper_cli_ok,
+            compatibility_reason: whisper_reason.clone(),
+            installed: models_dir.join("ggml-kotoba-whisper-v2.0.bin").exists(),
+            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
+        },
+        AsrModelInfo {
+            id: "whisper-large-v3-turbo".to_string(),
+            name: "Whisper Large v3 Turbo (FP16・高精度)".to_string(),
+            provider: AsrProviderKind::LocalWhisper,
+            is_local: true,
+            languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
+            environment: "ローカル CPU / GPU (whisper.cpp)".into(),
+            memory_mb: 3000,
+            license: "MIT (OpenAI Whisper / whisper.cpp)".into(),
+            size_mb: 1549,
+            download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin".into(),
+            filename: "ggml-large-v3-turbo.bin".into(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: whisper_cli_ok,
+            compatibility_reason: whisper_reason.clone(),
+            installed: models_dir.join("ggml-large-v3-turbo.bin").exists(),
+            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
+        },
+        AsrModelInfo {
+            id: "whisper-large-v3-q5".to_string(),
+            name: "Whisper Large v3 Q5_0 (フルモデル・高精度)".to_string(),
+            provider: AsrProviderKind::LocalWhisper,
+            is_local: true,
+            languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
+            environment: "ローカル CPU / GPU (whisper.cpp)".into(),
+            memory_mb: 2400,
+            license: "MIT (OpenAI Whisper / whisper.cpp)".into(),
+            size_mb: 1031,
+            download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin".into(),
+            filename: "ggml-large-v3-q5_0.bin".into(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: whisper_cli_ok,
+            compatibility_reason: whisper_reason.clone(),
+            installed: models_dir.join("ggml-large-v3-q5_0.bin").exists(),
+            data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
+        },
+        AsrModelInfo {
+            id: "whisper-large-v3".to_string(),
+            name: "Whisper Large v3 (FP16・最高精度)".to_string(),
+            provider: AsrProviderKind::LocalWhisper,
+            is_local: true,
+            languages: vec!["日本語".into(), "英語".into(), "多言語(自動判定)".into()],
+            environment: "ローカル CPU / GPU (whisper.cpp)".into(),
+            memory_mb: 4800,
+            license: "MIT (OpenAI Whisper / whisper.cpp)".into(),
+            size_mb: 2952,
+            download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin".into(),
+            filename: "ggml-large-v3.bin".into(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: whisper_cli_ok,
+            compatibility_reason: whisper_reason,
+            installed: models_dir.join("ggml-large-v3.bin").exists(),
             data_handling: "音声は外部送信されず、PC内のみで処理されます。".into(),
         },
         AsrModelInfo {
@@ -784,14 +860,25 @@ pub async fn transcribe_wav(
                 .arg("-oj")
                 .arg("-of")
                 .arg(&out_base)
+                .arg("--beam-size")
+                .arg("5")
+                .arg("--best-of")
+                .arg("5")
                 .arg("-l")
                 .arg(if settings.language.is_empty() {
                     "auto"
                 } else {
                     &settings.language
                 });
-            if !prompt_hint.is_empty() {
-                cmd.arg("--prompt").arg(&prompt_hint);
+            let effective_prompt = if !prompt_hint.is_empty() {
+                prompt_hint.clone()
+            } else if settings.language == "ja" || settings.language.is_empty() {
+                "こんにちは。本日の会議を始めます。".to_string()
+            } else {
+                String::new()
+            };
+            if !effective_prompt.is_empty() {
+                cmd.arg("--prompt").arg(&effective_prompt);
             }
             let output = cmd
                 .output()

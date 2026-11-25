@@ -312,7 +312,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             plan_tier: PlanTier::Basic,
-            active_asr_model_id: "whisper-small-q5".to_string(),
+            active_asr_model_id: "whisper-large-v3-turbo-q5".to_string(),
             active_asr_provider: AsrProviderKind::LocalWhisper,
             language: "ja".to_string(),
             allow_cloud_asr: false,
