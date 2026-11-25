@@ -264,21 +264,35 @@ async fn start_recording(
             if rec_state != "recording" {
                 continue;
             }
+            let (settings, dictionary) = {
+                let data = st_ref.data.lock().unwrap();
+                (data.settings.clone(), data.dictionary.clone())
+            };
+            let is_cloud_provider = matches!(
+                settings.active_asr_provider,
+                models::AsrProviderKind::CloudOpenAi
+                    | models::AsrProviderKind::CloudDeepgram
+                    | models::AsrProviderKind::CloudGroq
+                    | models::AsrProviderKind::CloudStepFun
+            );
+            if is_cloud_provider && !settings.allow_cloud_asr {
+                continue;
+            }
+            // Cloud APIs use 3.0s chunks (48,000 samples @ 16kHz) for better phrase accuracy and rate-limit safety;
+            // local models use 2.0s chunks (32,000 samples).
+            let min_samples = if is_cloud_provider { 48_000 } else { 32_000 };
+            let chunk_span_ms = if is_cloud_provider { 3000 } else { 2000 };
             let chunk_opt = {
                 let audio = st_ref.audio.lock().unwrap();
-                audio.take_live_chunk(32_000)
+                audio.take_live_chunk(min_samples)
             };
             if let Some((chunk_path, elapsed_ms, _dominant_source)) = chunk_opt {
-                let (settings, dictionary) = {
-                    let data = st_ref.data.lock().unwrap();
-                    (data.settings.clone(), data.dictionary.clone())
-                };
                 let chunk_clone = chunk_path.clone();
                 let res = asr::transcribe_chunk_async(&chunk_clone, &settings, &dictionary).await;
                 let _ = std::fs::remove_file(&chunk_clone);
                 match res {
                     Ok(text) if !text.is_empty() => {
-                        let start_ms = elapsed_ms.saturating_sub(2000);
+                        let start_ms = elapsed_ms.saturating_sub(chunk_span_ms);
                         let seg = models::TranscriptSegment {
                             id: uuid::Uuid::new_v4().to_string(),
                             start_ms,

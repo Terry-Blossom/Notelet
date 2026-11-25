@@ -6,8 +6,17 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use tauri::Emitter;
 use uuid::Uuid;
+
+static STEPFUN_USE_CN_ENDPOINT: AtomicBool = AtomicBool::new(false);
+
+fn cloud_http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
 
 fn configure_bg_command(cmd: &mut Command) {
     #[cfg(windows)]
@@ -1340,7 +1349,7 @@ pub async fn transcribe_wav(
             if !prompt_hint.is_empty() {
                 form = form.text("prompt", prompt_hint);
             }
-            let client = reqwest::Client::new();
+            let client = cloud_http_client();
             let resp = client
                 .post(url)
                 .bearer_auth(&api_key)
@@ -1368,8 +1377,15 @@ pub async fn transcribe_wav(
             let mut segs = Vec::new();
             if let Some(arr) = json.get("segments").and_then(|v| v.as_array()) {
                 for item in arr {
+                    let no_speech = item
+                        .get("no_speech_prob")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    if no_speech > 0.75 {
+                        continue;
+                    }
                     let text = item.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
-                    if text.is_empty() {
+                    if text.is_empty() || is_silence_hallucination(&text) {
                         continue;
                     }
                     let start_ms = (item.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0) * 1000.0) as u64;
@@ -1384,7 +1400,7 @@ pub async fn transcribe_wav(
                 }
             } else if let Some(text) = json.get("text").and_then(|v| v.as_str()) {
                 let trimmed = text.trim();
-                if !trimmed.is_empty() {
+                if !trimmed.is_empty() && !is_silence_hallucination(trimmed) {
                     segs.push(TranscriptSegment {
                         id: Uuid::new_v4().to_string(),
                         start_ms: 0,
@@ -1433,16 +1449,23 @@ pub async fn transcribe_wav(
                 }
             });
 
-            let client = reqwest::Client::new();
-            let endpoints = [
-                "https://api.stepfun.ai/v1/audio/asr/sse",
-                "https://api.stepfun.com/v1/audio/asr/sse",
-            ];
+            let client = cloud_http_client();
+            let endpoints = if STEPFUN_USE_CN_ENDPOINT.load(Ordering::Relaxed) {
+                [
+                    ("https://api.stepfun.com/v1/audio/asr/sse", true),
+                    ("https://api.stepfun.ai/v1/audio/asr/sse", false),
+                ]
+            } else {
+                [
+                    ("https://api.stepfun.ai/v1/audio/asr/sse", false),
+                    ("https://api.stepfun.com/v1/audio/asr/sse", true),
+                ]
+            };
             let mut last_status = reqwest::StatusCode::INTERNAL_SERVER_ERROR;
             let mut last_body = String::new();
             let mut success_body: Option<String> = None;
 
-            for (idx, endpoint) in endpoints.iter().enumerate() {
+            for (idx, (endpoint, is_cn)) in endpoints.iter().enumerate() {
                 let resp = client
                     .post(*endpoint)
                     .bearer_auth(&api_key)
@@ -1454,6 +1477,7 @@ pub async fn transcribe_wav(
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 if status.is_success() {
+                    STEPFUN_USE_CN_ENDPOINT.store(*is_cn, Ordering::Relaxed);
                     success_body = Some(body);
                     break;
                 }
@@ -1499,7 +1523,7 @@ pub async fn transcribe_wav(
             let url = format!(
                 "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&diarize=true&utterances=true&{lang_param}"
             );
-            let client = reqwest::Client::new();
+            let client = cloud_http_client();
             let resp = client
                 .post(url)
                 .header("Authorization", format!("Token {api_key}"))
@@ -1535,6 +1559,30 @@ pub async fn transcribe_wav(
                         speaker: format!("話者{}", speaker_num + 1),
                         text,
                     });
+                }
+            }
+            if segs.is_empty() {
+                if let Some(transcript) = json
+                    .get("results")
+                    .and_then(|r| r.get("channels"))
+                    .and_then(|c| c.as_array())
+                    .and_then(|c| c.first())
+                    .and_then(|c| c.get("alternatives"))
+                    .and_then(|a| a.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|a| a.get("transcript"))
+                    .and_then(|t| t.as_str())
+                {
+                    let trimmed = transcript.trim();
+                    if !trimmed.is_empty() {
+                        segs.push(TranscriptSegment {
+                            id: Uuid::new_v4().to_string(),
+                            start_ms: 0,
+                            end_ms: 1000,
+                            speaker: String::new(),
+                            text: trimmed.to_string(),
+                        });
+                    }
                 }
             }
             Ok((segs, true, model.name))
@@ -1729,8 +1777,22 @@ pub async fn transcribe_chunk_async(
         .into_iter()
         .find(|m| m.id == settings.active_asr_model_id)
         .ok_or_else(|| "ASRモデルが見つかりません".to_string())?;
-    if !model.is_local || !model.supports_realtime {
+    if !model.supports_realtime {
         return Ok(String::new());
+    }
+
+    if !model.is_local {
+        if !settings.allow_cloud_asr {
+            return Ok(String::new());
+        }
+        let (segs, _, _) = transcribe_wav(chunk_wav, settings, dictionary).await?;
+        let joined = segs
+            .into_iter()
+            .map(|s| s.text.trim().to_string())
+            .filter(|t| !t.is_empty() && !is_silence_hallucination(t))
+            .collect::<Vec<_>>()
+            .join(" ");
+        return Ok(joined);
     }
 
     if model.provider == AsrProviderKind::LocalWhisper {

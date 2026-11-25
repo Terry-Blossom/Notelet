@@ -255,9 +255,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 );
               })}
               {!m.is_local && (
-                <span className="status-chip" style={{ height: '20px', fontSize: '11px' }}>
-                  クラウドAPI
-                </span>
+                <>
+                  <span className="status-chip" style={{ height: '20px', fontSize: '11px' }}>
+                    クラウドAPI
+                  </span>
+                  {m.supports_realtime && (
+                    <span className="status-chip ok" style={{ height: '20px', fontSize: '11px' }}>
+                      リアルタイム対応
+                    </span>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -678,7 +685,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
                   <div>
                     <strong style={{ fontSize: '12px' }}>クラウド音声認識を有効にする</strong>
-                    <div className="text-muted">有効時のみ、選択したクラウドAPIへ音声を送信します</div>
+                    <div className="text-muted">有効時のみ、選択したクラウドAPIへ音声を送信します（録音中は約3秒ごとにリアルタイム文字起こし、停止時に全体で最終確定します）</div>
                   </div>
                   <input
                     type="checkbox"
