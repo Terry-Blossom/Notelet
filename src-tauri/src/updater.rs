@@ -140,16 +140,35 @@ pub async fn download_and_launch_update(
     download_url: &str,
     asset_name: &str,
 ) -> Result<String, String> {
+    let parsed_url = reqwest::Url::parse(download_url.trim())
+        .map_err(|_| "無効な更新ダウンロードURLです。".to_string())?;
+    let host = parsed_url
+        .host_str()
+        .map(|h| h.to_ascii_lowercase())
+        .unwrap_or_default();
+    let is_github_host = parsed_url.scheme() == "https"
+        && (host == "github.com"
+            || host == "api.github.com"
+            || host.ends_with(".githubusercontent.com"));
+    if !is_github_host {
+        return Err("セキュリティ上、GitHub公式ドメイン以外の更新URLは許可されていません。".to_string());
+    }
+    let safe_asset_name = std::path::Path::new(asset_name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty() && !n.contains(".."))
+        .ok_or_else(|| "無効なアセットファイル名です。".to_string())?;
+
     let update_dir = storage::app_data_dir().join("updates");
     fs::create_dir_all(&update_dir).map_err(|e| format!("更新フォルダ作成失敗: {e}"))?;
-    let dest = update_dir.join(asset_name);
-    let tmp = update_dir.join(format!("{asset_name}.part"));
+    let dest = update_dir.join(safe_asset_name);
+    let tmp = update_dir.join(format!("{safe_asset_name}.part"));
 
     let client = reqwest::Client::builder()
         .user_agent("KoeNote-Updater/0.1")
         .build()
         .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
-    let mut req = client.get(download_url);
+    let mut req = client.get(parsed_url);
     if let Ok(Some(token)) = secrets::get_secret("github_update_token") {
         if !token.trim().is_empty() {
             req = req

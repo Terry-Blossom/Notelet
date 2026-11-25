@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Search, Trash2, FileText } from 'lucide-react';
+import { FileText, Loader2, Search, Trash2 } from 'lucide-react';
 import { Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
 import { NotionSyncBadge } from './NotionSyncBadge';
@@ -128,7 +128,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       {displayTitle}
                     </strong>
                     <span className="status-chip">{folderName}</span>
-                    {isNoteRec && <span className="status-chip danger">録音中</span>}
+                    {isNoteRec && (
+                      <span className="status-chip danger" style={{ gap: '4px' }}>
+                        <Loader2 size={12} strokeWidth={2} className="spin" />
+                        録音中
+                      </span>
+                    )}
                   </div>
                   <p
                     className="text-secondary"
