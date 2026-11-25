@@ -550,9 +550,9 @@ pub async fn download_whisper_model(
     Ok(dir.to_string_lossy().to_string())
 }
 
-pub fn detect_gpu_capabilities() -> models::GpuCapabilities {
+pub fn detect_gpu_capabilities() -> crate::models::GpuCapabilities {
     if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        return models::GpuCapabilities {
+        return crate::models::GpuCapabilities {
             has_cuda: false,
             has_metal: true,
             gpu_name: "Apple Silicon (Metal)".to_string(),
@@ -574,7 +574,7 @@ pub fn detect_gpu_capabilities() -> models::GpuCapabilities {
                 .trim()
                 .to_string();
             if !name.is_empty() {
-                return models::GpuCapabilities {
+                return crate::models::GpuCapabilities {
                     has_cuda: true,
                     has_metal: false,
                     gpu_name: name,
@@ -586,7 +586,7 @@ pub fn detect_gpu_capabilities() -> models::GpuCapabilities {
 
     #[cfg(target_os = "windows")]
     if Path::new(r"C:\Windows\System32\nvcuda.dll").exists() {
-        return models::GpuCapabilities {
+        return crate::models::GpuCapabilities {
             has_cuda: true,
             has_metal: false,
             gpu_name: "NVIDIA GPU (CUDA)".to_string(),
@@ -594,7 +594,7 @@ pub fn detect_gpu_capabilities() -> models::GpuCapabilities {
         };
     }
 
-    models::GpuCapabilities {
+    crate::models::GpuCapabilities {
         has_cuda: false,
         has_metal: false,
         gpu_name: "CPU (OpenBLAS)".to_string(),
