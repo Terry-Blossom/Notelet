@@ -1459,19 +1459,19 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
             }
 
             if let Some(ref page_id) = page_id_opt {
-                if let Some(existing_n) = data
+                if let Some(idx) = data
                     .notes
-                    .iter_mut()
-                    .find(|n| n.notion_sync.page_id.as_ref() == Some(page_id))
+                    .iter()
+                    .position(|n| n.notion_sync.page_id.as_ref() == Some(page_id))
                 {
-                    let local_ts = parse_rfc3339_millis(&existing_n.updated_at);
-                    let has_pending_local_edits = existing_n.notion_sync.status != "synced";
+                    let local_ts = parse_rfc3339_millis(&data.notes[idx].updated_at);
+                    let has_pending_local_edits = data.notes[idx].notion_sync.status != "synced";
                     if !blocks_loaded || has_pending_local_edits || local_ts >= notion_ts {
                         // Local is up-to-date, newer, or has pending unpushed edits -> preserve local title & folder_id
-                        if existing_n.storage_mode != "notion_only"
+                        if data.notes[idx].storage_mode != "notion_only"
                             && (has_pending_local_edits || local_ts > notion_ts)
                         {
-                            let existing_clone = existing_n.clone();
+                            let existing_clone = data.notes[idx].clone();
                             let folder_name = data
                                 .folders
                                 .iter()
@@ -1496,6 +1496,7 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
                         data.folders.push(new_f);
                         id
                     };
+                    let existing_n = &mut data.notes[idx];
                     existing_n.title = note.title;
                     existing_n.folder_id = resolved_folder_id;
                     existing_n.updated_at = note.updated_at;
