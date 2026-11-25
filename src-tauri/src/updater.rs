@@ -7,7 +7,7 @@ use std::io::Write;
 use std::process::Command;
 use tauri::Emitter;
 
-const GITHUB_REPO: &str = "otetcham/Notelet";
+const GITHUB_REPO: &str = "Terry-Blossom/Notelet";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCheckResult {
@@ -165,7 +165,7 @@ pub async fn download_and_launch_update(
         return Err(format!("ダウンロードエラー: HTTP {}", resp.status()));
     }
 
-    let total = resp.content_length().unwrap_or(10 * 1024 * 1024);
+    let total = resp.content_length().unwrap_or(0);
     let mut downloaded: u64 = 0;
     let mut file = fs::File::create(&tmp).map_err(|e| format!("ファイル作成失敗: {e}"))?;
     while let Some(chunk) = resp
@@ -176,13 +176,19 @@ pub async fn download_and_launch_update(
         file.write_all(&chunk)
             .map_err(|e| format!("書き込み失敗: {e}"))?;
         downloaded += chunk.len() as u64;
-        let pct = ((downloaded as f64 / total.max(1) as f64) * 100.0).min(100.0) as u8;
+        let pct = if total > 0 {
+            ((downloaded as f64 / total as f64) * 100.0).min(99.0) as u8
+        } else {
+            ((downloaded / (1024 * 1024)).min(95)) as u8
+        };
         let _ = app.emit("app-update-progress", serde_json::json!({ "progress": pct }));
     }
     drop(file);
     fs::rename(&tmp, &dest).map_err(|e| format!("ファイル配置失敗: {e}"))?;
+    let _ = app.emit("app-update-progress", serde_json::json!({ "progress": 100 }));
 
     if cfg!(windows) {
+        crate::whisper_server::stop_server_sync();
         if asset_name.ends_with(".msi") {
             Command::new("msiexec")
                 .args(["/i", &dest.to_string_lossy(), "/passive", "/norestart"])
@@ -196,7 +202,7 @@ pub async fn download_and_launch_update(
                 .unwrap_or_default();
             let dest_str = dest.to_string_lossy().to_string();
             let script = format!(
-                "@echo off\r\ntimeout /t 2 /nobreak > nul\r\n\"{dest_str}\" /S\r\nif exist \"{exe_path}\" start \"\" \"{exe_path}\"\r\n"
+                "@echo off\r\nping -n 3 127.0.0.1 > nul\r\n\"{dest_str}\" /S\r\nif exist \"{exe_path}\" start \"\" \"{exe_path}\"\r\n"
             );
             let _ = fs::write(&bat_path, script);
             Command::new("cmd")

@@ -26,6 +26,8 @@ import {
   isTauriRuntime,
 } from '../lib/tauri';
 
+declare const __APP_VERSION__: string | undefined;
+
 interface SettingsViewProps {
   settings: AppSettings;
   models: AsrModelInfo[];
@@ -107,6 +109,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
   const [compressingAudio, setCompressingAudio] = useState(false);
   const [gpuCaps, setGpuCaps] = useState<GpuCapabilities | null>(null);
+  const [appVersion, setAppVersion] = useState<string>(
+    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : ''
+  );
 
   useEffect(() => {
     if (tab === 'asr' && isTauriRuntime()) {
@@ -115,6 +120,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         .catch(() => {
           // ignore
         });
+    }
+    if (tab === 'update' && isTauriRuntime()) {
+      void import('@tauri-apps/api/app')
+        .then(({ getVersion }) => getVersion())
+        .then((v) => setAppVersion(v))
+        .catch(() => {
+          // ignore
+        });
+      if (!updateInfo && !checkingUpdate) {
+        setCheckingUpdate(true);
+        setUpdateError(null);
+        void onCheckUpdate()
+          .then((res) => setUpdateInfo(res))
+          .catch((e) => setUpdateError(e instanceof Error ? e.message : String(e)))
+          .finally(() => setCheckingUpdate(false));
+      }
     }
     if (tab === 'storage' && isTauriRuntime()) {
       void apiGetStorageStats()
@@ -1252,7 +1273,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? '0.13.0'}</strong>
+                  現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? (appVersion || '...')}</strong>
                 </div>
                 <button
                   type="button"
