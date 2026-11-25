@@ -6,9 +6,15 @@ use rand::RngCore;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 const SERVICE_NAME: &str = "app.koenote.desktop";
 const ENC_PREFIX: &str = "ENCv1:";
+
+fn vault_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 fn vault_dir() -> PathBuf {
     let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -35,11 +41,17 @@ fn read_vault_map() -> HashMap<String, String> {
     HashMap::new()
 }
 
-fn write_vault_map(map: &HashMap<String, String>) {
+fn write_vault_map(map: &HashMap<String, String>) -> Result<(), String> {
     let path = secrets_vault_path();
-    if let Ok(raw) = serde_json::to_string_pretty(map) {
-        let _ = fs::write(path, raw);
+    let raw = serde_json::to_string_pretty(map)
+        .map_err(|e| format!("シークレット保存データの生成に失敗しました: {e}"))?;
+    let tmp = path.with_extension("json.tmp");
+    if fs::write(&tmp, &raw).is_ok() && fs::rename(&tmp, &path).is_ok() {
+        return Ok(());
     }
+    let _ = fs::remove_file(&tmp);
+    fs::write(&path, raw)
+        .map_err(|e| format!("APIキーの保存に失敗しました: {e}"))
 }
 
 fn get_or_create_secret_cipher_key() -> Result<[u8; 32], String> {
@@ -116,22 +128,46 @@ fn decrypt_secret_value(stored: &str) -> Result<String, String> {
     String::from_utf8(plain_bytes).map_err(|e| format!("UTF-8変換に失敗: {e}"))
 }
 
+fn sanitize_secret_value(key: &str, value: &str) -> String {
+    let mut s = value
+        .trim()
+        .trim_matches(|c: char| matches!(c, '\u{feff}' | '\u{200b}' | '\r' | '\n'))
+        .trim()
+        .to_string();
+    if key != "audio_encryption_key" {
+        // Strip surrounding quotes if pasted from .env / JSON
+        if (s.starts_with('"') && s.ends_with('"') && s.len() >= 2)
+            || (s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2)
+        {
+            s = s[1..s.len() - 1].trim().to_string();
+        }
+        // Strip accidental "Bearer " prefix
+        if s.len() > 7 && s.is_char_boundary(7) && s[..7].eq_ignore_ascii_case("bearer ") {
+            s = s[7..].trim().to_string();
+        }
+    }
+    s
+}
+
 pub fn set_secret(key: &str, value: &str) -> Result<(), String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
+    let cleaned = sanitize_secret_value(key, value);
+    if cleaned.is_empty() {
         // Never wipe an existing secret when an empty string is submitted by a "Save" button.
         // Deletion is handled explicitly via delete_secret(key).
         return Ok(());
     }
     let encrypted = if key == "audio_encryption_key" {
-        trimmed.to_string()
+        cleaned
     } else {
-        encrypt_secret_value(trimmed)?
+        encrypt_secret_value(&cleaned)?
     };
 
-    let mut vault = read_vault_map();
-    vault.insert(key.to_string(), encrypted.clone());
-    write_vault_map(&vault);
+    {
+        let _guard = vault_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let mut vault = read_vault_map();
+        vault.insert(key.to_string(), encrypted.clone());
+        write_vault_map(&vault)?;
+    }
 
     if let Ok(entry) = Entry::new(SERVICE_NAME, key) {
         let _ = entry.set_password(&encrypted);
@@ -140,28 +176,40 @@ pub fn set_secret(key: &str, value: &str) -> Result<(), String> {
 }
 
 pub fn get_secret(key: &str) -> Result<Option<String>, String> {
-    if let Ok(entry) = Entry::new(SERVICE_NAME, key) {
-        if let Ok(pw) = entry.get_password() {
-            if key == "audio_encryption_key" {
-                if !pw.trim().is_empty() {
-                    return Ok(Some(pw));
-                }
-            } else if let Ok(dec) = decrypt_secret_value(&pw) {
-                if !dec.trim().is_empty() {
-                    return Ok(Some(dec));
-                }
+    // Check secrets_vault.json first so newly updated keys always take precedence
+    // even if the OS keyring failed to overwrite a stale entry.
+    let stored_opt = {
+        let _guard = vault_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let vault = read_vault_map();
+        vault.get(key).cloned()
+    };
+    if let Some(stored) = stored_opt {
+        if key == "audio_encryption_key" {
+            let trimmed = stored.trim();
+            if !trimmed.is_empty() {
+                return Ok(Some(trimmed.to_string()));
+            }
+        } else if let Ok(dec) = decrypt_secret_value(&stored) {
+            let cleaned = sanitize_secret_value(key, &dec);
+            if !cleaned.is_empty() {
+                return Ok(Some(cleaned));
             }
         }
     }
 
-    let vault = read_vault_map();
-    if let Some(stored) = vault.get(key) {
-        if key == "audio_encryption_key" {
-            return Ok(Some(stored.clone()));
-        }
-        let dec = decrypt_secret_value(stored)?;
-        if !dec.trim().is_empty() {
-            return Ok(Some(dec));
+    if let Ok(entry) = Entry::new(SERVICE_NAME, key) {
+        if let Ok(pw) = entry.get_password() {
+            if key == "audio_encryption_key" {
+                let trimmed = pw.trim();
+                if !trimmed.is_empty() {
+                    return Ok(Some(trimmed.to_string()));
+                }
+            } else if let Ok(dec) = decrypt_secret_value(&pw) {
+                let cleaned = sanitize_secret_value(key, &dec);
+                if !cleaned.is_empty() {
+                    return Ok(Some(cleaned));
+                }
+            }
         }
     }
 
@@ -173,9 +221,12 @@ pub fn has_secret(key: &str) -> bool {
 }
 
 pub fn delete_secret(key: &str) -> Result<(), String> {
-    let mut vault = read_vault_map();
-    vault.remove(key);
-    write_vault_map(&vault);
+    {
+        let _guard = vault_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let mut vault = read_vault_map();
+        vault.remove(key);
+        let _ = write_vault_map(&vault);
+    }
 
     if let Ok(entry) = Entry::new(SERVICE_NAME, key) {
         match entry.delete_credential() {

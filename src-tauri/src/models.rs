@@ -56,9 +56,12 @@ pub enum AsrProviderKind {
     LocalWhisper,
     LocalParakeet,
     LocalQwen,
+    #[serde(rename = "cloud_openai", alias = "cloud_open_ai")]
     CloudOpenAi,
     CloudDeepgram,
     CloudGroq,
+    #[serde(rename = "cloud_stepfun", alias = "cloud_step_fun")]
+    CloudStepFun,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

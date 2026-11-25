@@ -1,6 +1,7 @@
 use crate::models::{AppSettings, AsrModelInfo, AsrProviderKind, DictionaryEntry, TranscriptSegment};
 use crate::secrets;
 use crate::storage;
+use base64::Engine;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -347,8 +348,11 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             filename: String::new(),
             supports_realtime: true,
             supports_diarization: false,
-            is_compatible: secrets::has_secret("openai_api_key"),
-            compatibility_reason: if secrets::has_secret("openai_api_key") {
+            is_compatible: secrets::has_secret("openai_api_key")
+                || secrets::has_secret("llm_openai_api_key"),
+            compatibility_reason: if secrets::has_secret("openai_api_key")
+                || secrets::has_secret("llm_openai_api_key")
+            {
                 None
             } else {
                 Some("OpenAI APIキーが未設定です。".into())
@@ -401,6 +405,35 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             },
             installed: true,
             data_handling: "録音音声ファイルを api.groq.com に送信して高速処理します。".into(),
+        },
+        AsrModelInfo {
+            id: "stepfun-stepaudio-2.5-asr".to_string(),
+            name: "StepFun StepAudio 2.5 ASR (クラウド・超高速)".to_string(),
+            provider: AsrProviderKind::CloudStepFun,
+            is_local: false,
+            languages: vec![
+                "日本語".into(),
+                "英語".into(),
+                "中国語".into(),
+                "韓国語".into(),
+                "多言語(自動判定)".into(),
+            ],
+            environment: "クラウド API (api.stepfun.ai / api.stepfun.com)".into(),
+            memory_mb: 0,
+            license: "商用 API (StepFun 利用規約)".into(),
+            size_mb: 0,
+            download_url: String::new(),
+            filename: String::new(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: secrets::has_secret("stepfun_api_key"),
+            compatibility_reason: if secrets::has_secret("stepfun_api_key") {
+                None
+            } else {
+                Some("StepFun APIキーが未設定です。".into())
+            },
+            installed: true,
+            data_handling: "録音音声ファイルを StepFun API に送信して超高速・高精度に文字起こしします。".into(),
         },
     ]
 }
@@ -1252,9 +1285,17 @@ pub async fn transcribe_wav(
         }
         AsrProviderKind::CloudOpenAi | AsrProviderKind::CloudGroq => {
             let is_groq = model.provider == AsrProviderKind::CloudGroq;
-            let secret_key = if is_groq { "groq_api_key" } else { "openai_api_key" };
-            let api_key = secrets::get_secret(secret_key)?
-                .ok_or_else(|| "APIキーが設定されていません。設定画面から登録してください。".to_string())?;
+            let api_key = if is_groq {
+                secrets::get_secret("groq_api_key")?
+                    .ok_or_else(|| "Groq APIキーが設定されていません。設定＞音声認識＞クラウド API から登録してください。".to_string())?
+            } else {
+                match secrets::get_secret("openai_api_key")? {
+                    Some(k) => k,
+                    None => secrets::get_secret("llm_openai_api_key")?
+                        .ok_or_else(|| "OpenAI APIキーが設定されていません。設定＞音声認識＞クラウド API から登録してください。".to_string())?,
+                }
+            };
+            let api_key = api_key.trim().to_string();
             let url = if is_groq {
                 "https://api.groq.com/openai/v1/audio/transcriptions"
             } else {
@@ -1266,9 +1307,28 @@ pub async fn transcribe_wav(
                 "whisper-1"
             };
             let bytes = fs::read(wav_path).map_err(|e| format!("音声読み込み失敗: {e}"))?;
+            let file_name = wav_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("recording.wav")
+                .to_string();
+            let mime = match wav_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("wav")
+                .to_lowercase()
+                .as_str()
+            {
+                "mp3" => "audio/mpeg",
+                "m4a" | "mp4" => "audio/mp4",
+                "ogg" => "audio/ogg",
+                "webm" => "audio/webm",
+                "flac" => "audio/flac",
+                _ => "audio/wav",
+            };
             let part = reqwest::multipart::Part::bytes(bytes)
-                .file_name("recording.wav")
-                .mime_str("audio/wav")
+                .file_name(file_name)
+                .mime_str(mime)
                 .map_err(|e| format!("リクエスト構築失敗: {e}"))?;
             let mut form = reqwest::multipart::Form::new()
                 .part("file", part)
@@ -1283,7 +1343,7 @@ pub async fn transcribe_wav(
             let client = reqwest::Client::new();
             let resp = client
                 .post(url)
-                .bearer_auth(api_key)
+                .bearer_auth(&api_key)
                 .multipart(form)
                 .send()
                 .await
@@ -1291,6 +1351,14 @@ pub async fn transcribe_wav(
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
+                if status == reqwest::StatusCode::UNAUTHORIZED {
+                    let hint = if is_groq {
+                        "Groq APIキー（gsk_...）が正しく保存されているか、設定＞音声認識＞クラウド API＞Groq Whisper で再入力・保存してください。"
+                    } else {
+                        "OpenAI APIキー（sk-...）が正しく保存されているか、設定＞音声認識＞クラウド API＞OpenAI Whisper で再入力・保存してください。"
+                    };
+                    return Err(format!("クラウドASR API エラー ({status}): {hint} ({body})"));
+                }
                 return Err(format!("クラウドASR API エラー ({status}): {body}"));
             }
             let json: Value = resp
@@ -1310,24 +1378,118 @@ pub async fn transcribe_wav(
                         id: Uuid::new_v4().to_string(),
                         start_ms,
                         end_ms,
-                        speaker: "話者1".to_string(),
+                        speaker: String::new(),
                         text,
                     });
                 }
             } else if let Some(text) = json.get("text").and_then(|v| v.as_str()) {
-                segs.push(TranscriptSegment {
-                    id: Uuid::new_v4().to_string(),
-                    start_ms: 0,
-                    end_ms: 1000,
-                    speaker: "話者1".to_string(),
-                    text: text.trim().to_string(),
-                });
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    segs.push(TranscriptSegment {
+                        id: Uuid::new_v4().to_string(),
+                        start_ms: 0,
+                        end_ms: 1000,
+                        speaker: String::new(),
+                        text: trimmed.to_string(),
+                    });
+                }
             }
+            Ok((segs, false, model.name))
+        }
+        AsrProviderKind::CloudStepFun => {
+            let api_key = secrets::get_secret("stepfun_api_key")?
+                .ok_or_else(|| "StepFun APIキーが設定されていません。設定＞音声認識＞クラウド API から登録してください。".to_string())?;
+            let api_key = api_key.trim().to_string();
+            let (local_wav, should_cleanup) = ensure_local_wav(wav_path).await?;
+            let bytes_res = fs::read(&local_wav);
+            if should_cleanup {
+                let _ = fs::remove_file(&local_wav);
+            }
+            let bytes = bytes_res.map_err(|e| format!("音声読み込み失敗: {e}"))?;
+            let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+            let mut transcription = serde_json::json!({
+                "model": "stepaudio-2.5-asr",
+                "enable_itn": true,
+            });
+            if settings.language != "auto" {
+                let lang = if settings.language.is_empty() {
+                    "ja"
+                } else {
+                    settings.language.as_str()
+                };
+                transcription["language"] = serde_json::json!(lang);
+            }
+
+            let payload = serde_json::json!({
+                "audio": {
+                    "data": audio_b64,
+                    "input": {
+                        "transcription": transcription,
+                        "format": {
+                            "type": "wav"
+                        }
+                    }
+                }
+            });
+
+            let client = reqwest::Client::new();
+            let endpoints = [
+                "https://api.stepfun.ai/v1/audio/asr/sse",
+                "https://api.stepfun.com/v1/audio/asr/sse",
+            ];
+            let mut last_status = reqwest::StatusCode::INTERNAL_SERVER_ERROR;
+            let mut last_body = String::new();
+            let mut success_body: Option<String> = None;
+
+            for (idx, endpoint) in endpoints.iter().enumerate() {
+                let resp = client
+                    .post(*endpoint)
+                    .bearer_auth(&api_key)
+                    .header("Accept", "text/event-stream")
+                    .json(&payload)
+                    .send()
+                    .await
+                    .map_err(|e| format!("StepFun ASR 通信エラー: {e}"))?;
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if status.is_success() {
+                    success_body = Some(body);
+                    break;
+                }
+                last_status = status;
+                last_body = body;
+                // Overseas (.ai) vs China mainland (.com) keys are region-scoped; retry alternate endpoint on 401/403
+                if idx == 0
+                    && (status == reqwest::StatusCode::UNAUTHORIZED
+                        || status == reqwest::StatusCode::FORBIDDEN)
+                {
+                    continue;
+                }
+                break;
+            }
+
+            let body = match success_body {
+                Some(b) => b,
+                None => {
+                    if last_status == reqwest::StatusCode::UNAUTHORIZED
+                        || last_status == reqwest::StatusCode::FORBIDDEN
+                    {
+                        return Err(format!(
+                            "StepFun ASR API エラー ({last_status}): StepFun APIキー（通常APIキー）が正しいか確認し、設定＞音声認識＞クラウド API で再保存してください。({last_body})"
+                        ));
+                    }
+                    return Err(format!("StepFun ASR API エラー ({last_status}): {last_body}"));
+                }
+            };
+
+            let segs = parse_stepfun_sse_response(&body)?;
             Ok((segs, false, model.name))
         }
         AsrProviderKind::CloudDeepgram => {
             let api_key = secrets::get_secret("deepgram_api_key")?
                 .ok_or_else(|| "Deepgram APIキーが未設定です。".to_string())?;
+            let api_key = api_key.trim().to_string();
             let bytes = fs::read(wav_path).map_err(|e| format!("音声読み込み失敗: {e}"))?;
             let lang_param = if settings.language == "auto" || settings.language.is_empty() {
                 "detect_language=true".to_string()
@@ -1378,6 +1540,85 @@ pub async fn transcribe_wav(
             Ok((segs, true, model.name))
         }
     }
+}
+
+fn parse_stepfun_sse_response(body: &str) -> Result<Vec<TranscriptSegment>, String> {
+    let mut done_text: Option<String> = None;
+    let mut delta_acc = String::new();
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("data:") else {
+            continue;
+        };
+        let data = rest.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(data) {
+            let ev_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if ev_type == "error" || v.get("error").is_some() {
+                let msg = v
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .or_else(|| {
+                        v.get("error")
+                            .and_then(|e| e.get("message"))
+                            .and_then(|m| m.as_str())
+                    })
+                    .unwrap_or(data);
+                return Err(format!("StepFun ASR エラー: {msg}"));
+            }
+            if ev_type == "transcript.text.done" {
+                if let Some(t) = v.get("text").and_then(|t| t.as_str()) {
+                    let t = t.trim();
+                    if !t.is_empty() {
+                        done_text = Some(t.to_string());
+                    }
+                }
+            } else if ev_type == "transcript.text.delta" {
+                if let Some(d) = v.get("delta").and_then(|t| t.as_str()) {
+                    delta_acc.push_str(d);
+                }
+            } else if done_text.is_none() {
+                if let Some(t) = v.get("text").and_then(|t| t.as_str()) {
+                    let t = t.trim();
+                    if !t.is_empty() {
+                        done_text = Some(t.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut final_text = done_text.unwrap_or_else(|| delta_acc.trim().to_string());
+    if final_text.is_empty() {
+        if let Ok(v) = serde_json::from_str::<Value>(body.trim()) {
+            if v.get("error").is_some() {
+                let msg = v
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or(body.trim());
+                return Err(format!("StepFun ASR エラー: {msg}"));
+            }
+            if let Some(t) = v.get("text").and_then(|t| t.as_str()) {
+                final_text = t.trim().to_string();
+            }
+        }
+    }
+
+    let final_text = final_text.trim();
+    if final_text.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(vec![TranscriptSegment {
+        id: Uuid::new_v4().to_string(),
+        start_ms: 0,
+        end_ms: 1000,
+        speaker: String::new(),
+        text: final_text.to_string(),
+    }])
 }
 
 fn strip_sense_voice_tags(raw: &str) -> String {

@@ -6,7 +6,8 @@ export type AsrProviderKind =
   | 'local_qwen'
   | 'cloud_openai'
   | 'cloud_deepgram'
-  | 'cloud_groq';
+  | 'cloud_groq'
+  | 'cloud_stepfun';
 
 export interface AudioDeviceInfo {
   id: string;
@@ -314,6 +315,7 @@ export interface SecretStatus {
   openai_api_key: boolean;
   deepgram_api_key: boolean;
   groq_api_key: boolean;
+  stepfun_api_key?: boolean;
   llm_openai_api_key: boolean;
   llm_openai_compatible_api_key: boolean;
   llm_anthropic_api_key: boolean;

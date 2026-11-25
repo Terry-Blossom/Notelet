@@ -1110,9 +1110,10 @@ fn set_secret_cmd(key: String, value: String) -> Result<(), String> {
 #[tauri::command]
 fn get_secret_status_cmd() -> serde_json::Value {
     serde_json::json!({
-        "openai_api_key": secrets::has_secret("openai_api_key"),
+        "openai_api_key": secrets::has_secret("openai_api_key") || secrets::has_secret("llm_openai_api_key"),
         "deepgram_api_key": secrets::has_secret("deepgram_api_key"),
         "groq_api_key": secrets::has_secret("groq_api_key"),
+        "stepfun_api_key": secrets::has_secret("stepfun_api_key"),
         "llm_openai_api_key": secrets::has_secret("llm_openai_api_key"),
         "llm_openai_compatible_api_key": secrets::has_secret("llm_openai_compatible_api_key"),
         "llm_anthropic_api_key": secrets::has_secret("llm_anthropic_api_key"),

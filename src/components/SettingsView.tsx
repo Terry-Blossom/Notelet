@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Check,
   Cloud,
@@ -162,15 +162,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     void onSaveSettings({ ...settings, ...patch });
   };
 
+  const savingKeysRef = useRef<Record<string, boolean>>({});
+
   const saveKey = async (keyName: string) => {
+    if (savingKeysRef.current[keyName]) {
+      return;
+    }
     const val = (secretInputs[keyName] || '').trim();
     if (!val) {
       flash('設定を保存しました');
       return;
     }
-    await onSetSecret(keyName, val);
+    savingKeysRef.current[keyName] = true;
     setSecretInputs((prev) => ({ ...prev, [keyName]: '' }));
-    flash('APIキーを暗号化して保存しました');
+    try {
+      await onSetSecret(keyName, val);
+      flash('APIキーを暗号化して保存しました');
+    } catch (e) {
+      setSecretInputs((prev) => ({ ...prev, [keyName]: val }));
+      flash(`APIキーの保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      savingKeysRef.current[keyName] = false;
+    }
   };
 
   const realtimeModels = models.filter((m) => m.supports_realtime);
@@ -189,6 +202,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         ? { key: 'deepgram_api_key', label: 'Deepgram API Key', saved: secretStatus?.deepgram_api_key }
         : m.provider === 'cloud_groq'
         ? { key: 'groq_api_key', label: 'Groq API Key', saved: secretStatus?.groq_api_key }
+        : m.provider === 'cloud_stepfun'
+        ? { key: 'stepfun_api_key', label: 'StepFun API Key', saved: secretStatus?.stepfun_api_key }
         : null;
 
     return (
@@ -224,6 +239,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
               {m.id === 'whisper-small-q5' && (
                 <span className="status-chip">軽量・省メモリ</span>
+              )}
+              {m.id === 'stepfun-stepaudio-2.5-asr' && (
+                <span className="status-chip ok">超高速・高精度</span>
               )}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
@@ -319,6 +337,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onChange={(e) =>
                 setSecretInputs((p) => ({ ...p, [cloudKeyMeta.key]: e.target.value }))
               }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (secretInputs[cloudKeyMeta.key] || '').trim()) {
+                  e.preventDefault();
+                  void saveKey(cloudKeyMeta.key);
+                }
+              }}
               onBlur={() => {
                 if ((secretInputs[cloudKeyMeta.key] || '').trim()) {
                   void saveKey(cloudKeyMeta.key);
