@@ -482,6 +482,7 @@ fn detect_gpu_capabilities_cmd() -> models::GpuCapabilities {
 
 #[tauri::command]
 async fn transcribe_recording(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     wav_path: String,
     note_id: String,
@@ -515,8 +516,26 @@ async fn transcribe_recording(
         }
     }
 
+    let _ = app.emit(
+        "asr-transcribe-progress",
+        serde_json::json!({
+            "note_id": note.id,
+            "progress": 10,
+            "label": "音声を最適化中..."
+        }),
+    );
     let (path, detected_dur_sec) = storage::normalize_media_to_16k_wav(&raw_path);
-    let transcribe_res = asr::transcribe_wav(&path, &settings, &dictionary).await;
+    let _ = app.emit(
+        "asr-transcribe-progress",
+        serde_json::json!({
+            "note_id": note.id,
+            "progress": 20,
+            "label": "文字起こし中..."
+        }),
+    );
+    let transcribe_res =
+        asr::transcribe_wav_with_progress(&path, &settings, &dictionary, Some((&app, &note.id)))
+            .await;
 
     let (segments, _diarization_supported, model_name) = match transcribe_res {
         Ok(ok) => ok,
@@ -574,6 +593,15 @@ async fn transcribe_recording(
         }
     }
 
+    let _ = app.emit(
+        "asr-transcribe-progress",
+        serde_json::json!({
+            "note_id": note.id,
+            "progress": 100,
+            "label": "完了"
+        }),
+    );
+
     let mut data = state.data.lock().unwrap();
     storage::upsert_note(&mut data, note.clone());
     storage::append_audit(&mut data, "transcribed", &format!("note_id={}", note.id));
@@ -583,6 +611,7 @@ async fn transcribe_recording(
 
 #[tauri::command]
 async fn transcribe_uploaded_audio(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     file_name: String,
     bytes: Vec<u8>,
@@ -594,11 +623,12 @@ async fn transcribe_uploaded_audio(
     let temp_path = temp_dir.join(format!("upload_{}_{}", uuid::Uuid::new_v4(), safe_name));
     std::fs::write(&temp_path, &bytes).map_err(|e| format!("アップロードファイルの一時保存に失敗: {e}"))?;
     let path_str = temp_path.to_string_lossy().to_string();
-    transcribe_recording(state, path_str, note_id).await
+    transcribe_recording(app, state, path_str, note_id).await
 }
 
 #[tauri::command]
 async fn transcribe_uploaded_url(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     url: String,
     note_id: String,
@@ -659,7 +689,7 @@ async fn transcribe_uploaded_url(
             let wav_cand = ytdlp_out.with_extension("wav");
             if wav_cand.exists() {
                 let path_str = wav_cand.to_string_lossy().to_string();
-                return transcribe_recording(state, path_str, note_id).await;
+                return transcribe_recording(app, state, path_str, note_id).await;
             }
             downloaded = true;
         }
@@ -684,7 +714,7 @@ async fn transcribe_uploaded_url(
     }
 
     let path_str = temp_path.to_string_lossy().to_string();
-    transcribe_recording(state, path_str, note_id).await
+    transcribe_recording(app, state, path_str, note_id).await
 }
 
 #[tauri::command]

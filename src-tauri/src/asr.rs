@@ -1070,6 +1070,15 @@ pub async fn transcribe_wav(
     settings: &AppSettings,
     dictionary: &[DictionaryEntry],
 ) -> Result<(Vec<TranscriptSegment>, bool, String), String> {
+    transcribe_wav_with_progress(wav_path, settings, dictionary, None).await
+}
+
+pub async fn transcribe_wav_with_progress(
+    wav_path: &Path,
+    settings: &AppSettings,
+    dictionary: &[DictionaryEntry],
+    progress_target: Option<(&tauri::AppHandle, &str)>,
+) -> Result<(Vec<TranscriptSegment>, bool, String), String> {
     if !wav_path.exists() {
         return Err("録音された音声ファイルが見つかりません。".to_string());
     }
@@ -1824,7 +1833,19 @@ pub async fn transcribe_wav(
             let mut segs = Vec::new();
             let mut offset_samples = 0usize;
 
-            for chunk in pcm_i16.chunks(samples_per_chunk.max(16000)) {
+            let total_chunks = pcm_i16.chunks(samples_per_chunk.max(16000)).len().max(1);
+            for (chunk_idx, chunk) in pcm_i16.chunks(samples_per_chunk.max(16000)).enumerate() {
+                if let Some((app, note_id)) = progress_target {
+                    let pct = (20 + ((chunk_idx * 75) / total_chunks)) as u8;
+                    let _ = app.emit(
+                        "asr-transcribe-progress",
+                        serde_json::json!({
+                            "note_id": note_id,
+                            "progress": pct,
+                            "label": format!("{} ({}/{})", model.name, chunk_idx + 1, total_chunks),
+                        }),
+                    );
+                }
                 let mut raw_bytes = Vec::with_capacity(chunk.len() * 2);
                 for &s in chunk {
                     raw_bytes.extend_from_slice(&s.to_le_bytes());

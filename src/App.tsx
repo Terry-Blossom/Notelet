@@ -548,6 +548,11 @@ const MainApp: React.FC = () => {
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string>('');
   const [recordingNoteId, setRecordingNoteId] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
+  const [transcribeProgress, setTranscribeProgress] = useState<{
+    note_id: string;
+    progress: number;
+    label: string;
+  } | null>(null);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
@@ -776,6 +781,7 @@ const MainApp: React.FC = () => {
     let unlistenUpd: (() => void) | undefined;
     let unlistenLiveSeg: (() => void) | undefined;
     let unlistenLiveErr: (() => void) | undefined;
+    let unlistenTranscribeProg: (() => void) | undefined;
 
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       const f1 = await listen<{ model_id: string; progress: number }>('asr-download-progress', (ev) => {
@@ -797,25 +803,35 @@ const MainApp: React.FC = () => {
           setTranscribeError(ev.payload);
         }
       });
+      const f5 = await listen<{ note_id: string; progress: number; label: string }>(
+        'asr-transcribe-progress',
+        (ev) => {
+          if (ev.payload) {
+            setTranscribeProgress(ev.payload.progress >= 100 ? null : ev.payload);
+          }
+        }
+      );
       if (cancelled) {
         f1();
         f2();
         f3();
         f4();
+        f5();
       } else {
         unlistenDl = f1;
         unlistenUpd = f2;
         unlistenLiveSeg = f3;
         unlistenLiveErr = f4;
+        unlistenTranscribeProg = f5;
       }
     });
-
     return () => {
       cancelled = true;
       unlistenDl?.();
       unlistenUpd?.();
       unlistenLiveSeg?.();
       unlistenLiveErr?.();
+      unlistenTranscribeProg?.();
     };
   }, [refreshAll]);
 
@@ -1749,6 +1765,7 @@ const MainApp: React.FC = () => {
             chatHistory={snapshot.chat_history || []}
             initialSearchQuery={pendingSearchQuery || undefined}
             transcribing={transcribing && (!recordingNoteId || activeNote.id === recordingNoteId)}
+            transcribeProgress={transcribeProgress}
             transcribeError={transcribeError}
             recordingStatus={
               isRecordingActive && (!recordingNoteId || activeNote.id === recordingNoteId)

@@ -177,7 +177,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setSecretInputs((prev) => ({ ...prev, [keyName]: '' }));
     try {
       await onSetSecret(keyName, val);
-      flash('APIキーを暗号化して保存しました');
+      const isCloudAsrKey =
+        keyName === 'openai_api_key' ||
+        keyName === 'deepgram_api_key' ||
+        keyName === 'groq_api_key' ||
+        keyName === 'stepfun_api_key' ||
+        keyName === 'google_stt_api_key';
+      if (isCloudAsrKey && !settings.allow_cloud_asr) {
+        await onSaveSettings({ ...settings, allow_cloud_asr: true });
+        flash('APIキーを保存し、クラウド音声認識を有効化しました');
+      } else {
+        flash('APIキーを暗号化して保存しました');
+      }
     } catch (e) {
       setSecretInputs((prev) => ({ ...prev, [keyName]: val }));
       flash(`APIキーの保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
@@ -687,6 +698,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {/* Category 4: Cloud ASR */}
             {asrCategory === 'cloud' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {!settings.allow_cloud_asr && (
+                  <div
+                    className="surface-subtle"
+                    style={{
+                      padding: '10px 14px',
+                      borderLeft: '3px solid var(--accent)',
+                      fontSize: '12px',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <strong>クラウド音声認識の使い方（3ステップ）</strong>
+                    <div className="text-muted" style={{ marginTop: '2px' }}>
+                      ① 下のスイッチを ON（または下のAPIキーを保存すると自動ON） → ② 使いたいサービスのAPIキーを保存 → ③「選択する」をクリック
+                    </div>
+                  </div>
+                )}
                 <label className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
                   <div>
                     <strong style={{ fontSize: '12px' }}>クラウド音声認識を有効にする</strong>

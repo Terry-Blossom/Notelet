@@ -116,6 +116,7 @@ interface NoteEditorViewProps {
   recipes: Recipe[];
   secretStatus: SecretStatus | null;
   transcribing: boolean;
+  transcribeProgress?: { note_id: string; progress: number; label: string } | null;
   transcribeError: string | null;
   recordingStatus?: RecordingStatus;
   liveSegments?: TranscriptSegment[];
@@ -154,6 +155,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   settings,
   secretStatus,
   transcribing,
+  transcribeProgress = null,
   transcribeError,
   recordingStatus,
   liveSegments: externalLiveSegments = [],
@@ -688,6 +690,41 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     }
     prevSegCountRef.current = count;
   }, [displayedSegments.length, activeTab, phase, isAtBottom]);
+
+  // Auto-follow active transcript segment during audio playback
+  useEffect(() => {
+    if (!isPlaying || activeTab !== 'transcript' || !scrollRef.current) return;
+    const activeEl = scrollRef.current.querySelector('.note-turn.playing');
+    if (activeEl && typeof (activeEl as HTMLElement).scrollIntoView === 'function') {
+      (activeEl as HTMLElement).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [isPlaying, playbackMs, activeTab]);
+
+  const highlightSearchText = (text: string) => {
+    const q = inNoteSearchQuery.trim();
+    if (!q) return text;
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escaped})`, 'gi');
+    const parts = text.split(regex);
+    if (parts.length <= 1) return text;
+    return parts.map((part, i) =>
+      part.toLowerCase() === q.toLowerCase() ? (
+        <mark
+          key={i}
+          style={{
+            backgroundColor: '#FEF08A',
+            color: 'inherit',
+            borderRadius: '3px',
+            padding: '0 2px',
+          }}
+        >
+          {part}
+        </mark>
+      ) : (
+        part
+      )
+    );
+  };
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -2736,6 +2773,29 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Active ASR Model Pill */}
+            <button
+              type="button"
+              className="note-meta-pill"
+              style={{ padding: '0 10px', fontSize: '12px', color: 'var(--ns-text-secondary)' }}
+              title="使用中の音声認識 (ASR) モデル（クリックで設定を開く）"
+              onClick={onGoSettings}
+            >
+              <Mic size={13} strokeWidth={1.75} aria-hidden="true" />
+              <span>
+                {(() => {
+                  const id = note.asr_model_id || settings.active_asr_model_id;
+                  if (id === 'stepfun-stepaudio-3-asr-max') return 'StepAudio 3 Max';
+                  if (id === 'stepfun-stepaudio-2.5-asr') return 'StepAudio 2.5';
+                  if (id === 'google-cloud-stt') return 'Google Cloud STT';
+                  if (id === 'groq-whisper-large-v3-turbo') return 'Groq Whisper';
+                  if (id === 'openai-whisper-1') return 'OpenAI Whisper';
+                  if (id === 'deepgram-nova-2') return 'Deepgram Nova-2';
+                  return id || 'Whisper';
+                })()}
+              </span>
+            </button>
           </div>
         </div>
 
@@ -2830,6 +2890,55 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           </div>
         )}
 
+        {isProcessing && (
+          <div
+            role="status"
+            style={{
+              marginTop: '10px',
+              padding: '10px 14px',
+              borderRadius: '10px',
+              backgroundColor: 'var(--bg-subtle, #F8FAFC)',
+              border: '1px solid var(--border-subtle)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12.5px' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 500 }}>
+                <Loader2 size={14} strokeWidth={2} className="spin" />
+                {transcribeProgress && transcribeProgress.note_id === note.id
+                  ? transcribeProgress.label
+                  : '文字起こし処理中...'}
+              </span>
+              {transcribeProgress && transcribeProgress.note_id === note.id && (
+                <span className="mono-num text-muted">{transcribeProgress.progress}%</span>
+              )}
+            </div>
+            <div
+              style={{
+                width: '100%',
+                height: '4px',
+                borderRadius: '999px',
+                backgroundColor: 'var(--border-subtle, #E2E8F0)',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width:
+                    transcribeProgress && transcribeProgress.note_id === note.id
+                      ? `${Math.max(8, transcribeProgress.progress)}%`
+                      : '45%',
+                  height: '100%',
+                  backgroundColor: 'var(--accent)',
+                  transition: 'width 0.25s ease',
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         {transcribeError && (
           <div
             style={{
@@ -2844,16 +2953,26 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             }}
           >
             <span>{transcribeError}</span>
-            {note.audio_path && onRetranscribeNote && !isRecording && !isProcessing && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              {note.audio_path && onRetranscribeNote && !isRecording && !isProcessing && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ height: '28px', fontSize: '12px' }}
+                  onClick={() => void onRetranscribeNote(note.id)}
+                >
+                  再文字起こし
+                </button>
+              )}
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn btn-ghost"
                 style={{ height: '28px', fontSize: '12px' }}
-                onClick={() => void onRetranscribeNote(note.id)}
+                onClick={onGoSettings}
               >
-                再文字起こし
+                設定を開く
               </button>
-            )}
+            </div>
           </div>
         )}
 
@@ -2907,11 +3026,17 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             >
                               {isActiveSeg ? <Pause size={11} strokeWidth={2} /> : <Play size={11} strokeWidth={2} />}
                             </button>
-                            <span className="note-turn-time">
+                            <button
+                              type="button"
+                              className="note-turn-time"
+                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                              title={`${formatNoteTimer(seg.start_ms)} から再生`}
+                              onClick={() => void playNoteAudioFromMs(seg.start_ms)}
+                            >
                               {formatNoteTimer(seg.start_ms)}
-                            </span>
+                            </button>
                           </div>
-                          <p className="note-turn-text">{seg.text}</p>
+                          <p className="note-turn-text">{highlightSearchText(seg.text)}</p>
                         </article>
                       );
                     })}
