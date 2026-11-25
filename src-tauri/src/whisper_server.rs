@@ -157,7 +157,7 @@ async fn check_health(client: &reqwest::Client, port: u16) -> bool {
 
 fn recent_stderr(log: &Arc<StdMutex<String>>) -> String {
     let guard = log.lock().ok();
-    let s = guard.as_deref().unwrap_or("");
+    let s = guard.as_deref().map_or("", |v| v.as_str());
     let trimmed = s.trim();
     if trimmed.len() > 400 {
         let start = trimmed.len() - 400;
