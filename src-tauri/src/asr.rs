@@ -853,6 +853,13 @@ pub async fn transcribe_wav(
             let out_base = local_wav.with_extension("whisper_out");
             let mut cmd = Command::new(cli);
             configure_bg_command(&mut cmd);
+            let whisper_lang = if model.id.starts_with("kotoba-whisper") {
+                "ja"
+            } else if settings.language.is_empty() {
+                "ja"
+            } else {
+                &settings.language
+            };
             cmd.arg("-m")
                 .arg(&model_path)
                 .arg("-f")
@@ -865,14 +872,14 @@ pub async fn transcribe_wav(
                 .arg("--best-of")
                 .arg("5")
                 .arg("-l")
-                .arg(if settings.language.is_empty() {
-                    "auto"
-                } else {
-                    &settings.language
-                });
+                .arg(whisper_lang);
             let effective_prompt = if !prompt_hint.is_empty() {
-                prompt_hint.clone()
-            } else if settings.language == "ja" || settings.language.is_empty() {
+                if whisper_lang == "ja" {
+                    format!("以下は日本語の会話です。用語: {prompt_hint}")
+                } else {
+                    prompt_hint.clone()
+                }
+            } else if whisper_lang == "ja" {
                 "こんにちは。本日の会議を始めます。".to_string()
             } else {
                 String::new()
@@ -953,8 +960,14 @@ pub async fn transcribe_wav(
             let mut cmd = Command::new(cli);
             configure_bg_command(&mut cmd);
             if model.id == "sense-voice-int8-ja" {
+                let sv_lang = match settings.language.as_str() {
+                    "en" => "en",
+                    "auto" => "auto",
+                    _ => "ja",
+                };
                 cmd.arg(format!("--sense-voice-model={}", ctc_model.display()))
                     .arg("--sense-voice-use-itn=1")
+                    .arg(format!("--sense-voice-language={sv_lang}"))
                     .arg(format!("--tokens={}", tokens.display()))
                     .arg(&local_wav);
             } else if ctc_model.exists() {
@@ -1273,6 +1286,13 @@ pub fn transcribe_chunk_sync(
             let out_base = chunk_wav.with_extension("chunk_out");
             let mut cmd = Command::new(cli);
             configure_bg_command(&mut cmd);
+            let whisper_lang = if model.id.starts_with("kotoba-whisper") {
+                "ja"
+            } else if settings.language.is_empty() {
+                "ja"
+            } else {
+                &settings.language
+            };
             cmd.arg("-m")
                 .arg(&model_path)
                 .arg("-f")
@@ -1280,16 +1300,23 @@ pub fn transcribe_chunk_sync(
                 .arg("-nt")
                 .arg("-np")
                 .arg("-l")
-                .arg(if settings.language.is_empty() {
-                    "auto"
-                } else {
-                    &settings.language
-                })
+                .arg(whisper_lang)
                 .arg("-of")
                 .arg(&out_base)
                 .arg("-otxt");
-            if !prompt_hint.is_empty() {
-                cmd.arg("--prompt").arg(&prompt_hint);
+            let effective_prompt = if !prompt_hint.is_empty() {
+                if whisper_lang == "ja" {
+                    format!("以下は日本語の会話です。用語: {prompt_hint}")
+                } else {
+                    prompt_hint.clone()
+                }
+            } else if whisper_lang == "ja" {
+                "こんにちは。本日の会議を始めます。".to_string()
+            } else {
+                String::new()
+            };
+            if !effective_prompt.is_empty() {
+                cmd.arg("--prompt").arg(&effective_prompt);
             }
             let output = cmd
                 .output()
@@ -1316,8 +1343,14 @@ pub fn transcribe_chunk_sync(
             let mut cmd = Command::new(cli);
             configure_bg_command(&mut cmd);
             if model.id == "sense-voice-int8-ja" {
+                let sv_lang = match settings.language.as_str() {
+                    "en" => "en",
+                    "auto" => "auto",
+                    _ => "ja",
+                };
                 cmd.arg(format!("--sense-voice-model={}", ctc_model.display()))
                     .arg("--sense-voice-use-itn=1")
+                    .arg(format!("--sense-voice-language={sv_lang}"))
                     .arg(format!("--tokens={}", tokens.display()))
                     .arg(chunk_wav);
             } else if ctc_model.exists() {
