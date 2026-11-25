@@ -798,7 +798,7 @@ async fn summarize_note_cmd(
     {
         let note_for_slack = note.clone();
         tauri::async_runtime::spawn(async move {
-            let _ = integrations::share_to_slack(&note_for_slack).await;
+            let _ = integrations::send_slack_share(&note_for_slack).await;
         });
     }
 
