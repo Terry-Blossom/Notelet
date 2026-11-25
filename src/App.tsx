@@ -747,57 +747,91 @@ const MainApp: React.FC = () => {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    let cancelled = false;
     let unlistenDl: (() => void) | undefined;
-    let unlistenSc: (() => void) | undefined;
     let unlistenUpd: (() => void) | undefined;
-    let unlistenLive: (() => void) | undefined;
-    let unlistenOverlayStop: (() => void) | undefined;
-    let unlistenOverlayStart: (() => void) | undefined;
+    let unlistenLiveSeg: (() => void) | undefined;
+    let unlistenLiveErr: (() => void) | undefined;
+
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
-      unlistenDl = await listen<{ model_id: string; progress: number }>('asr-download-progress', (ev) => {
+      const f1 = await listen<{ model_id: string; progress: number }>('asr-download-progress', (ev) => {
         setDownloadProgress((prev) => ({ ...prev, [ev.payload.model_id]: ev.payload.progress }));
         if (ev.payload.progress >= 100) {
           void refreshAll();
         }
       });
-      unlistenUpd = await listen<{ progress: number }>('app-update-progress', (ev) => {
+      const f2 = await listen<{ progress: number }>('app-update-progress', (ev) => {
         setUpdateProgress(ev.payload.progress);
       });
-      const unlistenLiveSeg = await listen<TranscriptSegment>('live-transcript-segment', (ev) => {
-        setLiveSegments((prev) => [...prev, ev.payload]);
+      const f3 = await listen<TranscriptSegment>('live-transcript-segment', (ev) => {
+        if (ev.payload && ev.payload.text) {
+          setLiveSegments((prev) => [...prev, ev.payload]);
+        }
       });
-      const unlistenLiveErr = await listen<string>('live-transcript-error', (ev) => {
+      const f4 = await listen<string>('live-transcript-error', (ev) => {
         if (typeof ev.payload === 'string' && ev.payload.trim()) {
           setTranscribeError(ev.payload);
         }
       });
-      unlistenLive = () => {
-        unlistenLiveSeg();
-        unlistenLiveErr();
-      };
-      unlistenSc = await listen<string>('global-shortcut-triggered', () => {
+      if (cancelled) {
+        f1();
+        f2();
+        f3();
+        f4();
+      } else {
+        unlistenDl = f1;
+        unlistenUpd = f2;
+        unlistenLiveSeg = f3;
+        unlistenLiveErr = f4;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unlistenDl?.();
+      unlistenUpd?.();
+      unlistenLiveSeg?.();
+      unlistenLiveErr?.();
+    };
+  }, [refreshAll]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let cancelled = false;
+    let unlistenSc: (() => void) | undefined;
+    let unlistenOverlayStop: (() => void) | undefined;
+    let unlistenOverlayStart: (() => void) | undefined;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const f1 = await listen<string>('global-shortcut-triggered', () => {
         if (recStatus.state === 'recording' || recStatus.state === 'paused') {
           void handleStopAndFinish();
         } else {
           void handleStartRecording();
         }
       });
-      unlistenOverlayStop = await listen('overlay-stop-recording', () => {
+      const f2 = await listen('overlay-stop-recording', () => {
         void handleStopAndFinish();
       });
-      unlistenOverlayStart = await listen('overlay-start-recording', () => {
+      const f3 = await listen('overlay-start-recording', () => {
         void handleStartRecording();
       });
+      if (cancelled) {
+        f1();
+        f2();
+        f3();
+      } else {
+        unlistenSc = f1;
+        unlistenOverlayStop = f2;
+        unlistenOverlayStart = f3;
+      }
     });
     return () => {
-      unlistenDl?.();
-      unlistenUpd?.();
-      unlistenLive?.();
+      cancelled = true;
       unlistenSc?.();
       unlistenOverlayStop?.();
       unlistenOverlayStart?.();
     };
-  }, [recStatus.state, refreshAll]);
+  }, [recStatus.state]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -861,6 +895,8 @@ const MainApp: React.FC = () => {
     setRecordingNoteId(null);
     const existing = snapshot.notes.find((n) => n.id === targetId);
     const nowStr = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    const capturedLiveSegments = [...liveSegments];
+    const hasTempWav = Boolean(finalStatus.temp_wav_path);
     const targetNote: Note = existing
       ? {
           ...existing,
@@ -869,16 +905,20 @@ const MainApp: React.FC = () => {
           manual_notes: liveManualNotes
             ? [existing.manual_notes, liveManualNotes].filter(Boolean).join('\n')
             : existing.manual_notes,
-          segments: liveSegments.length > 0 ? [...existing.segments, ...liveSegments] : existing.segments,
-          audio_path: finalStatus.temp_wav_path || existing.audio_path || null,
+          segments:
+            capturedLiveSegments.length > 0
+              ? [...existing.segments, ...capturedLiveSegments]
+              : existing.segments,
+          // Keep temp_wav_path untouched until apiTranscribeRecording completes & retains it
+          audio_path: hasTempWav ? existing.audio_path || null : existing.audio_path || null,
           updated_at: new Date().toISOString(),
         }
       : {
           ...createEmptyNote(recordingSpaceId),
           duration_sec: Math.round(finalStatus.elapsed_ms / 1000),
           manual_notes: liveManualNotes,
-          segments: liveSegments,
-          audio_path: finalStatus.temp_wav_path || null,
+          segments: capturedLiveSegments,
+          audio_path: null,
           language: snapshot.settings.language,
         };
 
@@ -893,22 +933,25 @@ const MainApp: React.FC = () => {
         setTranscribeError(null);
         try {
           const updatedNote = await apiTranscribeRecording(finalStatus.temp_wav_path, targetNote.id);
+          const nextSegs =
+            updatedNote.segments.length > 0 ? updatedNote.segments : capturedLiveSegments;
           const mergedSegments =
-            existing && existing.segments.length > 0 && updatedNote.segments.length > 0
-              ? [...existing.segments, ...updatedNote.segments]
-              : updatedNote.segments;
+            existing && existing.segments.length > 0 && nextSegs.length > 0
+              ? [...existing.segments, ...nextSegs]
+              : nextSegs;
           const finalNote = { ...updatedNote, segments: mergedSegments };
-          setSnapshot((prev) => ({
-            ...prev,
-            notes: prev.notes.map((n) => (n.id === finalNote.id ? finalNote : n)),
-          }));
+          const savedSnap = await apiSaveNote(finalNote);
+          setSnapshot(savedSnap);
+          setLiveSegments([]);
           scheduleAutoNotionSync(finalNote.id, true);
         } catch (err) {
           setTranscribeError(String(err));
+          void refreshAll();
         } finally {
           setTranscribing(false);
         }
       } else {
+        setLiveSegments([]);
         scheduleAutoNotionSync(targetNote.id, true);
       }
     } else {
@@ -920,6 +963,24 @@ const MainApp: React.FC = () => {
       }));
       setActiveNoteId(targetNote.id);
       setView('editor');
+    }
+  };
+
+  const handleRetranscribeNote = async (noteId: string) => {
+    if (!isTauriRuntime()) return;
+    setTranscribing(true);
+    setTranscribeError(null);
+    try {
+      const updatedNote = await apiTranscribeRecording('', noteId);
+      setSnapshot((prev) => ({
+        ...prev,
+        notes: prev.notes.map((n) => (n.id === updatedNote.id ? updatedNote : n)),
+      }));
+      scheduleAutoNotionSync(updatedNote.id, true);
+    } catch (err) {
+      setTranscribeError(String(err));
+    } finally {
+      setTranscribing(false);
     }
   };
 
@@ -1669,6 +1730,7 @@ const MainApp: React.FC = () => {
             }
             onStartRecording={handleStartRecordingInNote}
             onStopRecording={handleStopAndFinish}
+            onRetranscribeNote={handleRetranscribeNote}
             onUpdateNote={handleUpdateNote}
             onSelectNote={(id) => {
               setPendingSearchQuery('');

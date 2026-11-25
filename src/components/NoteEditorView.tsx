@@ -120,6 +120,7 @@ interface NoteEditorViewProps {
   liveSegments?: TranscriptSegment[];
   onStartRecording?: () => Promise<void> | void;
   onStopRecording?: () => Promise<void> | void;
+  onRetranscribeNote?: (noteId: string) => Promise<void> | void;
   onUpdateNote: (note: Note) => void;
   onSelectNote?: (noteId: string) => void;
   onCreateNoteInFolder?: (folderId: string) => void;
@@ -157,6 +158,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   liveSegments: externalLiveSegments = [],
   onStartRecording,
   onStopRecording,
+  onRetranscribeNote,
   onUpdateNote,
   onSelectNote,
   onCreateNoteInFolder,
@@ -2818,11 +2820,26 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           <div
             style={{
               marginTop: '10px',
-              fontSize: '14px',
+              fontSize: '13.5px',
               color: 'var(--danger)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              flexWrap: 'wrap',
             }}
           >
-            {transcribeError}
+            <span>{transcribeError}</span>
+            {note.audio_path && onRetranscribeNote && !isRecording && !isProcessing && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ height: '28px', fontSize: '12px' }}
+                onClick={() => void onRetranscribeNote(note.id)}
+              >
+                再文字起こし
+              </button>
+            )}
           </div>
         )}
 
@@ -2836,8 +2853,18 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             {activeTab === 'transcript' && (
               <div aria-live="polite" aria-relevant="additions" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {displayedSegments.length === 0 ? (
-                  <div className="note-empty-state">
-                    {isProcessing ? '文字起こし処理中...' : 'まだ文字起こしがありません'}
+                  <div className="note-empty-state" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                    <span>{isProcessing ? '文字起こし処理中...' : 'まだ文字起こしがありません'}</span>
+                    {!isRecording && !isProcessing && note.audio_path && onRetranscribeNote && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ height: '32px', fontSize: '13px' }}
+                        onClick={() => void onRetranscribeNote(note.id)}
+                      >
+                        録音音声から文字起こしを実行
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div

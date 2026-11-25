@@ -461,12 +461,57 @@ async fn transcribe_recording(
         (data.settings.clone(), data.dictionary.clone(), note)
     };
 
-    let raw_path = std::path::PathBuf::from(&wav_path);
-    let (path, detected_dur_sec) = storage::normalize_media_to_16k_wav(&raw_path);
-    let (segments, _diarization_supported, model_name) =
-        asr::transcribe_wav(&path, &settings, &dictionary).await?;
-
     let mut note = existing_note.ok_or_else(|| "対象ノートが見つかりません".to_string())?;
+    let mut raw_path = std::path::PathBuf::from(&wav_path);
+    let mut used_retained_copy = false;
+    let mut cleanup_decrypted: Option<std::path::PathBuf> = None;
+
+    if wav_path.trim().is_empty() || !raw_path.exists() {
+        if let Some(ref ap) = note.audio_path {
+            let ap_path = std::path::Path::new(ap);
+            if ap_path.exists() {
+                if let Ok(bytes) = storage::read_retained_audio_bytes(ap, note.audio_encrypted) {
+                    let temp_dir = storage::app_data_dir().join("temp_recordings");
+                    let _ = std::fs::create_dir_all(&temp_dir);
+                    let dec_path = temp_dir.join(format!("dec_{}.wav", uuid::Uuid::new_v4()));
+                    if std::fs::write(&dec_path, &bytes).is_ok() {
+                        raw_path = dec_path.clone();
+                        used_retained_copy = true;
+                        cleanup_decrypted = Some(dec_path);
+                    }
+                }
+            }
+        }
+    }
+
+    let (path, detected_dur_sec) = storage::normalize_media_to_16k_wav(&raw_path);
+    let transcribe_res = asr::transcribe_wav(&path, &settings, &dictionary).await;
+
+    let (segments, _diarization_supported, model_name) = match transcribe_res {
+        Ok(ok) => ok,
+        Err(err) => {
+            if let Some(ref dec) = cleanup_decrypted {
+                let _ = std::fs::remove_file(dec);
+            }
+            // Even when transcription fails, preserve the recorded audio so the user can retry
+            if !used_retained_copy && path.exists() {
+                if let Ok((retained_path, encrypted)) =
+                    storage::retain_audio_file(&path, &note.id, settings.encrypt_retained_audio)
+                {
+                    let _ = std::fs::remove_file(&path);
+                    storage::remove_file_if_exists(&wav_path);
+                    note.audio_path = Some(retained_path);
+                    note.audio_encrypted = encrypted;
+                    note.updated_at = chrono::Utc::now().to_rfc3339();
+                    let mut data = state.data.lock().unwrap();
+                    storage::upsert_note(&mut data, note);
+                    let _ = storage::save_snapshot(&data);
+                }
+            }
+            return Err(err);
+        }
+    };
+
     if note.duration_sec == 0 && detected_dur_sec > 0 {
         note.duration_sec = detected_dur_sec;
     } else if note.duration_sec == 0 {
@@ -480,7 +525,14 @@ async fn transcribe_recording(
     note.asr_provider_label = model_name;
     note.updated_at = chrono::Utc::now().to_rfc3339();
 
-    if path.exists() {
+    if used_retained_copy {
+        if let Some(ref dec) = cleanup_decrypted {
+            let _ = std::fs::remove_file(dec);
+        }
+        if path != raw_path {
+            let _ = std::fs::remove_file(&path);
+        }
+    } else if path.exists() {
         if let Ok((retained_path, encrypted)) =
             storage::retain_audio_file(&path, &note.id, settings.encrypt_retained_audio)
         {

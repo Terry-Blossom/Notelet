@@ -2,10 +2,11 @@ use crate::storage;
 use reqwest::multipart::{Form, Part};
 use serde_json::Value;
 use std::fs;
+use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -36,7 +37,9 @@ struct ServerState {
     port: u16,
     server_bin: PathBuf,
     model_path: PathBuf,
+    language: String,
     use_gpu: bool,
+    stderr_log: Arc<StdMutex<String>>,
 }
 
 static WHISPER_SERVER: OnceLock<Mutex<Option<ServerState>>> = OnceLock::new();
@@ -144,20 +147,35 @@ fn find_free_port() -> Result<u16, String> {
 
 async fn check_health(client: &reqwest::Client, port: u16) -> bool {
     let url = format!("http://127.0.0.1:{port}/");
-    match client
+    client
         .get(&url)
         .timeout(Duration::from_millis(1200))
         .send()
         .await
-    {
-        Ok(_) => true,
-        Err(_) => false,
+        .is_ok()
+}
+
+fn recent_stderr(log: &Arc<StdMutex<String>>) -> String {
+    let guard = log.lock().ok();
+    let s = guard.as_deref().unwrap_or("");
+    let trimmed = s.trim();
+    if trimmed.len() > 400 {
+        let start = trimmed.len() - 400;
+        let safe_start = trimmed
+            .char_indices()
+            .map(|(i, _)| i)
+            .find(|&i| i >= start)
+            .unwrap_or(0);
+        trimmed[safe_start..].to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
 async fn spawn_and_wait(
     server_bin: &Path,
     model_path: &Path,
+    language: &str,
     use_gpu: bool,
     threads: usize,
 ) -> Result<ServerState, String> {
@@ -165,37 +183,62 @@ async fn spawn_and_wait(
     let mut cmd = Command::new(server_bin);
     configure_bg_command(&mut cmd);
 
-    if let Some(parent) = server_bin.parent() {
-        cmd.current_dir(parent);
+    if let Some(bin_dir) = server_bin.parent() {
         if let Ok(existing_path) = std::env::var("PATH") {
             let sep = if cfg!(windows) { ";" } else { ":" };
-            cmd.env("PATH", format!("{}{sep}{existing_path}", parent.display()));
+            cmd.env("PATH", format!("{}{sep}{existing_path}", bin_dir.display()));
+        } else {
+            cmd.env("PATH", bin_dir);
         }
         #[cfg(target_os = "linux")]
         {
             let existing_ld = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
             let next_ld = if existing_ld.is_empty() {
-                parent.display().to_string()
+                bin_dir.display().to_string()
             } else {
-                format!("{}:{existing_ld}", parent.display())
+                format!("{}:{existing_ld}", bin_dir.display())
             };
             cmd.env("LD_LIBRARY_PATH", next_ld);
         }
     }
+
+    // Use model_path's parent as working directory and pass the ASCII filename to -m
+    // so Windows ANSI argv never breaks on non-ASCII (e.g. Japanese) user profile paths.
+    let model_arg: String = if let (Some(parent), Some(fname)) =
+        (model_path.parent(), model_path.file_name().and_then(|n| n.to_str()))
+    {
+        if fname.is_ascii() {
+            cmd.current_dir(parent);
+            fname.to_string()
+        } else {
+            model_path.to_string_lossy().to_string()
+        }
+    } else {
+        model_path.to_string_lossy().to_string()
+    };
+
+    let startup_lang = if language.trim().is_empty() {
+        "ja"
+    } else {
+        language.trim()
+    };
 
     cmd.arg("--host")
         .arg("127.0.0.1")
         .arg("--port")
         .arg(port.to_string())
         .arg("-m")
-        .arg(model_path)
+        .arg(&model_arg)
+        .arg("-l")
+        .arg(startup_lang)
         .arg("-t")
         .arg(threads.to_string())
         .arg("--max-len")
         .arg("4096")
+        .arg("--suppress-nst")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
 
     if !use_gpu {
         cmd.arg("-ng");
@@ -217,11 +260,48 @@ async fn spawn_and_wait(
         .spawn()
         .map_err(|e| format!("whisper-server の起動に失敗しました: {e}"))?;
 
+    let stderr_log = Arc::new(StdMutex::new(String::new()));
+    if let Some(mut stderr_pipe) = child.stderr.take() {
+        let log_clone = Arc::clone(&stderr_log);
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 2048];
+            while let Ok(n) = stderr_pipe.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                let chunk = String::from_utf8_lossy(&buf[..n]);
+                if let Ok(mut g) = log_clone.lock() {
+                    g.push_str(&chunk);
+                    if g.len() > 8192 {
+                        let trim_at = g.len() - 4096;
+                        let safe = g
+                            .char_indices()
+                            .map(|(i, _)| i)
+                            .find(|&i| i >= trim_at)
+                            .unwrap_or(0);
+                        g.drain(..safe);
+                    }
+                }
+            }
+        });
+    }
+
     let client = reqwest::Client::new();
-    let deadline = Instant::now() + Duration::from_secs(45);
+    // Vulkan shader compilation on cold start can take up to ~90s
+    let timeout_secs = if use_gpu { 90 } else { 45 };
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     while Instant::now() < deadline {
         if let Ok(Some(status)) = child.try_wait() {
-            return Err(format!("whisper-server が起動中に終了しました ({status})"));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let detail = recent_stderr(&stderr_log);
+            return Err(format!(
+                "whisper-server が起動中に終了しました ({status}){}",
+                if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {detail}")
+                }
+            ));
         }
         if check_health(&client, port).await {
             return Ok(ServerState {
@@ -229,7 +309,9 @@ async fn spawn_and_wait(
                 port,
                 server_bin: server_bin.to_path_buf(),
                 model_path: model_path.to_path_buf(),
+                language: startup_lang.to_string(),
                 use_gpu,
+                stderr_log,
             });
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -237,23 +319,38 @@ async fn spawn_and_wait(
 
     let _ = child.kill();
     let _ = child.wait();
-    Err("whisper-server の起動がタイムアウトしました".to_string())
+    let detail = recent_stderr(&stderr_log);
+    Err(format!(
+        "whisper-server の起動がタイムアウトしました{}",
+        if detail.is_empty() {
+            String::new()
+        } else {
+            format!(": {detail}")
+        }
+    ))
 }
 
 async fn ensure_running(
     server_bin: &Path,
     model_path: &Path,
+    language: &str,
     use_gpu: bool,
     threads: usize,
 ) -> Result<(u16, bool), String> {
     let mut guard = server_mutex().lock().await;
     let client = reqwest::Client::new();
+    let norm_lang = if language.trim().is_empty() {
+        "ja"
+    } else {
+        language.trim()
+    };
 
     if let Some(st) = guard.as_mut() {
         let alive = matches!(st.child.try_wait(), Ok(None));
         if alive
             && st.server_bin == server_bin
             && st.model_path == model_path
+            && st.language == norm_lang
             && st.use_gpu == use_gpu
             && check_health(&client, st.port).await
         {
@@ -264,7 +361,7 @@ async fn ensure_running(
         *guard = None;
     }
 
-    match spawn_and_wait(server_bin, model_path, use_gpu, threads).await {
+    match spawn_and_wait(server_bin, model_path, norm_lang, use_gpu, threads).await {
         Ok(st) => {
             let port = st.port;
             let gpu = st.use_gpu;
@@ -273,7 +370,7 @@ async fn ensure_running(
         }
         Err(gpu_err) if use_gpu => {
             // Automatic CPU fallback if GPU server fails to start
-            match spawn_and_wait(server_bin, model_path, false, threads).await {
+            match spawn_and_wait(server_bin, model_path, norm_lang, false, threads).await {
                 Ok(st) => {
                     let port = st.port;
                     *guard = Some(st);
@@ -286,11 +383,11 @@ async fn ensure_running(
     }
 }
 
-pub async fn prewarm(server_bin: &Path, model_path: &Path, use_gpu: bool) {
+pub async fn prewarm(server_bin: &Path, model_path: &Path, language: &str, use_gpu: bool) {
     let threads = std::thread::available_parallelism()
         .map(|n| n.get().clamp(2, 8))
         .unwrap_or(4);
-    let _ = ensure_running(server_bin, model_path, use_gpu, threads).await;
+    let _ = ensure_running(server_bin, model_path, language, use_gpu, threads).await;
 }
 
 pub fn stop_server_sync() {
@@ -299,6 +396,14 @@ pub fn stop_server_sync() {
             let _ = st.child.kill();
             let _ = st.child.wait();
         }
+    }
+}
+
+pub async fn stop_server_async() {
+    let mut guard = server_mutex().lock().await;
+    if let Some(mut st) = guard.take() {
+        let _ = st.child.kill();
+        let _ = st.child.wait();
     }
 }
 
@@ -358,12 +463,14 @@ pub async fn infer_wav(
         .unwrap_or(4);
     let wav_bytes = fs::read(wav_path).map_err(|e| format!("WAV読み込み失敗: {e}"))?;
 
-    let (port, active_gpu) = ensure_running(server_bin, model_path, use_gpu, threads).await?;
+    let (port, active_gpu) =
+        ensure_running(server_bin, model_path, language, use_gpu, threads).await?;
     match post_inference(port, wav_bytes.clone(), language, prompt).await {
         Ok(val) => Ok(val),
         Err(err) if active_gpu => {
             // GPU server crashed mid-inference: restart in CPU mode and retry once
-            let (cpu_port, _) = ensure_running(server_bin, model_path, false, threads).await?;
+            let (cpu_port, _) =
+                ensure_running(server_bin, model_path, language, false, threads).await?;
             post_inference(cpu_port, wav_bytes, language, prompt)
                 .await
                 .map_err(|cpu_err| format!("{err} / CPUリトライ失敗: {cpu_err}"))

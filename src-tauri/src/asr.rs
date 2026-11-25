@@ -615,7 +615,11 @@ pub async fn install_runtime_binary(
 
     match kind {
         "whisper" => {
+            crate::whisper_server::stop_server_async().await;
             let dest_dir = bin_root.join("whisper");
+            if dest_dir.exists() {
+                let _ = fs::remove_dir_all(&dest_dir);
+            }
             fs::create_dir_all(&dest_dir).map_err(|e| format!("展開先作成失敗: {e}"))?;
             let gpu = detect_gpu_capabilities();
 
@@ -953,13 +957,20 @@ pub async fn transcribe_wav(
                 let mut segs = Vec::new();
                 if let Some(arr) = parsed.get("segments").and_then(|v| v.as_array()) {
                     for item in arr {
+                        let no_speech = item
+                            .get("no_speech_prob")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        if no_speech > 0.75 {
+                            continue;
+                        }
                         let text = item
                             .get("text")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .trim()
                             .to_string();
-                        if text.is_empty() {
+                        if text.is_empty() || is_silence_hallucination(&text) {
                             continue;
                         }
                         let start_ms = item
@@ -984,7 +995,7 @@ pub async fn transcribe_wav(
                 if segs.is_empty() {
                     if let Some(full_text) = parsed.get("text").and_then(|v| v.as_str()) {
                         let trimmed = full_text.trim().to_string();
-                        if !trimmed.is_empty() {
+                        if !trimmed.is_empty() && !is_silence_hallucination(&trimmed) {
                             segs.push(TranscriptSegment {
                                 id: Uuid::new_v4().to_string(),
                                 start_ms: 0,
@@ -1415,6 +1426,27 @@ fn strip_sense_voice_tags(raw: &str) -> String {
     out.trim().to_string()
 }
 
+fn is_silence_hallucination(text: &str) -> bool {
+    let cleaned = text
+        .trim()
+        .trim_end_matches(|c: char| matches!(c, '。' | '、' | '.' | '!' | '！' | '?' | '？'));
+    matches!(
+        cleaned,
+        "ご視聴ありがとうございました"
+            | "ご視聴いただきありがとうございました"
+            | "最後までご視聴ありがとうございました"
+            | "チャンネル登録よろしくお願いします"
+            | "チャンネル登録をお願いします"
+            | "高評価よろしくお願いします"
+            | "お疲れ様でした"
+            | "ありがとうございました"
+            | "Thank you for watching"
+            | "Thanks for watching"
+            | "Subscribe"
+            | "MBC 뉴스"
+    )
+}
+
 pub async fn prewarm_whisper_server(settings: &AppSettings) {
     let models = list_models(settings);
     let Some(model) = models
@@ -1435,7 +1467,15 @@ pub async fn prewarm_whisper_server(settings: &AppSettings) {
     if !model_path.exists() {
         return;
     }
-    crate::whisper_server::prewarm(&server_bin, &model_path, settings.enable_gpu_asr).await;
+    let whisper_lang = if model.id.starts_with("kotoba-whisper") {
+        "ja"
+    } else if settings.language.is_empty() {
+        "ja"
+    } else {
+        &settings.language
+    };
+    crate::whisper_server::prewarm(&server_bin, &model_path, whisper_lang, settings.enable_gpu_asr)
+        .await;
 }
 
 pub async fn transcribe_chunk_async(
@@ -1492,18 +1532,24 @@ pub async fn transcribe_chunk_async(
                 settings.enable_gpu_asr,
             )
             .await?;
-            if let Some(full_text) = parsed.get("text").and_then(|v| v.as_str()) {
-                return Ok(full_text.trim().to_string());
-            }
             if let Some(arr) = parsed.get("segments").and_then(|v| v.as_array()) {
                 let joined = arr
                     .iter()
+                    .filter(|s| s.get("no_speech_prob").and_then(|v| v.as_f64()).unwrap_or(0.0) <= 0.75)
                     .filter_map(|s| s.get("text").and_then(|t| t.as_str()))
                     .map(|t| t.trim())
-                    .filter(|t| !t.is_empty())
+                    .filter(|t| !t.is_empty() && !is_silence_hallucination(t))
                     .collect::<Vec<_>>()
                     .join(" ");
-                return Ok(joined);
+                if !joined.is_empty() {
+                    return Ok(joined);
+                }
+            }
+            if let Some(full_text) = parsed.get("text").and_then(|v| v.as_str()) {
+                let trimmed = full_text.trim();
+                if !trimmed.is_empty() && !is_silence_hallucination(trimmed) {
+                    return Ok(trimmed.to_string());
+                }
             }
             return Ok(String::new());
         }
