@@ -96,7 +96,8 @@ pub fn resolve_parakeet_cli(custom_path: &str) -> Option<PathBuf> {
 
 pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
     let models_dir = storage::models_dir();
-    let whisper_cli_ok = resolve_whisper_cli(&settings.whisper_cli_path).is_some();
+    let whisper_cli_ok = crate::whisper_server::resolve_whisper_server(&settings.whisper_cli_path).is_some()
+        || resolve_whisper_cli(&settings.whisper_cli_path).is_some();
     let parakeet_cli_ok = resolve_parakeet_cli(&settings.parakeet_cli_path).is_some();
 
     let parakeet_arch_ok = cfg!(any(target_arch = "x86_64", target_arch = "aarch64"));
@@ -614,78 +615,83 @@ pub async fn install_runtime_binary(
 
     match kind {
         "whisper" => {
-            if !cfg!(windows) {
-                return Err("macOS/Linux の whisper-cli は Homebrew (brew install whisper-cpp) などで導入してパスを指定してください。".to_string());
-            }
             let dest_dir = bin_root.join("whisper");
             fs::create_dir_all(&dest_dir).map_err(|e| format!("展開先作成失敗: {e}"))?;
             let gpu = detect_gpu_capabilities();
-            let preferred_names: &[&str] = if gpu.has_cuda {
-                &[
-                    "whisper-bin-win-cuda-12.4.0-x64.zip",
-                    "whisper-bin-win-cuda-11.8.0-x64.zip",
-                    "whisper-blas-bin-x64.zip",
-                    "whisper-bin-x64.zip",
-                ]
+
+            let asset_name = if cfg!(target_os = "macos") {
+                if cfg!(target_arch = "aarch64") {
+                    "whisper-server-darwin-arm64.zip"
+                } else {
+                    "whisper-server-darwin-x64.zip"
+                }
+            } else if cfg!(windows) {
+                if gpu.has_cuda {
+                    "whisper-server-win32-x64-cuda.zip"
+                } else if Path::new(r"C:\Windows\System32\vulkan-1.dll").exists() {
+                    "whisper-server-win32-x64-vulkan.zip"
+                } else {
+                    "whisper-server-win32-x64-cpu.zip"
+                }
+            } else if gpu.has_cuda {
+                "whisper-server-linux-x64-cuda.zip"
+            } else if Path::new("/usr/lib/libvulkan.so.1").exists()
+                || Path::new("/usr/lib/x86_64-linux-gnu/libvulkan.so.1").exists()
+            {
+                "whisper-server-linux-x64-vulkan.zip"
             } else {
-                &["whisper-blas-bin-x64.zip", "whisper-bin-x64.zip"]
+                "whisper-server-linux-x64-cpu.zip"
             };
 
-            let resp = client
-                .get("https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=15")
-                .send()
-                .await
-                .map_err(|e| format!("GitHub API 接続失敗: {e}"))?;
-            let releases: Vec<Value> = resp.json().await.map_err(|e| format!("JSON解析失敗: {e}"))?;
-            let asset_url = preferred_names
-                .iter()
-                .find_map(|target| {
-                    releases
-                        .iter()
-                        .filter(|r| !r["prerelease"].as_bool().unwrap_or(false))
-                        .find_map(|r| {
-                            r["assets"].as_array()?.iter().find_map(|a| {
-                                let name = a["name"].as_str()?;
-                                if name == *target {
-                                    a["browser_download_url"].as_str().map(|s| s.to_string())
-                                } else {
-                                    None
-                                }
-                            })
-                        })
-                })
-                .unwrap_or_else(|| {
-                    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.3/whisper-bin-x64.zip".to_string()
-                });
+            let asset_url = format!(
+                "https://github.com/OpenWhispr/whisper.cpp/releases/download/0.0.11/{asset_name}"
+            );
+            let zip_path = bin_root.join(asset_name);
+            download_single_file(app, "runtime:whisper", &asset_url, &zip_path, 0.0, 90.0, 20 * 1024 * 1024).await?;
 
-            let zip_path = bin_root.join("whisper-bin-x64.zip");
-            download_single_file(app, "runtime:whisper", &asset_url, &zip_path, 0.0, 90.0, 15 * 1024 * 1024).await?;
-
-            let mut cmd = Command::new("powershell");
-            configure_bg_command(&mut cmd);
-            let status = cmd
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    &format!(
-                        "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
-                        zip_path.display(),
-                        dest_dir.display()
-                    ),
-                ])
-                .status()
-                .map_err(|e| format!("ZIP展開に失敗しました: {e}"))?;
-            let _ = fs::remove_file(&zip_path);
-            if !status.success() {
-                return Err("whisper.cpp アーカイブの展開に失敗しました。".to_string());
+            if cfg!(windows) {
+                let mut cmd = Command::new("powershell");
+                configure_bg_command(&mut cmd);
+                let status = cmd
+                    .args([
+                        "-NoProfile",
+                        "-Command",
+                        &format!(
+                            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+                            zip_path.display(),
+                            dest_dir.display()
+                        ),
+                    ])
+                    .status()
+                    .map_err(|e| format!("ZIP展開に失敗しました: {e}"))?;
+                let _ = fs::remove_file(&zip_path);
+                if !status.success() {
+                    return Err("whisper-server アーカイブの展開に失敗しました。".to_string());
+                }
+            } else {
+                let mut cmd = Command::new("unzip");
+                configure_bg_command(&mut cmd);
+                let status = cmd
+                    .args(["-o", "-q"])
+                    .arg(&zip_path)
+                    .arg("-d")
+                    .arg(&dest_dir)
+                    .status()
+                    .map_err(|e| format!("ZIP展開に失敗しました: {e}"))?;
+                let _ = fs::remove_file(&zip_path);
+                if !status.success() {
+                    return Err("whisper-server アーカイブの展開に失敗しました。".to_string());
+                }
             }
+
             let _ = app.emit(
                 "asr-download-progress",
                 serde_json::json!({ "model_id": "runtime:whisper", "progress": 100 }),
             );
-            let exe = find_file_recursive(&dest_dir, "whisper-cli.exe")
-                .or_else(|| find_file_recursive(&dest_dir, "main.exe"))
-                .ok_or_else(|| "展開後に whisper-cli.exe が見つかりませんでした。".to_string())?;
+            let exe = crate::whisper_server::resolve_whisper_server("")
+                .or_else(|| find_file_recursive(&dest_dir, "whisper-cli.exe"))
+                .or_else(|| find_file_recursive(&dest_dir, "whisper-cli"))
+                .ok_or_else(|| "展開後に whisper-server 実行ファイルが見つかりませんでした。".to_string())?;
             Ok(exe.to_string_lossy().to_string())
         }
         "parakeet" => {
@@ -901,24 +907,16 @@ pub async fn transcribe_wav(
     match model.provider {
         AsrProviderKind::LocalWhisper => {
             let (local_wav, should_cleanup) = ensure_local_wav(wav_path).await?;
-            let cli = resolve_whisper_cli(&settings.whisper_cli_path).ok_or_else(|| {
-                if should_cleanup {
-                    let _ = fs::remove_file(&local_wav);
-                }
-                "ローカルWhisperランタイム（whisper-cli）が見つかりません。設定＞ASRモデルから導入してください。クラウドへの自動切替は行いません。"
-                    .to_string()
-            })?;
             let model_path = storage::models_dir().join(&model.filename);
             if !model_path.exists() {
                 if should_cleanup {
                     let _ = fs::remove_file(&local_wav);
                 }
                 return Err(format!(
-                    "モデルファイル（{}）が未取得です。設定＞ASRモデルからダウンロードしてください。",
+                    "モデルファイル（{}）が未取得です。設定＞音声認識からダウンロードしてください。",
                     model.filename
                 ));
             }
-            let out_base = local_wav.with_extension("whisper_out");
             let whisper_lang = if model.id.starts_with("kotoba-whisper") {
                 "ja"
             } else if settings.language.is_empty() {
@@ -937,6 +935,77 @@ pub async fn transcribe_wav(
             } else {
                 String::new()
             };
+
+            if let Some(server_bin) = crate::whisper_server::resolve_whisper_server(&settings.whisper_cli_path) {
+                let res = crate::whisper_server::infer_wav(
+                    &server_bin,
+                    &model_path,
+                    &local_wav,
+                    whisper_lang,
+                    &effective_prompt,
+                    settings.enable_gpu_asr,
+                )
+                .await;
+                if should_cleanup {
+                    let _ = fs::remove_file(&local_wav);
+                }
+                let parsed = res?;
+                let mut segs = Vec::new();
+                if let Some(arr) = parsed.get("segments").and_then(|v| v.as_array()) {
+                    for item in arr {
+                        let text = item
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        if text.is_empty() {
+                            continue;
+                        }
+                        let start_ms = item
+                            .get("start")
+                            .and_then(|v| v.as_f64())
+                            .map(|s| (s.max(0.0) * 1000.0) as u64)
+                            .unwrap_or(0);
+                        let end_ms = item
+                            .get("end")
+                            .and_then(|v| v.as_f64())
+                            .map(|s| (s.max(0.0) * 1000.0) as u64)
+                            .unwrap_or(start_ms + 1000);
+                        segs.push(TranscriptSegment {
+                            id: Uuid::new_v4().to_string(),
+                            start_ms,
+                            end_ms,
+                            speaker: String::new(),
+                            text,
+                        });
+                    }
+                }
+                if segs.is_empty() {
+                    if let Some(full_text) = parsed.get("text").and_then(|v| v.as_str()) {
+                        let trimmed = full_text.trim().to_string();
+                        if !trimmed.is_empty() {
+                            segs.push(TranscriptSegment {
+                                id: Uuid::new_v4().to_string(),
+                                start_ms: 0,
+                                end_ms: 1000,
+                                speaker: String::new(),
+                                text: trimmed,
+                            });
+                        }
+                    }
+                }
+                return Ok((segs, false, model.name));
+            }
+
+            let cli = resolve_whisper_cli(&settings.whisper_cli_path).ok_or_else(|| {
+                if should_cleanup {
+                    let _ = fs::remove_file(&local_wav);
+                }
+                "ローカルWhisperランタイム（whisper-server / whisper-cli）が見つかりません。設定＞音声認識から導入してください。クラウドへの自動切替は行いません。"
+                    .to_string()
+            })?;
+            let out_base = local_wav.with_extension("whisper_out");
             let threads = std::thread::available_parallelism()
                 .map(|n| n.get().clamp(2, 8))
                 .unwrap_or(4);
@@ -956,6 +1025,10 @@ pub async fn transcribe_wav(
                     .arg("5")
                     .arg("--best-of")
                     .arg("5")
+                    .arg("--entropy-thold")
+                    .arg("2.8")
+                    .arg("--logprob-thold")
+                    .arg("-1.25")
                     .arg("-l")
                     .arg(whisper_lang);
                 if no_gpu {
@@ -1013,7 +1086,7 @@ pub async fn transcribe_wav(
                         id: Uuid::new_v4().to_string(),
                         start_ms,
                         end_ms,
-                        speaker: "話者1".to_string(),
+                        speaker: String::new(),
                         text,
                     });
                 }
@@ -1340,6 +1413,110 @@ fn strip_sense_voice_tags(raw: &str) -> String {
         i += 1;
     }
     out.trim().to_string()
+}
+
+pub async fn prewarm_whisper_server(settings: &AppSettings) {
+    let models = list_models(settings);
+    let Some(model) = models
+        .into_iter()
+        .find(|m| m.id == settings.active_asr_model_id)
+    else {
+        return;
+    };
+    if model.provider != AsrProviderKind::LocalWhisper {
+        return;
+    }
+    let Some(server_bin) =
+        crate::whisper_server::resolve_whisper_server(&settings.whisper_cli_path)
+    else {
+        return;
+    };
+    let model_path = storage::models_dir().join(&model.filename);
+    if !model_path.exists() {
+        return;
+    }
+    crate::whisper_server::prewarm(&server_bin, &model_path, settings.enable_gpu_asr).await;
+}
+
+pub async fn transcribe_chunk_async(
+    chunk_wav: &Path,
+    settings: &AppSettings,
+    dictionary: &[DictionaryEntry],
+) -> Result<String, String> {
+    let models = list_models(settings);
+    let model = models
+        .into_iter()
+        .find(|m| m.id == settings.active_asr_model_id)
+        .ok_or_else(|| "ASRモデルが見つかりません".to_string())?;
+    if !model.is_local || !model.supports_realtime {
+        return Ok(String::new());
+    }
+
+    if model.provider == AsrProviderKind::LocalWhisper {
+        let model_path = storage::models_dir().join(&model.filename);
+        if !model_path.exists() {
+            return Err(format!(
+                "モデルファイル（{}）が未取得です。設定＞音声認識からダウンロードしてください。",
+                model.filename
+            ));
+        }
+        if let Some(server_bin) =
+            crate::whisper_server::resolve_whisper_server(&settings.whisper_cli_path)
+        {
+            let prompt_terms: Vec<String> = dictionary.iter().map(|d| d.term.clone()).collect();
+            let prompt_hint = prompt_terms.join("、");
+            let whisper_lang = if model.id.starts_with("kotoba-whisper") {
+                "ja"
+            } else if settings.language.is_empty() {
+                "ja"
+            } else {
+                &settings.language
+            };
+            let effective_prompt = if !prompt_hint.is_empty() {
+                if whisper_lang == "ja" {
+                    format!("以下は日本語の会話です。用語: {prompt_hint}")
+                } else {
+                    prompt_hint
+                }
+            } else if whisper_lang == "ja" {
+                "こんにちは。本日の会議を始めます。".to_string()
+            } else {
+                String::new()
+            };
+            let parsed = crate::whisper_server::infer_wav(
+                &server_bin,
+                &model_path,
+                chunk_wav,
+                whisper_lang,
+                &effective_prompt,
+                settings.enable_gpu_asr,
+            )
+            .await?;
+            if let Some(full_text) = parsed.get("text").and_then(|v| v.as_str()) {
+                return Ok(full_text.trim().to_string());
+            }
+            if let Some(arr) = parsed.get("segments").and_then(|v| v.as_array()) {
+                let joined = arr
+                    .iter()
+                    .filter_map(|s| s.get("text").and_then(|t| t.as_str()))
+                    .map(|t| t.trim())
+                    .filter(|t| !t.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                return Ok(joined);
+            }
+            return Ok(String::new());
+        }
+    }
+
+    let chunk_owned = chunk_wav.to_path_buf();
+    let settings_owned = settings.clone();
+    let dict_owned = dictionary.to_vec();
+    tokio::task::spawn_blocking(move || {
+        transcribe_chunk_sync(&chunk_owned, &settings_owned, &dict_owned)
+    })
+    .await
+    .map_err(|e| format!("チャンク推論タスク失敗: {e}"))?
 }
 
 pub fn transcribe_chunk_sync(

@@ -7,6 +7,7 @@ mod notion;
 mod secrets;
 mod storage;
 mod updater;
+mod whisper_server;
 
 use audio::AudioManager;
 use models::{
@@ -239,6 +240,16 @@ async fn start_recording(
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Pre-warm OpenWhispr-style persistent whisper-server immediately when recording starts
+        {
+            let st_ref = app_handle.state::<AppState>();
+            let initial_settings = {
+                let data = st_ref.data.lock().unwrap();
+                data.settings.clone()
+            };
+            asr::prewarm_whisper_server(&initial_settings).await;
+        }
+
         let mut error_reported = false;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(600)).await;
@@ -263,14 +274,10 @@ async fn start_recording(
                     (data.settings.clone(), data.dictionary.clone())
                 };
                 let chunk_clone = chunk_path.clone();
-                let res = tokio::task::spawn_blocking(move || {
-                    let out = asr::transcribe_chunk_sync(&chunk_clone, &settings, &dictionary);
-                    let _ = std::fs::remove_file(&chunk_clone);
-                    out
-                })
-                .await;
+                let res = asr::transcribe_chunk_async(&chunk_clone, &settings, &dictionary).await;
+                let _ = std::fs::remove_file(&chunk_clone);
                 match res {
-                    Ok(Ok(text)) if !text.is_empty() => {
+                    Ok(text) if !text.is_empty() => {
                         let start_ms = elapsed_ms.saturating_sub(2000);
                         let seg = models::TranscriptSegment {
                             id: uuid::Uuid::new_v4().to_string(),
@@ -281,7 +288,7 @@ async fn start_recording(
                         };
                         let _ = app_handle.emit("live-transcript-segment", seg);
                     }
-                    Ok(Err(err)) if !error_reported => {
+                    Err(err) if !error_reported => {
                         error_reported = true;
                         let _ = app_handle.emit("live-transcript-error", err);
                     }
@@ -1918,6 +1925,11 @@ pub fn run() {
             check_app_update,
             install_app_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("Notelet の起動中にエラーが発生しました");
+        .build(tauri::generate_context!())
+        .expect("Notelet のビルド中にエラーが発生しました")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                whisper_server::stop_server_sync();
+            }
+        });
 }
