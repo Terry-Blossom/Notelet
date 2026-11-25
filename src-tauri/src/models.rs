@@ -62,6 +62,8 @@ pub enum AsrProviderKind {
     CloudGroq,
     #[serde(rename = "cloud_stepfun", alias = "cloud_step_fun")]
     CloudStepFun,
+    #[serde(rename = "cloud_google", alias = "cloud_google_stt")]
+    CloudGoogleStt,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

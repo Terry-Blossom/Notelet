@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Notelet",
-  "version": "0.15.9",
+  "version": "0.15.10",
   "identifier": "app.koenote.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -50,7 +50,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https://api.openai.com https://api.anthropic.com https://generativelanguage.googleapis.com https://api.deepgram.com https://api.groq.com https://api.notion.com https://hooks.slack.com http://localhost:11434; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data: blob:;"
+      "csp": "default-src 'self'; connect-src 'self' https://api.openai.com https://api.anthropic.com https://generativelanguage.googleapis.com https://speech.googleapis.com https://api.deepgram.com https://api.groq.com https://api.stepfun.ai https://api.stepfun.com https://api.notion.com https://hooks.slack.com http://localhost:11434; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data: blob:;"
     }
   },
   "bundle": {

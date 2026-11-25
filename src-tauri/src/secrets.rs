@@ -5,21 +5,206 @@ use keyring::Entry;
 use rand::RngCore;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 const SERVICE_NAME: &str = "app.koenote.desktop";
 const ENC_PREFIX: &str = "ENCv1:";
+const DPAPI_PREFIX: &str = "DPAPIv1:";
 
 fn vault_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn restrict_dir_permissions(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+    }
+}
+
+fn restrict_file_permissions(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+}
+
+#[cfg(windows)]
+mod win_dpapi {
+    use core::ffi::c_void;
+
+    #[repr(C)]
+    struct DataBlob {
+        cb_data: u32,
+        pb_data: *mut u8,
+    }
+
+    #[link(name = "crypt32")]
+    extern "system" {
+        fn CryptProtectData(
+            p_data_in: *const DataBlob,
+            sz_data_descr: *const u16,
+            p_optional_entropy: *const DataBlob,
+            pv_reserved: *mut c_void,
+            p_prompt_struct: *mut c_void,
+            dw_flags: u32,
+            p_data_out: *mut DataBlob,
+        ) -> i32;
+        fn CryptUnprotectData(
+            p_data_in: *const DataBlob,
+            ppsz_data_descr: *mut *mut u16,
+            p_optional_entropy: *const DataBlob,
+            pv_reserved: *mut c_void,
+            p_prompt_struct: *mut c_void,
+            dw_flags: u32,
+            p_data_out: *mut DataBlob,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LocalFree(h_mem: *mut c_void) -> *mut c_void;
+    }
+
+    const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x1;
+    const ENTROPY: &[u8] = b"app.koenote.desktop.vault.v1";
+
+    pub fn protect(plain: &[u8]) -> Option<Vec<u8>> {
+        let mut entropy_buf = ENTROPY.to_vec();
+        let mut in_buf = plain.to_vec();
+        let in_blob = DataBlob {
+            cb_data: u32::try_from(in_buf.len()).ok()?,
+            pb_data: in_buf.as_mut_ptr(),
+        };
+        let entropy_blob = DataBlob {
+            cb_data: u32::try_from(entropy_buf.len()).ok()?,
+            pb_data: entropy_buf.as_mut_ptr(),
+        };
+        let mut out_blob = DataBlob {
+            cb_data: 0,
+            pb_data: core::ptr::null_mut(),
+        };
+        let ok = unsafe {
+            CryptProtectData(
+                &in_blob,
+                core::ptr::null(),
+                &entropy_blob,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out_blob,
+            )
+        };
+        if ok == 0 || out_blob.pb_data.is_null() {
+            return None;
+        }
+        let slice = unsafe { core::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize) };
+        let result = slice.to_vec();
+        unsafe {
+            LocalFree(out_blob.pb_data as *mut c_void);
+        }
+        Some(result)
+    }
+
+    pub fn unprotect(cipher: &[u8]) -> Option<Vec<u8>> {
+        let mut entropy_buf = ENTROPY.to_vec();
+        let mut in_buf = cipher.to_vec();
+        let in_blob = DataBlob {
+            cb_data: u32::try_from(in_buf.len()).ok()?,
+            pb_data: in_buf.as_mut_ptr(),
+        };
+        let entropy_blob = DataBlob {
+            cb_data: u32::try_from(entropy_buf.len()).ok()?,
+            pb_data: entropy_buf.as_mut_ptr(),
+        };
+        let mut out_blob = DataBlob {
+            cb_data: 0,
+            pb_data: core::ptr::null_mut(),
+        };
+        let ok = unsafe {
+            CryptUnprotectData(
+                &in_blob,
+                core::ptr::null_mut(),
+                &entropy_blob,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out_blob,
+            )
+        };
+        if ok == 0 || out_blob.pb_data.is_null() {
+            return None;
+        }
+        let slice = unsafe { core::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize) };
+        let result = slice.to_vec();
+        unsafe {
+            LocalFree(out_blob.pb_data as *mut c_void);
+        }
+        Some(result)
+    }
+}
+
+fn write_protected_master_key_fallback(encoded_b64: &str) {
+    let path = master_key_fallback_path();
+    #[cfg(windows)]
+    {
+        if let Ok(raw_key) = B64.decode(encoded_b64.trim()) {
+            if let Some(protected) = win_dpapi::protect(&raw_key) {
+                let payload = format!("{DPAPI_PREFIX}{}", B64.encode(protected));
+                let _ = fs::write(&path, payload);
+                restrict_file_permissions(&path);
+                return;
+            }
+        }
+    }
+    let _ = fs::write(&path, encoded_b64.trim());
+    restrict_file_permissions(&path);
+}
+
+fn read_protected_master_key_fallback() -> Option<[u8; 32]> {
+    let path = master_key_fallback_path();
+    let raw = fs::read_to_string(&path).ok()?;
+    let trimmed = raw.trim();
+    #[cfg(windows)]
+    if let Some(rest) = trimmed.strip_prefix(DPAPI_PREFIX) {
+        let protected = B64.decode(rest.trim()).ok()?;
+        let plain = win_dpapi::unprotect(&protected)?;
+        if plain.len() == 32 {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&plain);
+            return Some(key);
+        }
+        return None;
+    }
+    if let Ok(bytes) = B64.decode(trimmed) {
+        if bytes.len() == 32 {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&bytes);
+            // Upgrade legacy plaintext fallback key to DPAPI-protected / 0600
+            write_protected_master_key_fallback(trimmed);
+            return Some(key);
+        }
+    }
+    None
+}
+
 fn vault_dir() -> PathBuf {
     let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
     let dir = base.join("KoeNote");
     let _ = fs::create_dir_all(&dir);
+    restrict_dir_permissions(&dir);
     dir
 }
 
@@ -46,12 +231,18 @@ fn write_vault_map(map: &HashMap<String, String>) -> Result<(), String> {
     let raw = serde_json::to_string_pretty(map)
         .map_err(|e| format!("シークレット保存データの生成に失敗しました: {e}"))?;
     let tmp = path.with_extension("json.tmp");
-    if fs::write(&tmp, &raw).is_ok() && fs::rename(&tmp, &path).is_ok() {
-        return Ok(());
+    if fs::write(&tmp, &raw).is_ok() {
+        restrict_file_permissions(&tmp);
+        if fs::rename(&tmp, &path).is_ok() {
+            restrict_file_permissions(&path);
+            return Ok(());
+        }
     }
     let _ = fs::remove_file(&tmp);
     fs::write(&path, raw)
-        .map_err(|e| format!("APIキーの保存に失敗しました: {e}"))
+        .map_err(|e| format!("APIキーの保存に失敗しました: {e}"))?;
+    restrict_file_permissions(&path);
+    Ok(())
 }
 
 fn get_or_create_secret_cipher_key() -> Result<[u8; 32], String> {
@@ -61,30 +252,25 @@ fn get_or_create_secret_cipher_key() -> Result<[u8; 32], String> {
                 if bytes.len() == 32 {
                     let mut key = [0u8; 32];
                     key.copy_from_slice(&bytes);
-                    let _ = fs::write(master_key_fallback_path(), encoded.trim());
+                    write_protected_master_key_fallback(encoded.trim());
                     return Ok(key);
                 }
             }
         }
     }
 
-    if let Ok(encoded) = fs::read_to_string(master_key_fallback_path()) {
-        if let Ok(bytes) = B64.decode(encoded.trim()) {
-            if bytes.len() == 32 {
-                let mut key = [0u8; 32];
-                key.copy_from_slice(&bytes);
-                if let Ok(key_entry) = Entry::new(SERVICE_NAME, "__koenote_master_key__") {
-                    let _ = key_entry.set_password(encoded.trim());
-                }
-                return Ok(key);
-            }
+    if let Some(key) = read_protected_master_key_fallback() {
+        let encoded = B64.encode(key);
+        if let Ok(key_entry) = Entry::new(SERVICE_NAME, "__koenote_master_key__") {
+            let _ = key_entry.set_password(&encoded);
         }
+        return Ok(key);
     }
 
     let mut key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut key);
     let encoded = B64.encode(key);
-    let _ = fs::write(master_key_fallback_path(), &encoded);
+    write_protected_master_key_fallback(&encoded);
     if let Ok(key_entry) = Entry::new(SERVICE_NAME, "__koenote_master_key__") {
         let _ = key_entry.set_password(&encoded);
     }
@@ -156,11 +342,7 @@ pub fn set_secret(key: &str, value: &str) -> Result<(), String> {
         // Deletion is handled explicitly via delete_secret(key).
         return Ok(());
     }
-    let encrypted = if key == "audio_encryption_key" {
-        cleaned
-    } else {
-        encrypt_secret_value(&cleaned)?
-    };
+    let encrypted = encrypt_secret_value(&cleaned)?;
 
     {
         let _guard = vault_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -184,12 +366,7 @@ pub fn get_secret(key: &str) -> Result<Option<String>, String> {
         vault.get(key).cloned()
     };
     if let Some(stored) = stored_opt {
-        if key == "audio_encryption_key" {
-            let trimmed = stored.trim();
-            if !trimmed.is_empty() {
-                return Ok(Some(trimmed.to_string()));
-            }
-        } else if let Ok(dec) = decrypt_secret_value(&stored) {
+        if let Ok(dec) = decrypt_secret_value(&stored) {
             let cleaned = sanitize_secret_value(key, &dec);
             if !cleaned.is_empty() {
                 return Ok(Some(cleaned));
@@ -199,12 +376,7 @@ pub fn get_secret(key: &str) -> Result<Option<String>, String> {
 
     if let Ok(entry) = Entry::new(SERVICE_NAME, key) {
         if let Ok(pw) = entry.get_password() {
-            if key == "audio_encryption_key" {
-                let trimmed = pw.trim();
-                if !trimmed.is_empty() {
-                    return Ok(Some(trimmed.to_string()));
-                }
-            } else if let Ok(dec) = decrypt_secret_value(&pw) {
+            if let Ok(dec) = decrypt_secret_value(&pw) {
                 let cleaned = sanitize_secret_value(key, &dec);
                 if !cleaned.is_empty() {
                     return Ok(Some(cleaned));

@@ -15,6 +15,7 @@ import {
   History,
   Link2,
   List,
+  Loader2,
   Menu,
   Mic,
   Pause,
@@ -1444,15 +1445,17 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             {isChildRecording && (
                               <span
                                 title="録音中"
+                                aria-label="録音中"
                                 style={{
-                                  width: '8px',
-                                  height: '8px',
-                                  borderRadius: '50%',
-                                  backgroundColor: 'var(--danger)',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
                                   marginLeft: 'auto',
                                   flexShrink: 0,
+                                  color: 'var(--danger)',
                                 }}
-                              />
+                              >
+                                <Loader2 size={14} strokeWidth={2} className="spin" />
+                              </span>
                             )}
                           </button>
                         );
@@ -1985,7 +1988,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                                 <FileText size={15} strokeWidth={1.75} />
                                 <strong style={{ fontWeight: 600 }}>{fnTitle}</strong>
                                 {isFnRecording && (
-                                  <span className="status-chip danger">録音中</span>
+                                  <span className="status-chip danger" style={{ gap: '4px' }}>
+                                    <Loader2 size={12} strokeWidth={2} className="spin" />
+                                    録音中
+                                  </span>
                                 )}
                               </div>
                               <span className="text-muted mono-num">

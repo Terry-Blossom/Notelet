@@ -106,12 +106,18 @@ pub async fn send_slack_share(note: &Note) -> Result<(), String> {
 }
 
 pub async fn send_generic_webhook(note: &Note, url: &str) -> Result<(), String> {
-    if url.trim().is_empty() {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
         return Err("Webhook URL が設定されていません。".to_string());
+    }
+    let parsed = reqwest::Url::parse(trimmed)
+        .map_err(|_| "有効な http:// または https:// の Webhook URL を指定してください。".to_string())?;
+    if parsed.scheme() != "https" && parsed.scheme() != "http" {
+        return Err("Webhook URL は http:// または https:// のみ対応しています。".to_string());
     }
     let client = reqwest::Client::new();
     let resp = client
-        .post(url.trim())
+        .post(parsed)
         .json(note)
         .send()
         .await

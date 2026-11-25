@@ -285,6 +285,7 @@ async fn start_recording(
                     | models::AsrProviderKind::CloudDeepgram
                     | models::AsrProviderKind::CloudGroq
                     | models::AsrProviderKind::CloudStepFun
+                    | models::AsrProviderKind::CloudGoogleStt
             );
             if is_cloud_provider && !settings.allow_cloud_asr {
                 continue;
@@ -402,14 +403,19 @@ fn read_note_audio(state: State<AppState>, note_id: String) -> Result<String, St
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     let trimmed = url.trim();
-    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err("不正な文字を含むURLは開けません".to_string());
+    }
+    let parsed = reqwest::Url::parse(trimmed).map_err(|_| "有効なURLではありません".to_string())?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err("http/https の URL のみ開けます".to_string());
     }
+    let safe_url = parsed.as_str();
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", trimmed])
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", safe_url])
             .creation_flags(0x08000000)
             .spawn()
             .map_err(|e| format!("URL を開けませんでした: {e}"))?;
@@ -417,14 +423,14 @@ fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg(trimmed)
+            .arg(safe_url)
             .spawn()
             .map_err(|e| format!("URL を開けませんでした: {e}"))?;
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         std::process::Command::new("xdg-open")
-            .arg(trimmed)
+            .arg(safe_url)
             .spawn()
             .map_err(|e| format!("URL を開けませんでした: {e}"))?;
     }
@@ -598,8 +604,30 @@ async fn transcribe_uploaded_url(
     note_id: String,
 ) -> Result<Note, String> {
     let trimmed = url.trim();
-    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+    let parsed = reqwest::Url::parse(trimmed)
+        .map_err(|_| "有効な http:// または https:// の動画・音声リンクを入力してください。".to_string())?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err("有効な http:// または https:// の動画・音声リンクを入力してください。".to_string());
+    }
+    if let Some(host) = parsed.host_str() {
+        let h = host.trim_matches(['[', ']']).to_ascii_lowercase();
+        let is_blocked_host = h == "localhost"
+            || h.ends_with(".local")
+            || h.parse::<std::net::IpAddr>().map_or(false, |ip| match ip {
+                std::net::IpAddr::V4(v4) => {
+                    v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+                }
+                std::net::IpAddr::V6(v6) => {
+                    let seg0 = v6.segments()[0];
+                    v6.is_loopback()
+                        || v6.is_unspecified()
+                        || (seg0 & 0xfe00) == 0xfc00
+                        || (seg0 & 0xffc0) == 0xfe80
+                }
+            });
+        if is_blocked_host {
+            return Err("ローカルネットワーク・内部アドレスへのアクセスはセキュリティ上許可されていません。".to_string());
+        }
     }
     let temp_dir = storage::app_data_dir().join("temp_recordings");
     let _ = std::fs::create_dir_all(&temp_dir);
@@ -623,6 +651,7 @@ async fn transcribe_uploaded_url(
     if let Ok(out) = ytdlp_cmd
         .args(["-x", "--audio-format", "wav", "-o"])
         .arg(&ytdlp_out)
+        .arg("--")
         .arg(trimmed)
         .output()
     {
@@ -1139,6 +1168,7 @@ fn get_secret_status_cmd() -> serde_json::Value {
         "deepgram_api_key": secrets::has_secret("deepgram_api_key"),
         "groq_api_key": secrets::has_secret("groq_api_key"),
         "stepfun_api_key": secrets::has_secret("stepfun_api_key"),
+        "google_stt_api_key": secrets::has_secret("google_stt_api_key"),
         "llm_openai_api_key": secrets::has_secret("llm_openai_api_key"),
         "llm_openai_compatible_api_key": secrets::has_secret("llm_openai_compatible_api_key"),
         "llm_anthropic_api_key": secrets::has_secret("llm_anthropic_api_key"),

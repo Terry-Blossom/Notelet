@@ -472,6 +472,33 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             installed: true,
             data_handling: "録音音声ファイルを StepFun API に送信します（2.5は中英特化のため、日本語設定時は多言語対応の stepaudio-3-asr-max へ自動ルーティングします）。".into(),
         },
+        AsrModelInfo {
+            id: "google-cloud-stt".to_string(),
+            name: "Google Cloud Speech-to-Text (クラウド・多言語)".to_string(),
+            provider: AsrProviderKind::CloudGoogleStt,
+            is_local: false,
+            languages: vec![
+                "日本語".into(),
+                "英語".into(),
+                "多言語(自動判定)".into(),
+            ],
+            environment: "クラウド API (speech.googleapis.com)".into(),
+            memory_mb: 0,
+            license: "商用 API (Google Cloud 利用規約)".into(),
+            size_mb: 0,
+            download_url: String::new(),
+            filename: String::new(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: secrets::has_secret("google_stt_api_key"),
+            compatibility_reason: if secrets::has_secret("google_stt_api_key") {
+                None
+            } else {
+                Some("Google Cloud APIキーが未設定です。".into())
+            },
+            installed: true,
+            data_handling: "録音音声ファイルを Google Cloud Speech-to-Text API (speech.googleapis.com) に送信して文字起こしします。".into(),
+        },
     ]
 }
 
@@ -727,14 +754,12 @@ pub async fn install_runtime_binary(
                 let mut cmd = Command::new("powershell");
                 configure_bg_command(&mut cmd);
                 let status = cmd
+                    .env("KN_ZIP", &zip_path)
+                    .env("KN_DEST", &dest_dir)
                     .args([
                         "-NoProfile",
                         "-Command",
-                        &format!(
-                            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
-                            zip_path.display(),
-                            dest_dir.display()
-                        ),
+                        "Expand-Archive -LiteralPath $env:KN_ZIP -DestinationPath $env:KN_DEST -Force",
                     ])
                     .status()
                     .map_err(|e| format!("ZIP展開に失敗しました: {e}"))?;
@@ -880,14 +905,12 @@ async fn resolve_or_install_ffmpeg() -> Result<PathBuf, String> {
         let mut cmd = Command::new("powershell");
         configure_bg_command(&mut cmd);
         let st = cmd
+            .env("KN_ZIP", &zip_path)
+            .env("KN_DEST", &ffmpeg_dest_dir)
             .args([
                 "-NoProfile",
                 "-Command",
-                &format!(
-                    "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
-                    zip_path.display(),
-                    ffmpeg_dest_dir.display()
-                ),
+                "Expand-Archive -LiteralPath $env:KN_ZIP -DestinationPath $env:KN_DEST -Force",
             ])
             .status()
             .map_err(|e| format!("ffmpeg の展開に失敗しました: {e}"))?;
@@ -1645,6 +1668,138 @@ pub async fn transcribe_wav(
                 }
             }
             Ok((segs, true, model.name))
+        }
+        AsrProviderKind::CloudGoogleStt => {
+            let api_key = secrets::get_secret("google_stt_api_key")?
+                .ok_or_else(|| "Google Cloud APIキーが設定されていません。設定＞音声認識＞クラウド API から登録してください。".to_string())?;
+            let api_key = api_key.trim().to_string();
+            let (local_wav, should_cleanup) = ensure_local_wav(wav_path).await?;
+            let reader_res = hound::WavReader::open(&local_wav);
+            let (sample_rate, channels, pcm_i16): (u32, u16, Vec<i16>) = match reader_res {
+                Ok(mut reader) => {
+                    let spec = reader.spec();
+                    let samples: Vec<i16> = match spec.sample_format {
+                        hound::SampleFormat::Int => {
+                            reader.samples::<i16>().filter_map(|s| s.ok()).collect()
+                        }
+                        hound::SampleFormat::Float => reader
+                            .samples::<f32>()
+                            .filter_map(|s| s.ok())
+                            .map(|f| (f.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+                            .collect(),
+                    };
+                    (spec.sample_rate.max(8000), spec.channels.max(1), samples)
+                }
+                Err(e) => {
+                    if should_cleanup {
+                        let _ = fs::remove_file(&local_wav);
+                    }
+                    return Err(format!("WAVファイルの読み込みに失敗しました: {e}"));
+                }
+            };
+            if should_cleanup {
+                let _ = fs::remove_file(&local_wav);
+            }
+            if pcm_i16.is_empty() {
+                return Ok((Vec::new(), false, model.name));
+            }
+
+            let language_code = match settings.language.as_str() {
+                "en" => "en-US",
+                _ => "ja-JP",
+            };
+            let mut config = serde_json::json!({
+                "encoding": "LINEAR16",
+                "sampleRateHertz": sample_rate,
+                "audioChannelCount": channels,
+                "languageCode": language_code,
+                "enableAutomaticPunctuation": true,
+            });
+            if settings.language == "auto" {
+                config["alternativeLanguageCodes"] = serde_json::json!(["en-US"]);
+            }
+            let phrases: Vec<&str> = dictionary
+                .iter()
+                .map(|d| d.term.trim())
+                .filter(|t| !t.is_empty())
+                .take(500)
+                .collect();
+            if !phrases.is_empty() {
+                config["speechContexts"] = serde_json::json!([{ "phrases": phrases }]);
+            }
+
+            // Google Cloud STT synchronous v1/speech:recognize supports up to 60s per request.
+            // Split into 50-second chunks so long recordings also succeed without GCS.
+            let samples_per_chunk = (sample_rate as usize) * (channels as usize) * 50;
+            let client = cloud_http_client();
+            let mut segs = Vec::new();
+            let mut offset_samples = 0usize;
+
+            for chunk in pcm_i16.chunks(samples_per_chunk.max(16000)) {
+                let mut raw_bytes = Vec::with_capacity(chunk.len() * 2);
+                for &s in chunk {
+                    raw_bytes.extend_from_slice(&s.to_le_bytes());
+                }
+                let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&raw_bytes);
+                let payload = serde_json::json!({
+                    "config": config,
+                    "audio": {
+                        "content": audio_b64
+                    }
+                });
+                let resp = client
+                    .post("https://speech.googleapis.com/v1/speech:recognize")
+                    .header("X-Goog-Api-Key", &api_key)
+                    .json(&payload)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Google Cloud STT 通信エラー: {e}"))?;
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    if status == reqwest::StatusCode::UNAUTHORIZED
+                        || status == reqwest::StatusCode::FORBIDDEN
+                    {
+                        return Err(format!(
+                            "Google Cloud STT API エラー ({status}): APIキーが正しいか、Google Cloud で Speech-to-Text API が有効化されているか確認してください。({body})"
+                        ));
+                    }
+                    return Err(format!("Google Cloud STT API エラー ({status}): {body}"));
+                }
+                let json: Value = resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("Google Cloud STT 応答解析失敗: {e}"))?;
+                let chunk_start_ms = ((offset_samples as u64) * 1000)
+                    / ((sample_rate as u64) * (channels as u64)).max(1);
+                let chunk_dur_ms = ((chunk.len() as u64) * 1000)
+                    / ((sample_rate as u64) * (channels as u64)).max(1);
+                if let Some(results) = json.get("results").and_then(|r| r.as_array()) {
+                    for r in results {
+                        if let Some(transcript) = r
+                            .get("alternatives")
+                            .and_then(|a| a.as_array())
+                            .and_then(|a| a.first())
+                            .and_then(|a| a.get("transcript"))
+                            .and_then(|t| t.as_str())
+                        {
+                            let trimmed = transcript.trim();
+                            if !trimmed.is_empty() && !is_silence_hallucination(trimmed) {
+                                segs.push(TranscriptSegment {
+                                    id: Uuid::new_v4().to_string(),
+                                    start_ms: chunk_start_ms,
+                                    end_ms: chunk_start_ms + chunk_dur_ms.max(1000),
+                                    speaker: String::new(),
+                                    text: trimmed.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+                offset_samples += chunk.len();
+            }
+
+            Ok((segs, false, model.name))
         }
     }
 }

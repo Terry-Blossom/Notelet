@@ -204,6 +204,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         ? { key: 'groq_api_key', label: 'Groq API Key', saved: secretStatus?.groq_api_key }
         : m.provider === 'cloud_stepfun'
         ? { key: 'stepfun_api_key', label: 'StepFun API Key', saved: secretStatus?.stepfun_api_key }
+        : m.provider === 'cloud_google'
+        ? { key: 'google_stt_api_key', label: 'Google Cloud API Key', saved: secretStatus?.google_stt_api_key }
         : null;
 
     return (
