@@ -377,9 +377,9 @@ fn wav_reader_mono_f32<R: std::io::Read>(reader: &mut hound::WavReader<R>) -> Ve
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Int => match spec.bits_per_sample {
             8 => reader
-                .samples::<u8>()
+                .samples::<i8>()
                 .filter_map(|s| s.ok())
-                .map(|v| (v as f32 - 128.0) / 128.0)
+                .map(|v| (v as u8 as f32 - 128.0) / 128.0)
                 .collect(),
             16 => reader
                 .samples::<i16>()
