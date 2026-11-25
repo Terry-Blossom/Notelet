@@ -762,9 +762,18 @@ const MainApp: React.FC = () => {
       unlistenUpd = await listen<{ progress: number }>('app-update-progress', (ev) => {
         setUpdateProgress(ev.payload.progress);
       });
-      unlistenLive = await listen<TranscriptSegment>('live-transcript-segment', (ev) => {
+      const unlistenLiveSeg = await listen<TranscriptSegment>('live-transcript-segment', (ev) => {
         setLiveSegments((prev) => [...prev, ev.payload]);
       });
+      const unlistenLiveErr = await listen<string>('live-transcript-error', (ev) => {
+        if (typeof ev.payload === 'string' && ev.payload.trim()) {
+          setTranscribeError(ev.payload);
+        }
+      });
+      unlistenLive = () => {
+        unlistenLiveSeg();
+        unlistenLiveErr();
+      };
       unlistenSc = await listen<string>('global-shortcut-triggered', () => {
         if (recStatus.state === 'recording' || recStatus.state === 'paused') {
           void handleStopAndFinish();
@@ -878,7 +887,7 @@ const MainApp: React.FC = () => {
       setActiveNoteId(targetNote.id);
       setView('editor');
 
-      if (finalStatus.temp_wav_path && liveSegments.length === 0) {
+      if (finalStatus.temp_wav_path) {
         setTranscribing(true);
         setTranscribeError(null);
         try {

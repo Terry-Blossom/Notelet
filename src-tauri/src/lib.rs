@@ -239,6 +239,7 @@ async fn start_recording(
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
+        let mut error_reported = false;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(600)).await;
             let st_ref = app_handle.state::<AppState>();
@@ -268,8 +269,8 @@ async fn start_recording(
                     out
                 })
                 .await;
-                if let Ok(Ok(text)) = res {
-                    if !text.is_empty() {
+                match res {
+                    Ok(Ok(text)) if !text.is_empty() => {
                         let start_ms = elapsed_ms.saturating_sub(2000);
                         let seg = models::TranscriptSegment {
                             id: uuid::Uuid::new_v4().to_string(),
@@ -280,6 +281,11 @@ async fn start_recording(
                         };
                         let _ = app_handle.emit("live-transcript-segment", seg);
                     }
+                    Ok(Err(err)) if !error_reported => {
+                        error_reported = true;
+                        let _ = app_handle.emit("live-transcript-error", err);
+                    }
+                    _ => {}
                 }
             }
         }

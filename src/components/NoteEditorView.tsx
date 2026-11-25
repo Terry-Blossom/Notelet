@@ -2837,7 +2837,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               <div aria-live="polite" aria-relevant="additions" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {displayedSegments.length === 0 ? (
                   <div className="note-empty-state">
-                    まだ文字起こしがありません
+                    {isProcessing ? '文字起こし処理中...' : 'まだ文字起こしがありません'}
                   </div>
                 ) : (
                   <div

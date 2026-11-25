@@ -1281,7 +1281,10 @@ pub fn transcribe_chunk_sync(
                 .ok_or_else(|| "whisper-cli 未設定".to_string())?;
             let model_path = storage::models_dir().join(&model.filename);
             if !model_path.exists() {
-                return Ok(String::new());
+                return Err(format!(
+                    "モデルファイル（{}）が未取得です。設定＞音声認識からダウンロードしてください。",
+                    model.filename
+                ));
             }
             let out_base = chunk_wav.with_extension("chunk_out");
             let mut cmd = Command::new(cli);
