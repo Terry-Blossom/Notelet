@@ -14,11 +14,12 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { AppSettings, AsrModelInfo, DEFAULT_SUMMARY_PRESETS, Folder, Note, SecretStatus, StorageStats, SummaryPreset, UpdateCheckResult } from '../types';
+import { AppSettings, AsrModelInfo, DEFAULT_SUMMARY_PRESETS, Folder, GpuCapabilities, Note, SecretStatus, StorageStats, SummaryPreset, UpdateCheckResult } from '../types';
 import { GranolaImportCard } from './GranolaImportCard';
 import { confirmActionDialog } from './ConfirmDialog';
 import {
   apiCompressRetainedAudio,
+  apiDetectGpuCapabilities,
   apiGetStorageStats,
   apiOpenStorageFolder,
   apiPurgeSyncedLocalNotes,
@@ -105,8 +106,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
   const [compressingAudio, setCompressingAudio] = useState(false);
+  const [gpuCaps, setGpuCaps] = useState<GpuCapabilities | null>(null);
 
   useEffect(() => {
+    if (tab === 'asr' && isTauriRuntime()) {
+      void apiDetectGpuCapabilities()
+        .then((caps) => setGpuCaps(caps))
+        .catch(() => {
+          // ignore
+        });
+    }
     if (tab === 'storage' && isTauriRuntime()) {
       void apiGetStorageStats()
         .then((st) => setStorageStats(st))
@@ -466,21 +475,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       type="button"
                       className="btn btn-secondary"
                       style={{ height: '28px', fontSize: '12px' }}
-                      disabled={Boolean(settings.whisper_cli_path) || downloadProgress['runtime:whisper'] !== undefined}
+                      disabled={downloadProgress['runtime:whisper'] !== undefined}
                       onClick={() => onInstallRuntime('whisper')}
                     >
                       {settings.whisper_cli_path ? (
-                        <Check size={13} strokeWidth={1.5} />
+                        <RefreshCw size={13} strokeWidth={1.5} />
                       ) : (
                         <Download size={13} strokeWidth={1.5} />
                       )}
-                      {settings.whisper_cli_path
-                        ? '導入済み'
-                        : downloadProgress['runtime:whisper'] !== undefined
+                      {downloadProgress['runtime:whisper'] !== undefined
                         ? `導入中 (${downloadProgress['runtime:whisper']}%)`
+                        : settings.whisper_cli_path
+                        ? 'GPU/OpenBLAS版へ更新・再導入'
                         : 'ワンクリック導入'}
                     </button>
                   </div>
+                </div>
+
+                <div className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '10px 14px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px' }}>
+                    <input
+                      type="checkbox"
+                      checked={settings.enable_gpu_asr ?? true}
+                      onChange={(e) => update({ enable_gpu_asr: e.target.checked })}
+                    />
+                    <span>GPU アクセラレータを有効にする（CUDA / Metal・エラー時は自動でCPUへフォールバック）</span>
+                  </label>
+                  {gpuCaps && (
+                    <span className={`status-chip ${gpuCaps.has_cuda || gpuCaps.has_metal ? 'ok' : ''}`} style={{ fontSize: '11.5px' }}>
+                      検出: {gpuCaps.gpu_name}
+                    </span>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

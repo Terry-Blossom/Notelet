@@ -265,8 +265,22 @@ pub struct AppSettings {
     pub silence_skip_enabled: bool,
     #[serde(default)]
     pub notion_viewer_mode: bool,
+    #[serde(default = "default_true")]
+    pub enable_gpu_asr: bool,
     #[serde(default = "default_summary_presets")]
     pub summary_presets: Vec<SummaryPreset>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuCapabilities {
+    pub has_cuda: bool,
+    pub has_metal: bool,
+    pub gpu_name: String,
+    pub recommended_backend: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -359,6 +373,7 @@ impl Default for AppSettings {
             enable_local_diarization: false,
             silence_skip_enabled: false,
             notion_viewer_mode: false,
+            enable_gpu_asr: true,
             summary_presets: default_summary_presets(),
         }
     }

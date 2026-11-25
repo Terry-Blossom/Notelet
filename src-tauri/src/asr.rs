@@ -549,6 +549,58 @@ pub async fn download_whisper_model(
     Ok(dir.to_string_lossy().to_string())
 }
 
+pub fn detect_gpu_capabilities() -> models::GpuCapabilities {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        return models::GpuCapabilities {
+            has_cuda: false,
+            has_metal: true,
+            gpu_name: "Apple Silicon (Metal)".to_string(),
+            recommended_backend: "metal".to_string(),
+        };
+    }
+
+    let mut smi_cmd = Command::new("nvidia-smi");
+    configure_bg_command(&mut smi_cmd);
+    if let Ok(out) = smi_cmd
+        .args(["--query-gpu=name", "--format=csv,noheader"])
+        .output()
+    {
+        if out.status.success() {
+            let name = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !name.is_empty() {
+                return models::GpuCapabilities {
+                    has_cuda: true,
+                    has_metal: false,
+                    gpu_name: name,
+                    recommended_backend: "cuda".to_string(),
+                };
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    if Path::new(r"C:\Windows\System32\nvcuda.dll").exists() {
+        return models::GpuCapabilities {
+            has_cuda: true,
+            has_metal: false,
+            gpu_name: "NVIDIA GPU (CUDA)".to_string(),
+            recommended_backend: "cuda".to_string(),
+        };
+    }
+
+    models::GpuCapabilities {
+        has_cuda: false,
+        has_metal: false,
+        gpu_name: "CPU (OpenBLAS)".to_string(),
+        recommended_backend: "cpu".to_string(),
+    }
+}
+
 pub async fn install_runtime_binary(
     app: &tauri::AppHandle,
     kind: &str,
@@ -567,24 +619,40 @@ pub async fn install_runtime_binary(
             }
             let dest_dir = bin_root.join("whisper");
             fs::create_dir_all(&dest_dir).map_err(|e| format!("展開先作成失敗: {e}"))?;
+            let gpu = detect_gpu_capabilities();
+            let preferred_names: &[&str] = if gpu.has_cuda {
+                &[
+                    "whisper-bin-win-cuda-12.4.0-x64.zip",
+                    "whisper-bin-win-cuda-11.8.0-x64.zip",
+                    "whisper-blas-bin-x64.zip",
+                    "whisper-bin-x64.zip",
+                ]
+            } else {
+                &["whisper-blas-bin-x64.zip", "whisper-bin-x64.zip"]
+            };
+
             let resp = client
                 .get("https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=15")
                 .send()
                 .await
                 .map_err(|e| format!("GitHub API 接続失敗: {e}"))?;
             let releases: Vec<Value> = resp.json().await.map_err(|e| format!("JSON解析失敗: {e}"))?;
-            let asset_url = releases
+            let asset_url = preferred_names
                 .iter()
-                .filter(|r| !r["prerelease"].as_bool().unwrap_or(false))
-                .find_map(|r| {
-                    r["assets"].as_array()?.iter().find_map(|a| {
-                        let name = a["name"].as_str()?;
-                        if name == "whisper-bin-x64.zip" {
-                            a["browser_download_url"].as_str().map(|s| s.to_string())
-                        } else {
-                            None
-                        }
-                    })
+                .find_map(|target| {
+                    releases
+                        .iter()
+                        .filter(|r| !r["prerelease"].as_bool().unwrap_or(false))
+                        .find_map(|r| {
+                            r["assets"].as_array()?.iter().find_map(|a| {
+                                let name = a["name"].as_str()?;
+                                if name == *target {
+                                    a["browser_download_url"].as_str().map(|s| s.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
                 })
                 .unwrap_or_else(|| {
                     "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.3/whisper-bin-x64.zip".to_string()
@@ -851,8 +919,6 @@ pub async fn transcribe_wav(
                 ));
             }
             let out_base = local_wav.with_extension("whisper_out");
-            let mut cmd = Command::new(cli);
-            configure_bg_command(&mut cmd);
             let whisper_lang = if model.id.starts_with("kotoba-whisper") {
                 "ja"
             } else if settings.language.is_empty() {
@@ -860,19 +926,6 @@ pub async fn transcribe_wav(
             } else {
                 &settings.language
             };
-            cmd.arg("-m")
-                .arg(&model_path)
-                .arg("-f")
-                .arg(&local_wav)
-                .arg("-oj")
-                .arg("-of")
-                .arg(&out_base)
-                .arg("--beam-size")
-                .arg("5")
-                .arg("--best-of")
-                .arg("5")
-                .arg("-l")
-                .arg(whisper_lang);
             let effective_prompt = if !prompt_hint.is_empty() {
                 if whisper_lang == "ja" {
                     format!("以下は日本語の会話です。用語: {prompt_hint}")
@@ -884,12 +937,43 @@ pub async fn transcribe_wav(
             } else {
                 String::new()
             };
-            if !effective_prompt.is_empty() {
-                cmd.arg("--prompt").arg(&effective_prompt);
-            }
-            let output = cmd
+            let threads = std::thread::available_parallelism()
+                .map(|n| n.get().clamp(2, 8))
+                .unwrap_or(4);
+            let build_whisper_cmd = |no_gpu: bool| {
+                let mut c = Command::new(&cli);
+                configure_bg_command(&mut c);
+                c.arg("-m")
+                    .arg(&model_path)
+                    .arg("-f")
+                    .arg(&local_wav)
+                    .arg("-oj")
+                    .arg("-of")
+                    .arg(&out_base)
+                    .arg("-t")
+                    .arg(threads.to_string())
+                    .arg("--beam-size")
+                    .arg("5")
+                    .arg("--best-of")
+                    .arg("5")
+                    .arg("-l")
+                    .arg(whisper_lang);
+                if no_gpu {
+                    c.arg("-ng");
+                }
+                if !effective_prompt.is_empty() {
+                    c.arg("--prompt").arg(&effective_prompt);
+                }
+                c
+            };
+            let mut output = build_whisper_cmd(!settings.enable_gpu_asr)
                 .output()
                 .map_err(|e| format!("whisper-cli の実行に失敗しました: {e}"))?;
+            if !output.status.success() && settings.enable_gpu_asr {
+                output = build_whisper_cmd(true)
+                    .output()
+                    .map_err(|e| format!("whisper-cli の実行に失敗しました: {e}"))?;
+            }
             if should_cleanup {
                 let _ = fs::remove_file(&local_wav);
             }
@@ -1287,8 +1371,6 @@ pub fn transcribe_chunk_sync(
                 ));
             }
             let out_base = chunk_wav.with_extension("chunk_out");
-            let mut cmd = Command::new(cli);
-            configure_bg_command(&mut cmd);
             let whisper_lang = if model.id.starts_with("kotoba-whisper") {
                 "ja"
             } else if settings.language.is_empty() {
@@ -1296,17 +1378,6 @@ pub fn transcribe_chunk_sync(
             } else {
                 &settings.language
             };
-            cmd.arg("-m")
-                .arg(&model_path)
-                .arg("-f")
-                .arg(chunk_wav)
-                .arg("-nt")
-                .arg("-np")
-                .arg("-l")
-                .arg(whisper_lang)
-                .arg("-of")
-                .arg(&out_base)
-                .arg("-otxt");
             let effective_prompt = if !prompt_hint.is_empty() {
                 if whisper_lang == "ja" {
                     format!("以下は日本語の会話です。用語: {prompt_hint}")
@@ -1318,12 +1389,41 @@ pub fn transcribe_chunk_sync(
             } else {
                 String::new()
             };
-            if !effective_prompt.is_empty() {
-                cmd.arg("--prompt").arg(&effective_prompt);
-            }
-            let output = cmd
+            let threads = std::thread::available_parallelism()
+                .map(|n| n.get().clamp(2, 8))
+                .unwrap_or(4);
+            let build_chunk_cmd = |no_gpu: bool| {
+                let mut c = Command::new(&cli);
+                configure_bg_command(&mut c);
+                c.arg("-m")
+                    .arg(&model_path)
+                    .arg("-f")
+                    .arg(chunk_wav)
+                    .arg("-nt")
+                    .arg("-np")
+                    .arg("-t")
+                    .arg(threads.to_string())
+                    .arg("-l")
+                    .arg(whisper_lang)
+                    .arg("-of")
+                    .arg(&out_base)
+                    .arg("-otxt");
+                if no_gpu {
+                    c.arg("-ng");
+                }
+                if !effective_prompt.is_empty() {
+                    c.arg("--prompt").arg(&effective_prompt);
+                }
+                c
+            };
+            let mut output = build_chunk_cmd(!settings.enable_gpu_asr)
                 .output()
                 .map_err(|e| format!("チャンク文字起こし失敗: {e}"))?;
+            if !output.status.success() && settings.enable_gpu_asr {
+                output = build_chunk_cmd(true)
+                    .output()
+                    .map_err(|e| format!("チャンク文字起こし失敗: {e}"))?;
+            }
             let txt_path = PathBuf::from(format!("{}.txt", out_base.to_string_lossy()));
             let text = if txt_path.exists() {
                 let s = fs::read_to_string(&txt_path).unwrap_or_default();

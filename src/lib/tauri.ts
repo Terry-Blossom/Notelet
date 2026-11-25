@@ -9,6 +9,7 @@ import {
   ChatAnswer,
   DictionaryEntry,
   Folder,
+  GpuCapabilities,
   IntegrationAdapterInfo,
   IssueCreateResult,
   LiveAssistResult,
@@ -107,6 +108,10 @@ export async function apiDownloadAsrModel(modelId: string): Promise<string> {
 
 export async function apiInstallAsrRuntime(kind: 'whisper' | 'parakeet'): Promise<string> {
   return invoke<string>('install_asr_runtime', { kind });
+}
+
+export async function apiDetectGpuCapabilities(): Promise<GpuCapabilities> {
+  return invoke<GpuCapabilities>('detect_gpu_capabilities_cmd');
 }
 
 export async function apiTranscribeRecording(wavPath: string, noteId: string): Promise<Note> {

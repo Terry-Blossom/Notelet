@@ -141,6 +141,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   mcp_enabled: false,
   mcp_scope: 'workspace',
   active_template_id: 'standard',
+  enable_gpu_asr: true,
   summary_presets: DEFAULT_SUMMARY_PRESETS,
 };
 

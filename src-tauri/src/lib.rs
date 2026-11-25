@@ -438,6 +438,11 @@ async fn install_asr_runtime(
 }
 
 #[tauri::command]
+fn detect_gpu_capabilities_cmd() -> models::GpuCapabilities {
+    asr::detect_gpu_capabilities()
+}
+
+#[tauri::command]
 async fn transcribe_recording(
     state: State<'_, AppState>,
     wav_path: String,
@@ -1876,6 +1881,7 @@ pub fn run() {
             list_asr_models,
             download_asr_model,
             install_asr_runtime,
+            detect_gpu_capabilities_cmd,
             transcribe_recording,
             transcribe_uploaded_audio,
             transcribe_uploaded_url,

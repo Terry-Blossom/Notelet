@@ -177,7 +177,15 @@ export interface AppSettings {
   enable_local_diarization?: boolean;
   silence_skip_enabled?: boolean;
   notion_viewer_mode?: boolean;
+  enable_gpu_asr?: boolean;
   summary_presets?: SummaryPreset[];
+}
+
+export interface GpuCapabilities {
+  has_cuda: boolean;
+  has_metal: boolean;
+  gpu_name: string;
+  recommended_backend: string;
 }
 
 export interface SummaryPreset {
