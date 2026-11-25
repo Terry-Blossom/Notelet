@@ -18,11 +18,19 @@ const SERVER_BINARY_CANDIDATES: &[&str] = if cfg!(windows) {
         "whisper-server-win32-x64-cpu.exe",
     ]
 } else if cfg!(target_os = "macos") {
-    &[
-        "whisper-server",
-        "whisper-server-darwin-arm64",
-        "whisper-server-darwin-x64",
-    ]
+    if cfg!(target_arch = "aarch64") {
+        &[
+            "whisper-server-darwin-arm64",
+            "whisper-server",
+            "whisper-server-darwin-x64",
+        ]
+    } else {
+        &[
+            "whisper-server-darwin-x64",
+            "whisper-server",
+            "whisper-server-darwin-arm64",
+        ]
+    }
 } else {
     &[
         "whisper-server",
@@ -61,7 +69,7 @@ fn configure_bg_command(cmd: &mut Command) {
     }
 }
 
-fn find_server_in_dir(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn find_server_in_dir(dir: &Path) -> Option<PathBuf> {
     if !dir.exists() {
         return None;
     }

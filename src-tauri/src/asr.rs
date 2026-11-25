@@ -53,24 +53,100 @@ fn find_file_recursive(dir: &Path, target_name: &str) -> Option<PathBuf> {
     None
 }
 
-pub fn resolve_whisper_cli(custom_path: &str) -> Option<PathBuf> {
-    if !custom_path.trim().is_empty() {
-        let p = PathBuf::from(custom_path.trim());
-        if p.exists() {
+const WHISPER_CLI_BINARY_CANDIDATES: &[&str] = if cfg!(windows) {
+    &[
+        "whisper-cli.exe",
+        "whisper-cpp-win32-x64-cpu.exe",
+        "whisper-cpp-win32-x64-cuda.exe",
+    ]
+} else if cfg!(target_os = "macos") {
+    if cfg!(target_arch = "aarch64") {
+        &[
+            "whisper-cpp-darwin-arm64",
+            "whisper-cli",
+            "whisper-cpp-darwin-x64",
+        ]
+    } else {
+        &[
+            "whisper-cpp-darwin-x64",
+            "whisper-cli",
+            "whisper-cpp-darwin-arm64",
+        ]
+    }
+} else {
+    &[
+        "whisper-cli",
+        "whisper-cpp-linux-x64-cpu",
+        "whisper-cpp-linux-x64-cuda",
+    ]
+};
+
+fn is_whisper_cli_file_name(name: &str) -> bool {
+    WHISPER_CLI_BINARY_CANDIDATES.contains(&name)
+        || ((name.starts_with("whisper-cli") || name.starts_with("whisper-cpp"))
+            && !name.starts_with("whisper-server"))
+}
+
+fn find_cli_in_dir(dir: &Path) -> Option<PathBuf> {
+    if !dir.exists() {
+        return None;
+    }
+    for name in WHISPER_CLI_BINARY_CANDIDATES {
+        let p = dir.join(name);
+        if p.is_file() {
             return Some(p);
         }
     }
-    let bin_name = if cfg!(windows) { "whisper-cli.exe" } else { "whisper-cli" };
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if let Some(found) = find_cli_in_dir(&p) {
+                    return Some(found);
+                }
+            } else if let Some(fname) = p.file_name().and_then(|n| n.to_str()) {
+                if is_whisper_cli_file_name(fname) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn resolve_whisper_cli(custom_path: &str) -> Option<PathBuf> {
+    if !custom_path.trim().is_empty() {
+        let p = PathBuf::from(custom_path.trim());
+        if p.is_dir() {
+            if let Some(found) = find_cli_in_dir(&p) {
+                return Some(found);
+            }
+        }
+        if p.is_file() {
+            let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !fname.starts_with("whisper-server") {
+                return Some(p);
+            }
+            // whisper-server が指定された場合は、同じディレクトリの CLI を探す。
+            if let Some(parent) = p.parent() {
+                if let Some(found) = find_cli_in_dir(parent) {
+                    return Some(found);
+                }
+            }
+        }
+    }
     let local_bin_dir = storage::app_data_dir().join("bin");
-    if let Some(found) = find_file_recursive(&local_bin_dir, bin_name) {
+    if let Some(found) = find_cli_in_dir(&local_bin_dir) {
         return Some(found);
     }
     // PATH 検索
     if let Ok(path_var) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path_var) {
-            let cand = dir.join(bin_name);
-            if cand.exists() {
-                return Some(cand);
+            for bin_name in WHISPER_CLI_BINARY_CANDIDATES {
+                let cand = dir.join(bin_name);
+                if cand.is_file() {
+                    return Some(cand);
+                }
             }
         }
     }
@@ -699,6 +775,22 @@ pub fn detect_gpu_capabilities() -> crate::models::GpuCapabilities {
     }
 }
 
+pub fn whisper_runtime_dest_dir() -> PathBuf {
+    storage::app_data_dir().join("bin").join("whisper")
+}
+
+/// 展開済みの whisper ランタイムから実行ファイルを解決する。
+/// install_runtime_binary とテストで同じ配置・同じ解決処理を使う。
+pub fn resolve_installed_whisper_runtime(dest_dir: &Path) -> Result<PathBuf, String> {
+    crate::whisper_server::find_server_in_dir(dest_dir)
+        .or_else(|| find_cli_in_dir(dest_dir))
+        .or_else(|| crate::whisper_server::resolve_whisper_server(""))
+        .or_else(|| resolve_whisper_cli(""))
+        .ok_or_else(|| {
+            "展開後に whisper-server / whisper-cli 実行ファイルが見つかりませんでした。".to_string()
+        })
+}
+
 pub async fn install_runtime_binary(
     app: &tauri::AppHandle,
     kind: &str,
@@ -713,7 +805,7 @@ pub async fn install_runtime_binary(
     match kind {
         "whisper" => {
             crate::whisper_server::stop_server_async().await;
-            let dest_dir = bin_root.join("whisper");
+            let dest_dir = whisper_runtime_dest_dir();
             if dest_dir.exists() {
                 let _ = fs::remove_dir_all(&dest_dir);
             }
@@ -787,10 +879,7 @@ pub async fn install_runtime_binary(
                 "asr-download-progress",
                 serde_json::json!({ "model_id": "runtime:whisper", "progress": 100 }),
             );
-            let exe = crate::whisper_server::resolve_whisper_server("")
-                .or_else(|| find_file_recursive(&dest_dir, "whisper-cli.exe"))
-                .or_else(|| find_file_recursive(&dest_dir, "whisper-cli"))
-                .ok_or_else(|| "展開後に whisper-server 実行ファイルが見つかりませんでした。".to_string())?;
+            let exe = resolve_installed_whisper_runtime(&dest_dir)?;
             Ok(exe.to_string_lossy().to_string())
         }
         "parakeet" => {

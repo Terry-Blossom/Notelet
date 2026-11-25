@@ -1,13 +1,13 @@
-mod asr;
+pub mod asr;
 mod audio;
 mod integrations;
 mod llm;
-mod models;
+pub mod models;
 mod notion;
 mod secrets;
-mod storage;
+pub mod storage;
 mod updater;
-mod whisper_server;
+pub mod whisper_server;
 
 use audio::AudioManager;
 use models::{

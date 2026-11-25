@@ -12,6 +12,15 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 pub fn app_data_dir() -> PathBuf {
+    // テストや検証用に、アプリデータのルートを環境変数で差し替えられるようにする。
+    // 未設定時はこれまで通り OS 標準のアプリデータディレクトリ配下を使う。
+    if let Some(custom) = std::env::var_os("NOTELET_DATA_DIR") {
+        let dir = PathBuf::from(custom);
+        if !dir.as_os_str().is_empty() {
+            let _ = fs::create_dir_all(&dir);
+            return dir;
+        }
+    }
     let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
     let dir = base.join("KoeNote");
     let _ = fs::create_dir_all(&dir);
