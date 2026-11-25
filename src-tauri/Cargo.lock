@@ -2191,7 +2191,7 @@ dependencies = [
 
 [[package]]
 name = "koenote"
-version = "0.15.9"
+version = "0.15.11"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
