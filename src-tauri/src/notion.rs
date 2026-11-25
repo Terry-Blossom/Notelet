@@ -1019,6 +1019,8 @@ pub async fn pull_notes_from_notion(
             } else {
                 "local".to_string()
             },
+            pinned: false,
+            summary_history: Vec::new(),
         };
         out.push((note, space_name, blocks_loaded));
     }

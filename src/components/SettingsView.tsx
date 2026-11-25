@@ -23,6 +23,9 @@ import {
   apiGetStorageStats,
   apiOpenStorageFolder,
   apiPurgeSyncedLocalNotes,
+  apiTestCloudAsrConnection,
+  apiTestLlmConnection,
+  apiTestMicLevel,
   isTauriRuntime,
 } from '../lib/tauri';
 
@@ -109,6 +112,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
   const [compressingAudio, setCompressingAudio] = useState(false);
   const [gpuCaps, setGpuCaps] = useState<GpuCapabilities | null>(null);
+  const [testingProvider, setTestingProvider] = useState<string | null>(null);
+  const [testFeedback, setTestFeedback] = useState<Record<string, { ok: boolean; msg: string }>>({});
+  const [micTestResult, setMicTestResult] = useState<{ rms: number; device_name: string } | null>(null);
+  const [testingMic, setTestingMic] = useState(false);
   const [appVersion, setAppVersion] = useState<string>(
     typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : ''
   );
@@ -381,6 +388,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <Key size={13} strokeWidth={1.5} />
               保存
             </button>
+            {cloudKeyMeta.saved && isTauriRuntime() && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ height: '32px', fontSize: '12px' }}
+                disabled={testingProvider === m.provider}
+                onClick={async () => {
+                  setTestingProvider(m.provider);
+                  try {
+                    const msg = await apiTestCloudAsrConnection(m.provider);
+                    setTestFeedback((p) => ({ ...p, [m.id]: { ok: true, msg } }));
+                  } catch (e) {
+                    setTestFeedback((p) => ({
+                      ...p,
+                      [m.id]: { ok: false, msg: e instanceof Error ? e.message : String(e) },
+                    }));
+                  } finally {
+                    setTestingProvider(null);
+                  }
+                }}
+              >
+                {testingProvider === m.provider ? '確認中...' : '接続テスト'}
+              </button>
+            )}
+          </div>
+        )}
+        {cloudKeyMeta && testFeedback[m.id] && (
+          <div
+            className={`status-chip ${testFeedback[m.id].ok ? 'ok' : 'danger'}`}
+            style={{ alignSelf: 'flex-start', height: 'auto', padding: '4px 10px', whiteSpace: 'normal' }}
+          >
+            {testFeedback[m.id].msg}
           </div>
         )}
       </div>
@@ -490,6 +529,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <option value="en">英語 (en)</option>
                 <option value="auto">自動判定</option>
               </select>
+            </div>
+
+            <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <strong style={{ fontSize: '12.5px' }}>マイク入力テスト & 音量バランス</strong>
+                  <div className="text-muted" style={{ fontSize: '11.5px' }}>
+                    録音前にマイクの反応と、マイク／PC音声（両方録音時）の音量倍率を確認・調整できます
+                  </div>
+                </div>
+                {isTauriRuntime() && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ height: '28px', fontSize: '12px' }}
+                    disabled={testingMic}
+                    onClick={async () => {
+                      setTestingMic(true);
+                      try {
+                        const res = await apiTestMicLevel();
+                        setMicTestResult(res);
+                      } catch (e) {
+                        flash(`マイクテスト失敗: ${e instanceof Error ? e.message : String(e)}`);
+                      } finally {
+                        setTestingMic(false);
+                      }
+                    }}
+                  >
+                    {testingMic ? '計測中...' : 'マイクをテスト'}
+                  </button>
+                )}
+              </div>
+              {micTestResult && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px' }}>
+                  <span className="text-muted" style={{ flexShrink: 0 }}>{micTestResult.device_name}</span>
+                  <div style={{ flex: 1, height: '6px', borderRadius: '999px', backgroundColor: 'var(--border-subtle)', overflow: 'hidden' }}>
+                    <div
+                      style={{
+                        width: `${Math.min(100, Math.round(micTestResult.rms * 350))}%`,
+                        height: '100%',
+                        backgroundColor: micTestResult.rms < 0.002 ? 'var(--warning)' : 'var(--success)',
+                      }}
+                    />
+                  </div>
+                  <span className={`status-chip ${micTestResult.rms < 0.002 ? 'warn' : 'ok'}`}>
+                    {micTestResult.rms < 0.002 ? '入力なし/極小' : '正常に検出'}
+                  </span>
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span>マイク音量倍率: {(settings.mic_gain ?? 1.0).toFixed(1)}x</span>
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="2.5"
+                    step="0.1"
+                    value={settings.mic_gain ?? 1.0}
+                    onChange={(e) => update({ mic_gain: Number(e.target.value) })}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span>システム音声倍率: {(settings.system_gain ?? 1.0).toFixed(1)}x</span>
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="2.5"
+                    step="0.1"
+                    value={settings.system_gain ?? 1.0}
+                    onChange={(e) => update({ system_gain: Number(e.target.value) })}
+                  />
+                </label>
+              </div>
             </div>
 
             {/* Category Tabs */}
@@ -925,7 +1037,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         <Key size={14} strokeWidth={1.5} />
                         保存
                       </button>
+                      {isTauriRuntime() && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={testingProvider === 'llm'}
+                          onClick={async () => {
+                            setTestingProvider('llm');
+                            try {
+                              const msg = await apiTestLlmConnection();
+                              setTestFeedback((p) => ({ ...p, llm: { ok: true, msg } }));
+                            } catch (e) {
+                              setTestFeedback((p) => ({
+                                ...p,
+                                llm: { ok: false, msg: e instanceof Error ? e.message : String(e) },
+                              }));
+                            } finally {
+                              setTestingProvider(null);
+                            }
+                          }}
+                        >
+                          {testingProvider === 'llm' ? '確認中...' : '接続テスト'}
+                        </button>
+                      )}
                     </div>
+                    {testFeedback['llm'] && (
+                      <div
+                        className={`status-chip ${testFeedback['llm'].ok ? 'ok' : 'danger'}`}
+                        style={{ alignSelf: 'flex-start', height: 'auto', padding: '4px 10px', whiteSpace: 'normal' }}
+                      >
+                        {testFeedback['llm'].msg}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1110,14 +1253,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <strong style={{ fontSize: '13px' }}>音声再生設定</strong>
+              <strong style={{ fontSize: '13px' }}>外観・通知・音声再生設定</strong>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                <span>カラーテーマ</span>
+                <select
+                  className="select"
+                  style={{ width: '180px', height: '32px' }}
+                  value={settings.theme ?? 'light'}
+                  onChange={(e) => update({ theme: e.target.value as 'light' | 'dark' | 'system' })}
+                >
+                  <option value="light">ライト</option>
+                  <option value="dark">ダーク</option>
+                  <option value="system">OS設定に合わせる</option>
+                </select>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.calendar_reminder_enabled)}
+                  onChange={(e) => update({ calendar_reminder_enabled: e.target.checked })}
+                />
+                <span>カレンダー予定の開始前に録音リマインダーを表示する</span>
+              </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
                   checked={Boolean(settings.silence_skip_enabled)}
                   onChange={(e) => update({ silence_skip_enabled: e.target.checked })}
                 />
-                <span>無音スキップ機能を有効にする（再生時に無音区間を自動で早送り）</span>
+                <span>無音スキップ機能を有効にする（クラウド送信時の無音トリミング・再生時早送り）</span>
               </label>
             </div>
           </div>

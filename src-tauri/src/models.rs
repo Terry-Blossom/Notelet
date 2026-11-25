@@ -115,6 +115,14 @@ pub struct NotionSyncState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummaryRevision {
+    pub id: String,
+    pub created_at: String,
+    pub model_label: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
     pub id: String,
     pub title: String,
@@ -139,6 +147,10 @@ pub struct Note {
     pub audio_encrypted: bool,
     #[serde(default = "default_storage_mode")]
     pub storage_mode: String, // "local" | "notion_only"
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub summary_history: Vec<SummaryRevision>,
 }
 
 fn default_storage_mode() -> String {
@@ -274,10 +286,28 @@ pub struct AppSettings {
     pub enable_gpu_asr: bool,
     #[serde(default = "default_summary_presets")]
     pub summary_presets: Vec<SummaryPreset>,
+    #[serde(default = "default_theme")]
+    pub theme: String, // "light" | "dark" | "system"
+    #[serde(default = "default_gain")]
+    pub mic_gain: f32,
+    #[serde(default = "default_gain")]
+    pub system_gain: f32,
+    #[serde(default)]
+    pub auto_share_slack_folder_ids: Vec<String>,
+    #[serde(default)]
+    pub calendar_reminder_enabled: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_theme() -> String {
+    "light".to_string()
+}
+
+fn default_gain() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -380,6 +410,11 @@ impl Default for AppSettings {
             notion_viewer_mode: false,
             enable_gpu_asr: true,
             summary_presets: default_summary_presets(),
+            theme: default_theme(),
+            mic_gain: 1.0,
+            system_gain: 1.0,
+            auto_share_slack_folder_ids: Vec::new(),
+            calendar_reminder_enabled: false,
         }
     }
 }

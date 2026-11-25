@@ -79,6 +79,7 @@ import {
   apiTranscribeRecording,
   apiTranscribeUploadedAudio,
   apiTranscribeUploadedUrl,
+  apiGetUpcomingCalendarEvents,
   isTauriRuntime,
 } from './lib/tauri';
 import { createEmptyNote, findNoteSearchMatches, formatMs } from './lib/format';
@@ -211,6 +212,7 @@ const startWindowDragIfNotInteractive = (e: React.MouseEvent) => {
 const RecordingOverlay: React.FC = () => {
   useTransparentWindowBackground();
   const [status, setStatus] = useState<RecordingStatus>(INITIAL_RECORDING_STATUS);
+  const [liveText, setLiveText] = useState<string>('');
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -225,9 +227,28 @@ const RecordingOverlay: React.FC = () => {
     };
     void poll();
     const timer = setInterval(() => void poll(), 200);
+    let unlisten: (() => void) | null = null;
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const fn = await listen<TranscriptSegment>('live-transcript-segment', (ev) => {
+          if (active && ev.payload?.text?.trim()) {
+            setLiveText(ev.payload.text.trim());
+          }
+        });
+        if (active) {
+          unlisten = fn;
+        } else {
+          fn();
+        }
+      } catch {
+        // ignore
+      }
+    })();
     return () => {
       active = false;
       clearInterval(timer);
+      if (unlisten) unlisten();
     };
   }, []);
 
@@ -293,10 +314,27 @@ const RecordingOverlay: React.FC = () => {
         </div>
         <span
           data-tauri-drag-region
-          style={{ fontVariantNumeric: 'tabular-nums', color: '#E4E4E7', fontSize: '12px', marginLeft: '4px' }}
+          style={{ fontVariantNumeric: 'tabular-nums', color: '#E4E4E7', fontSize: '12px', marginLeft: '4px', flexShrink: 0 }}
         >
           {formatMs(status.elapsed_ms)}
         </span>
+        {liveText && (
+          <span
+            data-tauri-drag-region
+            title={liveText}
+            style={{
+              color: '#A1A1AA',
+              fontSize: '11px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              maxWidth: '180px',
+              marginLeft: '4px',
+            }}
+          >
+            {liveText}
+          </span>
+        )}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
@@ -528,14 +566,61 @@ const MainApp: React.FC = () => {
     };
   }, [recordOptionsOpen]);
 
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [uploadQueueStatus, setUploadQueueStatus] = useState<{
+    current: number;
+    total: number;
+    fileName: string;
+  } | null>(null);
+  const [pendingSeekMs, setPendingSeekMs] = useState<number | null>(null);
+  const [meetingReminder, setMeetingReminder] = useState<{
+    id: string;
+    title: string;
+    start_time: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const theme = snapshot.settings.theme ?? 'light';
+    const apply = () => {
+      if (theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      } else if (theme === 'system') {
+        const prefersDark =
+          typeof window !== 'undefined' &&
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+      } else {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    };
+    apply();
+    if (theme === 'system' && typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      mq.addEventListener?.('change', apply);
+      return () => mq.removeEventListener?.('change', apply);
+    }
+  }, [snapshot.settings.theme]);
+
   useEffect(() => {
     const onGlobalKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setCommandQuery('');
         setCommandSearchOpen((v) => !v);
+      } else if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
+      } else if (
+        e.key === '?' &&
+        !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName) &&
+        !(e.target as HTMLElement)?.isContentEditable
+      ) {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
       } else if (e.key === 'Escape') {
         setCommandSearchOpen(false);
+        setShortcutsOpen(false);
       }
     };
     window.addEventListener('keydown', onGlobalKey);
@@ -701,6 +786,33 @@ const MainApp: React.FC = () => {
     },
     [secretStatus?.notion_access_token, snapshot.settings.notion_target_id, syncNoteToNotion]
   );
+
+  const remindedEventIdsRef = React.useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!isTauriRuntime() || !snapshot.settings.calendar_reminder_enabled) return;
+    const checkEvents = async () => {
+      try {
+        const events = await apiGetUpcomingCalendarEvents();
+        const nowMs = Date.now();
+        for (const ev of events) {
+          if (remindedEventIdsRef.current.has(ev.id)) continue;
+          const startMs = Date.parse(ev.start_time);
+          if (!Number.isFinite(startMs)) continue;
+          const diffMin = (startMs - nowMs) / 60000;
+          if (diffMin >= -2 && diffMin <= 10) {
+            remindedEventIdsRef.current.add(ev.id);
+            setMeetingReminder({ id: ev.id, title: ev.title, start_time: ev.start_time });
+            break;
+          }
+        }
+      } catch {
+        // ignore transient calendar errors
+      }
+    };
+    void checkEvents();
+    const timer = window.setInterval(() => void checkEvents(), 60000);
+    return () => window.clearInterval(timer);
+  }, [snapshot.settings.calendar_reminder_enabled]);
 
   // Initial + periodic retry & bidirectional pull sync (no restart required)
   useEffect(() => {
@@ -1297,13 +1409,20 @@ const MainApp: React.FC = () => {
           setGlobalDragOver(false);
         }
       }}
-      onDrop={(e) => {
+      onDrop={async (e) => {
         setGlobalDragOver(false);
-        const f = e.dataTransfer.files?.[0];
-        if (f) {
-          e.preventDefault();
-          void handleUploadAndTranscribe(f);
+        const files = Array.from(e.dataTransfer.files ?? []);
+        if (files.length === 0) return;
+        e.preventDefault();
+        for (let i = 0; i < files.length; i += 1) {
+          setUploadQueueStatus({
+            current: i + 1,
+            total: files.length,
+            fileName: files[i].name,
+          });
+          await handleUploadAndTranscribe(files[i]);
         }
+        setUploadQueueStatus(null);
       }}
     >
       {globalDragOver && (
@@ -1511,7 +1630,36 @@ const MainApp: React.FC = () => {
               <span>ノートや会話を検索...</span>
             </button>
 
-            <div className="topbar-right">
+            <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {(() => {
+                const pendingSyncCount = snapshot.notes.filter(
+                  (n) =>
+                    secretStatus?.notion_access_token &&
+                    snapshot.settings.notion_target_id &&
+                    (n.notion_sync.status === 'not_synced' || n.notion_sync.status === 'failed')
+                ).length;
+                if (pendingSyncCount === 0) return null;
+                return (
+                  <button
+                    type="button"
+                    className="status-chip warn"
+                    style={{ height: '28px', cursor: 'pointer', border: 'none' }}
+                    title="未同期・再試行待ちのノートを今すぐ同期"
+                    onClick={() => void retryPendingNotionSyncs(true)}
+                  >
+                    同期待ち {pendingSyncCount}件
+                  </button>
+                );
+              })()}
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ height: '30px', padding: '0 8px', fontSize: '12px' }}
+                title="キーボードショートカット (?)"
+                onClick={() => setShortcutsOpen(true)}
+              >
+                ?
+              </button>
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -1525,6 +1673,68 @@ const MainApp: React.FC = () => {
           </header>
 
           <div className="main-scroll">
+        {uploadQueueStatus && (
+          <div
+            role="status"
+            style={{
+              padding: '10px 24px',
+              backgroundColor: 'var(--accent-tint)',
+              borderBottom: '1px solid var(--accent-border)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              fontSize: '12.5px',
+            }}
+          >
+            <span>
+              インポート文字起こし中 ({uploadQueueStatus.current}/{uploadQueueStatus.total}):{' '}
+              <strong>{uploadQueueStatus.fileName}</strong>
+            </span>
+          </div>
+        )}
+        {meetingReminder && (
+          <div
+            style={{
+              padding: '10px 24px',
+              backgroundColor: 'var(--warning-bg)',
+              borderBottom: '1px solid var(--border-subtle)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <span>
+              まもなく予定が開始されます: <strong>{meetingReminder.title}</strong>
+            </span>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ height: '28px', fontSize: '12px' }}
+                onClick={async () => {
+                  const title = meetingReminder.title;
+                  setMeetingReminder(null);
+                  const note = createEmptyNote(recordingSpaceId || 'personal');
+                  note.title = title;
+                  if (isTauriRuntime()) {
+                    setSnapshot(await apiSaveNote(note));
+                  } else {
+                    setSnapshot((prev) => ({ ...prev, notes: [note, ...prev.notes] }));
+                  }
+                  setActiveNoteId(note.id);
+                  setView('editor');
+                  await handleStartRecording();
+                }}
+              >
+                録音を開始
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setMeetingReminder(null)}>
+                閉じる
+              </button>
+            </div>
+          </div>
+        )}
         {bannerMessage && (
           <div
             style={{
@@ -1564,6 +1774,16 @@ const MainApp: React.FC = () => {
             onUploadFile={handleUploadAndTranscribe}
             onSaveFolder={handleSaveFolder}
             onDeleteFolder={handleDeleteFolder}
+            onSaveNote={async (note) => {
+              if (isTauriRuntime()) {
+                setSnapshot(await apiSaveNote(note));
+              } else {
+                setSnapshot((prev) => ({
+                  ...prev,
+                  notes: prev.notes.map((n) => (n.id === note.id ? note : n)),
+                }));
+              }
+            }}
             onChatSpace={async (ids, q, spaceId) => {
               const res = await apiChatNotes(ids, q, spaceId);
               if (isTauriRuntime() && res.actions && res.actions.length > 0) {
@@ -1622,8 +1842,18 @@ const MainApp: React.FC = () => {
                 }));
               }
             }}
-            onOpenNote={(id) => {
-              setPendingSearchQuery('');
+            onOpenNote={(id, timestamp, excerpt) => {
+              let ms: number | null = null;
+              if (timestamp) {
+                const parts = timestamp.split(':').map((p) => Number(p));
+                if (parts.length === 2 && parts.every((n) => Number.isFinite(n))) {
+                  ms = (parts[0] * 60 + parts[1]) * 1000;
+                } else if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+                  ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+                }
+              }
+              setPendingSeekMs(ms);
+              setPendingSearchQuery(excerpt ? excerpt.slice(0, 24) : '');
               setActiveNoteId(id);
               setView('editor');
             }}
@@ -1672,6 +1902,7 @@ const MainApp: React.FC = () => {
             adapters={adapters}
             secretStatus={secretStatus}
             mcpPreview={mcpPreview}
+            folders={snapshot.folders}
             onSaveSettings={async (next) => {
               if (isTauriRuntime()) {
                 setSnapshot(await apiSaveSettings(next));
@@ -1764,6 +1995,7 @@ const MainApp: React.FC = () => {
             secretStatus={secretStatus}
             chatHistory={snapshot.chat_history || []}
             initialSearchQuery={pendingSearchQuery || undefined}
+            pendingSeekMs={pendingSeekMs}
             transcribing={transcribing && (!recordingNoteId || activeNote.id === recordingNoteId)}
             transcribeProgress={transcribeProgress}
             transcribeError={transcribeError}
@@ -1990,6 +2222,53 @@ const MainApp: React.FC = () => {
                     </button>
                   );
                 })}
+            </div>
+          </div>
+        </div>
+      )}
+      {shortcutsOpen && (
+        <div
+          className="modal-backdrop"
+          style={{ alignItems: 'center', paddingTop: 0 }}
+          onClick={() => setShortcutsOpen(false)}
+        >
+          <div
+            className="command-palette"
+            role="dialog"
+            aria-label="キーボードショートカット一覧"
+            style={{ maxWidth: '480px', padding: '20px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <strong style={{ fontSize: '15px' }}>キーボードショートカット</strong>
+              <button type="button" className="btn btn-ghost" onClick={() => setShortcutsOpen(false)}>
+                閉じる
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+              {[
+                ['グローバル録音 開始/停止', snapshot.settings.record_shortcut || 'Ctrl+Shift+R'],
+                ['音声入力（Voice Typing）', snapshot.settings.voice_typing_shortcut || 'Ctrl+Shift+V'],
+                ['ノート・会話の全体検索', 'Ctrl / Cmd + K'],
+                ['再生 / 一時停止（文字起こし）', 'Space'],
+                ['5秒戻る / 5秒進む', '← / →'],
+                ['ノート内検索（次へ / 前へ）', 'Enter / Shift + Enter'],
+                ['ショートカット一覧を表示', '? または Ctrl + /'],
+              ].map(([label, key]) => (
+                <div
+                  key={label}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '6px 0',
+                    borderBottom: '1px solid var(--border-subtle)',
+                  }}
+                >
+                  <span>{label}</span>
+                  <kbd className="status-chip mono-num">{key}</kbd>
+                </div>
+              ))}
             </div>
           </div>
         </div>

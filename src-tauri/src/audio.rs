@@ -190,9 +190,13 @@ impl AudioManager {
         &mut self,
         source_mode: AudioSourceMode,
         device_id: Option<String>,
+        mic_gain: f32,
+        system_gain: f32,
     ) -> Result<RecordingStatus, String> {
+        let mg = mic_gain.clamp(0.1, 3.0);
+        let sg = system_gain.clamp(0.1, 3.0);
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.start_inner(source_mode, device_id)
+            self.start_inner(source_mode, device_id, mg, sg)
         }))
         .unwrap_or_else(|_| Err("録音デバイスの初期化中に予期しないエラーが発生しました。入力デバイスを確認してください。".to_string()))
     }
@@ -201,6 +205,8 @@ impl AudioManager {
         &mut self,
         source_mode: AudioSourceMode,
         device_id: Option<String>,
+        mic_gain: f32,
+        system_gain: f32,
     ) -> Result<RecordingStatus, String> {
         if let Some(handle) = self.worker.take() {
             self.stop_flag.store(true, Ordering::SeqCst);
@@ -430,14 +436,20 @@ impl AudioManager {
                         }
                         continue;
                     }
-                    (false, true) => mic_samples,
-                    (true, false) => sys_samples,
+                    (false, true) => mic_samples
+                        .into_iter()
+                        .map(|m| (m * mic_gain).clamp(-1.0, 1.0))
+                        .collect(),
+                    (true, false) => sys_samples
+                        .into_iter()
+                        .map(|s| (s * system_gain).clamp(-1.0, 1.0))
+                        .collect(),
                     (false, false) => {
                         let len = mic_samples.len().max(sys_samples.len());
                         (0..len)
                             .map(|i| {
-                                let m = mic_samples.get(i).copied().unwrap_or(0.0);
-                                let s = sys_samples.get(i).copied().unwrap_or(0.0);
+                                let m = mic_samples.get(i).copied().unwrap_or(0.0) * mic_gain;
+                                let s = sys_samples.get(i).copied().unwrap_or(0.0) * system_gain;
                                 (m + s).clamp(-1.0, 1.0)
                             })
                             .collect()
@@ -686,4 +698,89 @@ fn process_16k_samples(
             rt.is_silent_warning = false;
         }
     }
+}
+
+pub fn test_mic_level(device_id: Option<String>) -> Result<(f32, String), String> {
+    let host = cpal::default_host();
+    let device = if let Some(ref d_str) = device_id {
+        if d_str.starts_with("in:") {
+            let target_name = d_str.splitn(3, ':').nth(2).unwrap_or("");
+            host.input_devices()
+                .ok()
+                .and_then(|mut it| it.find(|d| d.name().ok().as_deref() == Some(target_name)))
+                .or_else(|| host.default_input_device())
+        } else {
+            host.default_input_device()
+        }
+    } else {
+        host.default_input_device()
+    }
+    .ok_or_else(|| "マイク入力デバイスが見つかりません。".to_string())?;
+
+    let dev_name = device.name().unwrap_or_else(|_| "既定のマイク".to_string());
+    let config = device
+        .default_input_config()
+        .map_err(|e| format!("マイク設定の取得に失敗しました: {e}"))?;
+    let acc = Arc::new(Mutex::new((0.0f64, 0usize)));
+    let acc_cb = acc.clone();
+
+    let stream = match config.sample_format() {
+        SampleFormat::F32 => device.build_input_stream(
+            &config.into(),
+            move |data: &[f32], _| {
+                if let Ok(mut g) = acc_cb.lock() {
+                    for &s in data {
+                        g.0 += (s as f64) * (s as f64);
+                        g.1 += 1;
+                    }
+                }
+            },
+            |_| {},
+            None,
+        ),
+        SampleFormat::I16 => device.build_input_stream(
+            &config.into(),
+            move |data: &[i16], _| {
+                if let Ok(mut g) = acc_cb.lock() {
+                    for &s in data {
+                        let f = s as f64 / i16::MAX as f64;
+                        g.0 += f * f;
+                        g.1 += 1;
+                    }
+                }
+            },
+            |_| {},
+            None,
+        ),
+        SampleFormat::U16 => device.build_input_stream(
+            &config.into(),
+            move |data: &[u16], _| {
+                if let Ok(mut g) = acc_cb.lock() {
+                    for &s in data {
+                        let f = (s as f64 - 32768.0) / 32768.0;
+                        g.0 += f * f;
+                        g.1 += 1;
+                    }
+                }
+            },
+            |_| {},
+            None,
+        ),
+        _ => return Err("非対応のマイクサンプル形式です。".to_string()),
+    }
+    .map_err(|e| format!("マイクテストの開始に失敗しました: {e}"))?;
+
+    stream
+        .play()
+        .map_err(|e| format!("マイクストリームの再生に失敗しました: {e}"))?;
+    thread::sleep(Duration::from_millis(350));
+    drop(stream);
+
+    let (sum_sq, count) = acc.lock().map(|g| *g).unwrap_or((0.0, 0));
+    let rms = if count > 0 {
+        ((sum_sq / count as f64).sqrt() as f32).min(1.0)
+    } else {
+        0.0
+    };
+    Ok((rms, dev_name))
 }

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Check, ExternalLink, Key, Loader2, Search } from 'lucide-react';
 import {
   AppSettings,
+  Folder,
   IntegrationAdapterInfo,
   NotionTarget,
   SecretStatus,
@@ -12,6 +13,7 @@ interface IntegrationsViewProps {
   adapters: IntegrationAdapterInfo[];
   secretStatus: SecretStatus | null;
   mcpPreview: string;
+  folders?: Folder[];
   onSaveSettings: (next: AppSettings) => Promise<void>;
   onSetSecret: (key: string, value: string) => Promise<void>;
   onNotionSearchTargets: (query: string) => Promise<NotionTarget[]>;
@@ -29,6 +31,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   settings,
   secretStatus,
   mcpPreview,
+  folders = [],
   onSaveSettings,
   onSetSecret,
   onNotionSearchTargets,
@@ -319,6 +322,43 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
             保存
           </button>
         </div>
+        {folders.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <span className="text-muted" style={{ fontSize: '12px' }}>
+              要約完了時に Slack へ自動共有するスペース（選択したスペースのノートのみ自動送信）
+            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+              {folders.map((folder) => {
+                const selected = (settings.auto_share_slack_folder_ids ?? []).includes(folder.id);
+                return (
+                  <label
+                    key={folder.id}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={(e) => {
+                        const prev = settings.auto_share_slack_folder_ids ?? [];
+                        const next = e.target.checked
+                          ? Array.from(new Set([...prev, folder.id]))
+                          : prev.filter((id) => id !== folder.id);
+                        update({ auto_share_slack_folder_ids: next });
+                      }}
+                    />
+                    <span>{folder.name}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <input
           type="url"
           className="input"

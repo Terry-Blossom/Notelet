@@ -1195,3 +1195,17 @@ pub async fn chat_with_notes(
     Ok(ans)
 }
 
+pub async fn test_llm_connection(settings: &AppSettings) -> Result<String, String> {
+    if settings.llm_provider == "none" || settings.llm_provider.trim().is_empty() {
+        return Err("LLMプロバイダーが「利用しない」に設定されています。".to_string());
+    }
+    let reply = call_llm(
+        settings,
+        "Reply with OK only.",
+        "ping",
+    )
+    .await?;
+    let preview: String = reply.trim().chars().take(40).collect();
+    Ok(format!("LLM ({}) への接続に成功しました: {preview}", settings.llm_provider))
+}
+

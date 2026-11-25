@@ -221,9 +221,13 @@ async fn start_recording(
     source_mode: AudioSourceMode,
     device_id: Option<String>,
 ) -> Result<RecordingStatus, String> {
+    let (mic_gain, system_gain) = {
+        let data = state.data.lock().unwrap();
+        (data.settings.mic_gain, data.settings.system_gain)
+    };
     let status = {
         let mut audio = state.audio.lock().unwrap();
-        audio.start(source_mode, device_id)?
+        audio.start(source_mode, device_id, mic_gain, system_gain)?
     };
 
     if let Some(notify_win) = app.get_webview_window("meeting-notify") {
@@ -525,6 +529,12 @@ async fn transcribe_recording(
         }),
     );
     let (path, detected_dur_sec) = storage::normalize_media_to_16k_wav(&raw_path);
+    let trimmed_vad_path = if settings.silence_skip_enabled {
+        asr::trim_long_silence_wav(&path)
+    } else {
+        None
+    };
+    let transcribe_input = trimmed_vad_path.as_deref().unwrap_or(&path);
     let _ = app.emit(
         "asr-transcribe-progress",
         serde_json::json!({
@@ -533,9 +543,16 @@ async fn transcribe_recording(
             "label": "文字起こし中..."
         }),
     );
-    let transcribe_res =
-        asr::transcribe_wav_with_progress(&path, &settings, &dictionary, Some((&app, &note.id)))
-            .await;
+    let transcribe_res = asr::transcribe_wav_with_progress(
+        transcribe_input,
+        &settings,
+        &dictionary,
+        Some((&app, &note.id)),
+    )
+    .await;
+    if let Some(ref tv) = trimmed_vad_path {
+        let _ = std::fs::remove_file(tv);
+    }
 
     let (segments, _diarization_supported, model_name) = match transcribe_res {
         Ok(ok) => ok,
@@ -746,19 +763,45 @@ async fn summarize_note_cmd(
             note.title = short;
         }
     }
+    if !note.summary.trim().is_empty() {
+        note.summary_history.insert(
+            0,
+            models::SummaryRevision {
+                id: uuid::Uuid::new_v4().to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                model_label: format!("{}:{}", settings.llm_provider, settings.llm_model),
+                summary: note.summary.clone(),
+            },
+        );
+        if note.summary_history.len() > 10 {
+            note.summary_history.truncate(10);
+        }
+    }
     note.summary = summary;
     note.decisions = decisions;
     note.action_items = action_items;
     note.updated_at = chrono::Utc::now().to_rfc3339();
 
-    let mut data = state.data.lock().unwrap();
-    if let Some(ref tid) = template_id {
-        if !tid.trim().is_empty() {
-            data.settings.active_template_id = tid.clone();
+    {
+        let mut data = state.data.lock().unwrap();
+        if let Some(ref tid) = template_id {
+            if !tid.trim().is_empty() {
+                data.settings.active_template_id = tid.clone();
+            }
         }
+        storage::upsert_note(&mut data, note.clone());
+        storage::save_snapshot(&data)?;
     }
-    storage::upsert_note(&mut data, note.clone());
-    storage::save_snapshot(&data)?;
+
+    if settings.auto_share_slack_folder_ids.contains(&note.folder_id)
+        && secrets::has_secret("slack_webhook_url")
+    {
+        let note_for_slack = note.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = integrations::share_to_slack(&note_for_slack).await;
+        });
+    }
+
     Ok(note)
 }
 
@@ -1095,6 +1138,8 @@ fn apply_chat_actions(
                     audio_path: None,
                     audio_encrypted: false,
                     storage_mode: "local".to_string(),
+                    pinned: false,
+                    summary_history: Vec::new(),
                 };
                 storage::upsert_note(data, note);
                 results.push(models::ChatActionResult {
@@ -1894,6 +1939,26 @@ foreach ($p in $procs) {
     }
 }
 
+#[tauri::command]
+async fn test_cloud_asr_connection_cmd(provider: models::AsrProviderKind) -> Result<String, String> {
+    asr::test_cloud_asr_connection(&provider).await
+}
+
+#[tauri::command]
+async fn test_llm_connection_cmd(state: State<'_, AppState>) -> Result<String, String> {
+    let settings = {
+        let data = state.data.lock().unwrap();
+        data.settings.clone()
+    };
+    llm::test_llm_connection(&settings).await
+}
+
+#[tauri::command]
+fn test_mic_level_cmd(device_id: Option<String>) -> Result<serde_json::Value, String> {
+    let (rms, device_name) = audio::test_mic_level(device_id)?;
+    Ok(serde_json::json!({ "rms": rms, "device_name": device_name }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let snapshot = storage::load_snapshot();
@@ -2099,6 +2164,9 @@ pub fn run() {
             restore_backup_snapshot,
             check_app_update,
             install_app_update,
+            test_cloud_asr_connection_cmd,
+            test_llm_connection_cmd,
+            test_mic_level_cmd,
         ])
         .build(tauri::generate_context!())
         .expect("Notelet のビルド中にエラーが発生しました")

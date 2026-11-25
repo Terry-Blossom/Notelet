@@ -74,6 +74,13 @@ export interface NotionSyncState {
   last_error: string | null;
 }
 
+export interface SummaryRevision {
+  id: string;
+  created_at: string;
+  model_label: string;
+  summary: string;
+}
+
 export interface Note {
   id: string;
   title: string;
@@ -97,6 +104,8 @@ export interface Note {
   audio_path: string | null;
   audio_encrypted: boolean;
   storage_mode?: 'local' | 'notion_only';
+  pinned?: boolean;
+  summary_history?: SummaryRevision[];
 }
 
 export interface Folder {
@@ -181,6 +190,11 @@ export interface AppSettings {
   notion_viewer_mode?: boolean;
   enable_gpu_asr?: boolean;
   summary_presets?: SummaryPreset[];
+  theme?: 'light' | 'dark' | 'system';
+  mic_gain?: number;
+  system_gain?: number;
+  auto_share_slack_folder_ids?: string[];
+  calendar_reminder_enabled?: boolean;
 }
 
 export interface GpuCapabilities {

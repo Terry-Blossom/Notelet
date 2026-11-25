@@ -3,12 +3,16 @@ import {
   ArrowDown,
   ArrowUp,
   AudioLines,
+  BookPlus,
   Calendar,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ClipboardPaste,
   Cloud,
   Copy,
+  Download,
   FileText,
   Folder as FolderIcon,
   GitMerge,
@@ -20,12 +24,15 @@ import {
   Mic,
   Pause,
   Pencil,
+  Pin,
   Play,
   Plus,
+  RotateCcw,
   Search,
   Send,
   Shield,
   Sparkles,
+  Tag,
   Trash2,
   Upload,
   UploadCloud,
@@ -111,6 +118,7 @@ interface NoteEditorViewProps {
   folders?: Folder[];
   chatHistory?: ChatHistoryItem[];
   initialSearchQuery?: string | null;
+  pendingSeekMs?: number | null;
   recordingNoteId?: string | null;
   settings: AppSettings;
   recipes: Recipe[];
@@ -151,6 +159,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   folders = [{ id: 'personal', name: '一般', is_shared: false, permission: 'owner' }],
   chatHistory = [],
   initialSearchQuery = null,
+  pendingSeekMs = null,
   recordingNoteId = null,
   settings,
   secretStatus,
@@ -175,6 +184,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   onChatNote,
   onShareSlack,
   onSendWebhook,
+  onAddDictionaryTerm,
   onGoSettings,
 }) => {
   // Sidebar & responsive drawer
@@ -268,6 +278,14 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackMs, setPlaybackMs] = useState(0);
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
+  const [tagInputOpen, setTagInputOpen] = useState(false);
+  const [tagDraft, setTagDraft] = useState('');
+  const [editingSegId, setEditingSegId] = useState<string | null>(null);
+  const [editingSegText, setEditingSegText] = useState('');
+  const [searchMatchIdx, setSearchMatchIdx] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [compareRevisionId, setCompareRevisionId] = useState<string | null>(null);
+  const [dismissedCandidates, setDismissedCandidates] = useState<Record<string, boolean>>({});
   const summaryPresets = useMemo(
     () =>
       settings.summary_presets && settings.summary_presets.length > 0
@@ -327,6 +345,17 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       setInNoteSearchQuery(initialSearchQuery.trim());
     }
   }, [initialSearchQuery, note.id]);
+
+  useEffect(() => {
+    if (pendingSeekMs !== null && pendingSeekMs !== undefined) {
+      setActiveTab('transcript');
+      if (note.audio_path) {
+        void playNoteAudioFromMs(pendingSeekMs);
+      } else {
+        setPlaybackMs(pendingSeekMs);
+      }
+    }
+  }, [pendingSeekMs, note.id]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -662,6 +691,133 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     } else {
       void playNoteAudioFromMs();
     }
+  };
+
+  const skipAudioBy = (deltaMs: number) => {
+    const nextMs = Math.max(0, playbackMs + deltaMs);
+    if (audioRef.current) {
+      audioRef.current.currentTime = nextMs / 1000;
+      setPlaybackMs(nextMs);
+    } else if (note.audio_path) {
+      void playNoteAudioFromMs(nextMs);
+    }
+  };
+
+  useEffect(() => {
+    const onPlayKeyDown = (e: KeyboardEvent) => {
+      if (phase !== 'completed' || !note.audio_path) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlayback();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        skipAudioBy(-5000);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        skipAudioBy(5000);
+      }
+    };
+    window.addEventListener('keydown', onPlayKeyDown);
+    return () => window.removeEventListener('keydown', onPlayKeyDown);
+  }, [phase, note.audio_path, isPlaying, playbackMs]);
+
+  const formatSrtTime = (ms: number, sep: ',' | '.' = ',') => {
+    const totalMs = Math.max(0, Math.floor(ms));
+    const h = Math.floor(totalMs / 3600000);
+    const m = Math.floor((totalMs % 3600000) / 60000);
+    const s = Math.floor((totalMs % 60000) / 1000);
+    const rem = totalMs % 1000;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}${sep}${String(rem).padStart(3, '0')}`;
+  };
+
+  const exportTranscriptAs = (format: 'srt' | 'vtt' | 'txt' | 'md') => {
+    const segs = displayedSegments;
+    if (segs.length === 0) {
+      notify('エクスポートする文字起こしがありません');
+      return;
+    }
+    const baseName = (note.title.trim() || 'transcript').replace(/[\\/:*?"<>|]/g, '_');
+    let content = '';
+    if (format === 'srt') {
+      content = segs
+        .map((s, idx) => `${idx + 1}\n${formatSrtTime(s.start_ms, ',')} --> ${formatSrtTime(Math.max(s.end_ms, s.start_ms + 1000), ',')}\n${s.text.trim()}\n`)
+        .join('\n');
+    } else if (format === 'vtt') {
+      content =
+        'WEBVTT\n\n' +
+        segs
+          .map((s) => `${formatSrtTime(s.start_ms, '.')} --> ${formatSrtTime(Math.max(s.end_ms, s.start_ms + 1000), '.')}\n${s.text.trim()}\n`)
+          .join('\n');
+    } else if (format === 'md') {
+      content = `# ${note.title.trim() || '無題のノート'}\n\n${note.summary ? `## 要約\n\n${note.summary}\n\n` : ''}## 文字起こし\n\n${segs
+        .map((s) => `- **[${formatNoteTimer(s.start_ms)}]** ${s.text.trim()}`)
+        .join('\n')}\n`;
+    } else {
+      content = segs.map((s) => `[${formatNoteTimer(s.start_ms)}] ${s.text.trim()}`).join('\n');
+    }
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${baseName}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    notify(`${format.toUpperCase()} でエクスポートしました`);
+  };
+
+  const dictionaryCandidates = useMemo(() => {
+    const text = displayedSegments.map((s) => s.text).join(' ');
+    if (!text.trim()) return [];
+    const counts = new Map<string, number>();
+    const matches = text.match(/[A-Za-z][A-Za-z0-9._-]{2,}|[ァ-ヶー]{3,}/g) || [];
+    for (const token of matches) {
+      if (dismissedCandidates[token]) continue;
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([term]) => term);
+  }, [displayedSegments, dismissedCandidates]);
+
+  const suggestedPresetId = useMemo(() => {
+    const hay = `${note.title} ${displayedSegments.slice(0, 8).map((s) => s.text).join(' ')}`.toLowerCase();
+    if (/1on1|1対1|面談|フィードバック/.test(hay)) {
+      return summaryPresets.find((p) => /1on1|面談/i.test(p.id + p.name))?.id ?? null;
+    }
+    if (/商談|顧客|提案|見積|営業/.test(hay)) {
+      return summaryPresets.find((p) => /sales|商談|営業/i.test(p.id + p.name))?.id ?? null;
+    }
+    if (/定例|週次|朝会|進捗/.test(hay)) {
+      return summaryPresets.find((p) => /weekly|定例|標準/i.test(p.id + p.name))?.id ?? null;
+    }
+    return null;
+  }, [note.title, displayedSegments, summaryPresets]);
+
+  const searchMatches = useMemo(() => {
+    if (!inNoteSearchQuery.trim()) return [];
+    return findNoteSearchMatches(note, inNoteSearchQuery);
+  }, [note, inNoteSearchQuery]);
+
+  const jumpToSearchMatch = (delta: 1 | -1) => {
+    if (searchMatches.length === 0) return;
+    const nextIdx = (searchMatchIdx + delta + searchMatches.length) % searchMatches.length;
+    setSearchMatchIdx(nextIdx);
+    setTimeout(() => {
+      const marks = document.querySelectorAll('.note-editor-root mark, .note-transcript-list mark, .note-card mark');
+      const targetMark = marks[nextIdx] as HTMLElement | undefined;
+      targetMark?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 30);
   };
 
   // Auto-scroll & unread dot when segments grow during recording
@@ -2297,6 +2453,93 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               )}
             </div>
 
+            {/* Pin Toggle Pill */}
+            <button
+              type="button"
+              className="note-meta-pill"
+              aria-pressed={Boolean(note.pinned)}
+              title={note.pinned ? 'ピン留め解除' : 'ノートをピン留め'}
+              style={{
+                borderColor: note.pinned ? 'var(--accent)' : undefined,
+                color: note.pinned ? 'var(--accent)' : undefined,
+              }}
+              onClick={() =>
+                onUpdateNote({
+                  ...note,
+                  pinned: !note.pinned,
+                  updated_at: new Date().toISOString(),
+                })
+              }
+            >
+              <Pin size={14} strokeWidth={1.75} aria-hidden="true" />
+              <span>{note.pinned ? 'ピン留め中' : 'ピン留め'}</span>
+            </button>
+
+            {/* Tags Pill */}
+            {(note.tags ?? []).map((tag) => (
+              <span
+                key={tag}
+                className="note-meta-pill"
+                style={{ gap: '4px', paddingRight: '6px' }}
+              >
+                <Tag size={12} strokeWidth={1.75} aria-hidden="true" />
+                <span>#{tag}</span>
+                <button
+                  type="button"
+                  aria-label={`タグ ${tag} を削除`}
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'inline-flex', color: 'inherit' }}
+                  onClick={() =>
+                    onUpdateNote({
+                      ...note,
+                      tags: (note.tags ?? []).filter((t) => t !== tag),
+                      updated_at: new Date().toISOString(),
+                    })
+                  }
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            {tagInputOpen ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const clean = tagDraft.trim().replace(/^#/, '');
+                  if (clean && !(note.tags ?? []).includes(clean)) {
+                    onUpdateNote({
+                      ...note,
+                      tags: [...(note.tags ?? []), clean],
+                      updated_at: new Date().toISOString(),
+                    });
+                  }
+                  setTagDraft('');
+                  setTagInputOpen(false);
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <input
+                  type="text"
+                  className="input"
+                  autoFocus
+                  placeholder="タグ名..."
+                  value={tagDraft}
+                  onChange={(e) => setTagDraft(e.target.value)}
+                  onBlur={() => setTagInputOpen(false)}
+                  style={{ width: '100px', height: '28px', fontSize: '12px', padding: '0 8px' }}
+                />
+              </form>
+            ) : (
+              <button
+                type="button"
+                className="note-meta-pill"
+                title="タグを追加"
+                onClick={() => setTagInputOpen(true)}
+              >
+                <Tag size={13} strokeWidth={1.75} aria-hidden="true" />
+                <span>+ タグ</span>
+              </button>
+            )}
+
             {/* Calendar Event Linking Pill */}
             <div className="note-meta-pill-wrap">
               <button
@@ -2425,12 +2668,43 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 style={{ height: '28px', fontSize: '13px', flex: 1, backgroundColor: 'var(--bg-canvas)' }}
                 placeholder="このノート内を検索 (Ctrl+F)..."
                 value={inNoteSearchQuery}
-                onChange={(e) => setInNoteSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setInNoteSearchQuery(e.target.value);
+                  setSearchMatchIdx(0);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    jumpToSearchMatch(e.shiftKey ? -1 : 1);
+                  }
+                }}
               />
               {inNoteSearchQuery.trim() && (
-                <span className="text-muted mono-num" style={{ fontSize: '11px', flexShrink: 0 }}>
-                  {findNoteSearchMatches(note, inNoteSearchQuery).length}件
-                </span>
+                <>
+                  <span className="text-muted mono-num" style={{ fontSize: '11px', flexShrink: 0 }}>
+                    {searchMatches.length > 0 ? `${(searchMatchIdx % searchMatches.length) + 1}/${searchMatches.length}件` : '0件'}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="前の一致へ"
+                    className="btn btn-ghost"
+                    style={{ width: '24px', height: '24px', padding: 0 }}
+                    disabled={searchMatches.length === 0}
+                    onClick={() => jumpToSearchMatch(-1)}
+                  >
+                    <ChevronLeft size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="次の一致へ"
+                    className="btn btn-ghost"
+                    style={{ width: '24px', height: '24px', padding: 0 }}
+                    disabled={searchMatches.length === 0}
+                    onClick={() => jumpToSearchMatch(1)}
+                  >
+                    <ChevronRight size={13} />
+                  </button>
+                </>
               )}
               <button
                 type="button"
@@ -2554,6 +2828,26 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   ) : (
                     <Play size={20} strokeWidth={1.75} />
                   )}
+                </button>
+                <button
+                  type="button"
+                  className="chip-filter mono-num"
+                  aria-label="5秒戻る"
+                  title="5秒戻る (←)"
+                  style={{ height: '22px', padding: '0 6px', fontSize: '11px' }}
+                  onClick={() => skipAudioBy(-5000)}
+                >
+                  -5s
+                </button>
+                <button
+                  type="button"
+                  className="chip-filter mono-num"
+                  aria-label="5秒進む"
+                  title="5秒進む (→)"
+                  style={{ height: '22px', padding: '0 6px', fontSize: '11px' }}
+                  onClick={() => skipAudioBy(5000)}
+                >
+                  +5s
                 </button>
 
                 <NoteWaveform mode="completed" playbackProgress={playbackProgress} />
@@ -2985,6 +3279,55 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           >
             {activeTab === 'transcript' && (
               <div aria-live="polite" aria-relevant="additions" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {(isRecording || displayedSegments.length > 0) && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      {isRecording && (
+                        <span className="status-chip" style={{ fontSize: '11px', color: 'var(--accent)', borderColor: 'var(--accent-border)' }}>
+                          暫定ライブ文字起こし（録音停止後に確定・整形）
+                        </span>
+                      )}
+                      {dictionaryCandidates.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                          <span className="text-muted" style={{ fontSize: '11px' }}>辞書候補:</span>
+                          {dictionaryCandidates.map((term) => (
+                            <button
+                              key={term}
+                              type="button"
+                              className="chip-filter"
+                              style={{ height: '22px', padding: '0 8px', fontSize: '11px' }}
+                              title={`「${term}」を辞書に追加`}
+                              onClick={async () => {
+                                await onAddDictionaryTerm(term);
+                                setDismissedCandidates((prev) => ({ ...prev, [term]: true }));
+                                notify(`「${term}」を辞書に追加しました`);
+                              }}
+                            >
+                              + {term}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {displayedSegments.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <Download size={13} strokeWidth={1.75} className="text-muted" />
+                        {(['srt', 'vtt', 'txt', 'md'] as const).map((fmt) => (
+                          <button
+                            key={fmt}
+                            type="button"
+                            className="chip-filter mono-num"
+                            style={{ height: '22px', padding: '0 7px', fontSize: '11px' }}
+                            onClick={() => exportTranscriptAs(fmt)}
+                          >
+                            .{fmt}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {displayedSegments.length === 0 ? (
                   <div className="note-empty-state" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
                     <span>{isProcessing ? '文字起こし処理中...' : 'まだ文字起こしがありません'}</span>
@@ -3008,6 +3351,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     {displayedSegments.map((seg) => {
                       const isActiveSeg =
                         isPlaying && playbackMs >= seg.start_ms && playbackMs < seg.end_ms;
+                      const isInterimSeg = isRecording || seg.id.startsWith('live-');
+                      const isEditingSeg = editingSegId === seg.id;
                       return (
                         <article key={seg.id} className={`note-turn ${isActiveSeg ? 'playing' : ''}`}>
                           <div className="note-turn-meta" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -3035,8 +3380,100 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             >
                               {formatNoteTimer(seg.start_ms)}
                             </button>
+                            {isInterimSeg && (
+                              <span className="status-chip" style={{ fontSize: '10px', padding: '0 5px', opacity: 0.8 }}>
+                                暫定
+                              </span>
+                            )}
+                            {!isRecording && !isEditingSeg && (
+                              <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  style={{ height: '22px', padding: '0 6px', fontSize: '11px' }}
+                                  title="この発言を編集"
+                                  onClick={() => {
+                                    setEditingSegId(seg.id);
+                                    setEditingSegText(seg.text);
+                                  }}
+                                >
+                                  <Pencil size={11} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  style={{ height: '22px', padding: '0 6px', fontSize: '11px' }}
+                                  title="選択テキストまたは単語を辞書に追加"
+                                  onClick={async () => {
+                                    const sel = window.getSelection()?.toString().trim();
+                                    const candidate = sel || seg.text.trim().slice(0, 24);
+                                    if (!candidate) return;
+                                    await onAddDictionaryTerm(candidate);
+                                    notify(`「${candidate}」を辞書に追加しました`);
+                                  }}
+                                >
+                                  <BookPlus size={11} />
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          <p className="note-turn-text">{highlightSearchText(seg.text)}</p>
+                          {isEditingSeg ? (
+                            <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                              <input
+                                type="text"
+                                className="input"
+                                value={editingSegText}
+                                autoFocus
+                                onChange={(e) => setEditingSegText(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const nextSegs = note.segments.map((s) =>
+                                      s.id === seg.id ? { ...s, text: editingSegText } : s
+                                    );
+                                    onUpdateNote({
+                                      ...note,
+                                      segments: nextSegs,
+                                      updated_at: new Date().toISOString(),
+                                    });
+                                    setEditingSegId(null);
+                                  } else if (e.key === 'Escape') {
+                                    setEditingSegId(null);
+                                  }
+                                }}
+                                style={{ flex: 1, height: '30px', fontSize: '13px' }}
+                              />
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                style={{ height: '30px', padding: '0 10px', fontSize: '12px' }}
+                                onClick={() => {
+                                  const nextSegs = note.segments.map((s) =>
+                                    s.id === seg.id ? { ...s, text: editingSegText } : s
+                                  );
+                                  onUpdateNote({
+                                    ...note,
+                                    segments: nextSegs,
+                                    updated_at: new Date().toISOString(),
+                                  });
+                                  setEditingSegId(null);
+                                }}
+                              >
+                                保存
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                style={{ height: '30px', padding: '0 8px', fontSize: '12px' }}
+                                onClick={() => setEditingSegId(null)}
+                              >
+                                取消
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="note-turn-text" style={{ opacity: isInterimSeg ? 0.85 : 1 }}>
+                              {highlightSearchText(seg.text)}
+                            </p>
+                          )}
                         </article>
                       );
                     })}
@@ -3051,6 +3488,16 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <h2 className="note-card-title">要約</h2>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      {suggestedPresetId && suggestedPresetId !== selectedTemplateId && (
+                        <button
+                          type="button"
+                          className="chip-filter"
+                          style={{ height: '24px', fontSize: '11px', color: 'var(--accent)', borderColor: 'var(--accent-border)' }}
+                          onClick={() => setSelectedTemplateId(suggestedPresetId)}
+                        >
+                          推奨: {summaryPresets.find((p) => p.id === suggestedPresetId)?.name} を適用
+                        </button>
+                      )}
                       <select
                         aria-label="要約テンプレート"
                         className="input"
@@ -3064,6 +3511,17 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           </option>
                         ))}
                       </select>
+                      {(note.summary_history?.length ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ height: '28px', fontSize: '12px', padding: '0 8px' }}
+                          onClick={() => setHistoryOpen((o) => !o)}
+                        >
+                          <History size={13} strokeWidth={1.75} />
+                          履歴 ({note.summary_history?.length})
+                        </button>
+                      )}
                       {llmConfigured && (
                         <button
                           type="button"
@@ -3078,6 +3536,69 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       )}
                     </div>
                   </div>
+
+                  {historyOpen && (note.summary_history?.length ?? 0) > 0 && (
+                    <div
+                      style={{
+                        marginTop: '10px',
+                        padding: '10px',
+                        borderRadius: '8px',
+                        backgroundColor: 'var(--bg-subtle)',
+                        border: '1px solid var(--border-subtle)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px' }}>
+                        <strong>過去の要約バージョン</strong>
+                        <button type="button" className="btn btn-ghost" style={{ height: '22px', fontSize: '11px' }} onClick={() => setHistoryOpen(false)}>
+                          閉じる
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {note.summary_history!.map((rev) => (
+                          <button
+                            key={rev.id}
+                            type="button"
+                            className={`chip-filter ${compareRevisionId === rev.id ? 'active' : ''}`}
+                            style={{ fontSize: '11px', height: '24px' }}
+                            onClick={() => setCompareRevisionId(rev.id === compareRevisionId ? null : rev.id)}
+                          >
+                            {rev.created_at.slice(0, 16).replace('T', ' ')} ({rev.model_label || '要約'})
+                          </button>
+                        ))}
+                      </div>
+                      {compareRevisionId && (() => {
+                        const rev = note.summary_history!.find((r) => r.id === compareRevisionId);
+                        if (!rev) return null;
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '8px' }}>
+                            <div style={{ fontSize: '12px', whiteSpace: 'pre-wrap', maxHeight: '180px', overflowY: 'auto', color: 'var(--text-secondary)' }}>
+                              {rev.summary}
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              style={{ alignSelf: 'flex-start', height: '26px', fontSize: '12px' }}
+                              onClick={() => {
+                                onUpdateNote({
+                                  ...note,
+                                  summary: rev.summary,
+                                  updated_at: new Date().toISOString(),
+                                });
+                                setHistoryOpen(false);
+                                notify('過去の要約を復元しました');
+                              }}
+                            >
+                              <RotateCcw size={12} />
+                              このバージョンを復元
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
 
                   <div aria-label="要約内容" style={{ padding: '4px 0' }}>
                     <StreamingMarkdownArticle

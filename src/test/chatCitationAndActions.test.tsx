@@ -91,7 +91,7 @@ describe('Inline citation badges and AI chat actions', () => {
     fireEvent.click(inlineBadge);
     await vi.waitFor(() => {
       expect(confirmSpy).toHaveBeenCalled();
-      expect(onOpenNote).toHaveBeenCalledWith('note-a');
+      expect(onOpenNote).toHaveBeenCalledWith('note-a', '00:10', '今週の進捗を共有します。');
     });
     confirmSpy.mockRestore();
   });

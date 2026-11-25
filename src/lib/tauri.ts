@@ -295,3 +295,19 @@ export async function apiCreateIssueFromAction(
 export async function apiRestoreBackupSnapshot(snapshot: AppDataSnapshot): Promise<AppDataSnapshot> {
   return invoke<AppDataSnapshot>('restore_backup_snapshot', { snapshot });
 }
+
+export async function apiTestCloudAsrConnection(provider: string): Promise<string> {
+  return invoke<string>('test_cloud_asr_connection_cmd', { provider });
+}
+
+export async function apiTestLlmConnection(): Promise<string> {
+  return invoke<string>('test_llm_connection_cmd');
+}
+
+export async function apiTestMicLevel(
+  deviceId?: string | null
+): Promise<{ rms: number; device_name: string }> {
+  return invoke<{ rms: number; device_name: string }>('test_mic_level_cmd', {
+    deviceId: deviceId ?? null,
+  });
+}

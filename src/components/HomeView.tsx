@@ -1,9 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import {
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
   Cpu,
   FileText,
+  Pin,
   Plus,
   Search,
   Settings,
@@ -21,6 +23,7 @@ interface HomeViewProps {
   folders: Folder[];
   onOpenNote: (noteId: string, searchQuery?: string) => void;
   onDeleteNote?: (noteId: string) => Promise<void> | void;
+  onSaveNote?: (note: Note) => Promise<void>;
   onCreateManualNote: (folderId?: string) => void;
   onUploadFile?: (file: File) => Promise<void>;
   onSaveFolder: (folder: Folder) => Promise<void>;
@@ -35,6 +38,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   folders,
   onOpenNote,
   onDeleteNote,
+  onSaveNote,
   onCreateManualNote,
   onUploadFile,
   onGoSettings,
@@ -88,6 +92,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           n.title,
           n.summary,
           n.manual_notes,
+          ...(n.tags ?? []),
           ...n.segments.map((s) => s.text),
         ]
           .join(' ')
@@ -97,8 +102,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
         if (!n.created_at.startsWith(selectedDateKey)) return false;
       }
       return true;
-    });
+    }).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
   }, [notes, selectedSpaceId, searchQuery, selectedDateKey]);
+
+  const openActionItems = useMemo(() => {
+    const items: Array<{ note: Note; index: number; text: string; assignee?: string | null }> = [];
+    for (const note of notes) {
+      if (selectedSpaceId !== 'all' && note.folder_id !== selectedSpaceId) continue;
+      (note.action_items ?? []).forEach((item, idx) => {
+        if (!item.done && item.text.trim()) {
+          items.push({ note, index: idx, text: item.text, assignee: item.assignee });
+        }
+      });
+    }
+    return items.slice(0, 12);
+  }, [notes, selectedSpaceId]);
 
   const shiftMonth = (delta: number) => {
     const d = new Date(calYear, calMonth + delta, 1);
@@ -242,9 +260,23 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       }}
                     >
                       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
-                        <strong style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
-                          {note.title.trim() || '無題のノート'}
-                        </strong>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          {note.pinned && (
+                            <Pin size={12} strokeWidth={2} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                          )}
+                          <strong style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+                            {note.title.trim() || '無題のノート'}
+                          </strong>
+                          {(note.tags ?? []).slice(0, 3).map((tag) => (
+                            <span
+                              key={tag}
+                              className="status-chip"
+                              style={{ fontSize: '10px', padding: '1px 6px' }}
+                            >
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
                         <span className="text-muted mono-num">
                           {formatDateTime(note.created_at)} ・ {formatMs(note.duration_sec * 1000)} ・ {spaceName}
                         </span>
@@ -294,6 +326,65 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </div>
             )}
           </section>
+
+          {openActionItems.length > 0 && (
+            <section className="surface-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <CheckSquare size={15} strokeWidth={1.75} style={{ color: 'var(--accent)' }} />
+                  未完了アクションアイテム ({openActionItems.length})
+                </h2>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {openActionItems.map(({ note, index, text, assignee }) => (
+                  <div
+                    key={`${note.id}-${index}`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '10px',
+                      padding: '6px 8px',
+                      borderRadius: '8px',
+                      backgroundColor: 'var(--bg-subtle)',
+                      fontSize: '13px',
+                    }}
+                  >
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0, cursor: onSaveNote ? 'pointer' : 'default' }}>
+                      <input
+                        type="checkbox"
+                        checked={false}
+                        disabled={!onSaveNote}
+                        onChange={() => {
+                          if (!onSaveNote) return;
+                          const nextItems = (note.action_items ?? []).map((it, i) =>
+                            i === index ? { ...it, done: true } : it
+                          );
+                          void onSaveNote({ ...note, action_items: nextItems });
+                        }}
+                      />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {text}
+                      </span>
+                      {assignee && (
+                        <span className="text-muted" style={{ fontSize: '11px', flexShrink: 0 }}>
+                          {assignee}
+                        </span>
+                      )}
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ fontSize: '11px', padding: '2px 8px', flexShrink: 0 }}
+                      onClick={() => onOpenNote(note.id)}
+                    >
+                      {note.title.trim() || '無題'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
 
         {/* Right Rail: Calendar + Engine Summary */}

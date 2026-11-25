@@ -24,7 +24,7 @@ interface ChatViewProps {
   onChatAcrossNotes: (noteIds: string[], question: string, spaceId?: string | null) => Promise<ChatAnswer>;
   onClearHistory: () => Promise<void>;
   onDeleteHistoryItems?: (itemIds: string[]) => Promise<void>;
-  onOpenNote: (noteId: string) => void;
+  onOpenNote: (noteId: string, timestamp?: string, excerpt?: string) => void;
   onGoSettings: () => void;
 }
 
@@ -98,7 +98,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
       'ノートを開く'
     );
     if (ok) {
-      onOpenNote(c.note_id);
+      onOpenNote(c.note_id, c.timestamp, c.excerpt);
     }
   };
 
