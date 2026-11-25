@@ -962,9 +962,20 @@ pub async fn pull_notes_from_notion(
         }
 
         // Skip block fetch if local copy is already up-to-date or newer
+        let remote_ms = chrono::DateTime::parse_from_rfc3339(&updated_at)
+            .map(|dt| dt.timestamp_millis())
+            .unwrap_or(0);
         let unchanged = known_timestamps
             .get(&page_id)
-            .map(|local_ts| local_ts == &updated_at)
+            .map(|local_ts| {
+                if local_ts == &updated_at {
+                    return true;
+                }
+                let local_ms = chrono::DateTime::parse_from_rfc3339(local_ts)
+                    .map(|dt| dt.timestamp_millis())
+                    .unwrap_or(0);
+                local_ms > 0 && local_ms >= remote_ms
+            })
             .unwrap_or(false);
 
         let (space_name, summary, manual_notes, segments, blocks_loaded) = if unchanged {

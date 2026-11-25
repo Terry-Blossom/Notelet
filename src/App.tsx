@@ -561,6 +561,8 @@ const MainApp: React.FC = () => {
   const snapshotNotesRef = React.useRef(snapshot.notes);
   snapshotNotesRef.current = snapshot.notes;
 
+  const noteSaveSeqRef = React.useRef<Record<string, number>>({});
+
   const syncNoteToNotion = useCallback(
     async (noteId: string, silent = false) => {
       if (!isTauriRuntime()) return;
@@ -579,7 +581,20 @@ const MainApp: React.FC = () => {
         delete notionRetryBackoffRef.current[noteId];
         setSnapshot((prev) => ({
           ...prev,
-          notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+          notes: prev.notes.map((n) => {
+            if (n.id !== updated.id) return n;
+            // If user edited the note locally while Notion upload was in flight, keep local fields
+            if (n.updated_at !== updated.updated_at || n.title !== updated.title || n.folder_id !== updated.folder_id) {
+              return {
+                ...n,
+                notion_sync: {
+                  ...updated.notion_sync,
+                  status: 'not_synced',
+                },
+              };
+            }
+            return updated;
+          }),
         }));
       } catch (err) {
         const prevAttempts = notionRetryBackoffRef.current[noteId]?.attempts ?? 0;
@@ -619,9 +634,11 @@ const MainApp: React.FC = () => {
       const existingTimer = notionDebounceTimersRef.current[noteId];
       if (existingTimer) clearTimeout(existingTimer);
       if (immediate) {
+        delete notionDebounceTimersRef.current[noteId];
         void syncNoteToNotion(noteId, true);
       } else {
         notionDebounceTimersRef.current[noteId] = setTimeout(() => {
+          delete notionDebounceTimersRef.current[noteId];
           void syncNoteToNotion(noteId, true);
         }, 1800);
       }
@@ -635,6 +652,13 @@ const MainApp: React.FC = () => {
       if (!secretStatus?.notion_access_token || !snapshot.settings.notion_target_id) return;
       if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       if (notionPullInFlightRef.current) return;
+      if (
+        !force &&
+        (notionSyncInFlightRef.current.size > 0 ||
+          Object.keys(notionDebounceTimersRef.current).length > 0)
+      ) {
+        return;
+      }
       const now = Date.now();
       if (!force && now - lastNotionPullAtRef.current < 5000) return;
       notionPullInFlightRef.current = true;
@@ -1067,17 +1091,25 @@ const MainApp: React.FC = () => {
   };
 
   const handleUpdateNote = async (updated: Note) => {
+    const seq = (noteSaveSeqRef.current[updated.id] ?? 0) + 1;
+    noteSaveSeqRef.current[updated.id] = seq;
+    const normalized: Note =
+      updated.notion_sync.status === 'synced'
+        ? { ...updated, notion_sync: { ...updated.notion_sync, status: 'not_synced' } }
+        : updated;
     setSnapshot((prev) => ({
       ...prev,
-      notes: prev.notes.some((n) => n.id === updated.id)
-        ? prev.notes.map((n) => (n.id === updated.id ? updated : n))
-        : [updated, ...prev.notes],
+      notes: prev.notes.some((n) => n.id === normalized.id)
+        ? prev.notes.map((n) => (n.id === normalized.id ? normalized : n))
+        : [normalized, ...prev.notes],
     }));
-    setActiveNoteId((prevId) => prevId || updated.id);
+    setActiveNoteId((prevId) => prevId || normalized.id);
     if (isTauriRuntime()) {
-      const nextSnap = await apiSaveNote(updated);
-      setSnapshot(nextSnap);
-      scheduleAutoNotionSync(updated.id, false);
+      const nextSnap = await apiSaveNote(normalized);
+      if (noteSaveSeqRef.current[normalized.id] === seq) {
+        setSnapshot(nextSnap);
+      }
+      scheduleAutoNotionSync(normalized.id, false);
     }
   };
 

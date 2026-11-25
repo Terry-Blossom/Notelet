@@ -240,8 +240,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               {m.id === 'whisper-small-q5' && (
                 <span className="status-chip">軽量・省メモリ</span>
               )}
+              {m.id === 'stepfun-stepaudio-3-asr-max' && (
+                <span className="status-chip ok">日本語対応・推奨</span>
+              )}
               {m.id === 'stepfun-stepaudio-2.5-asr' && (
-                <span className="status-chip ok">超高速・高精度</span>
+                <span className="status-chip">中英特化（日本語時は3-Maxへ自動切替）</span>
               )}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>

@@ -87,6 +87,17 @@ fn save_note(state: State<AppState>, mut note: Note) -> Result<AppDataSnapshot, 
         }
     }
 
+    if let Some(existing) = data.notes.iter().find(|n| n.id == id) {
+        let content_changed = existing.title != note.title
+            || existing.folder_id != note.folder_id
+            || existing.manual_notes != note.manual_notes
+            || existing.summary != note.summary
+            || existing.segments.len() != note.segments.len();
+        if content_changed && note.notion_sync.status == "synced" {
+            note.notion_sync.status = "not_synced".to_string();
+        }
+    }
+
     storage::upsert_note(&mut data, note);
     storage::append_audit(&mut data, "note_saved", &format!("note_id={id}"));
     storage::save_snapshot(&data)?;
@@ -1212,26 +1223,52 @@ async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result
 
     match notion::save_note_to_notion(&note, &folder_name, &settings).await {
         Ok((page_id, page_url, synced_at)) => {
-            note.notion_sync.page_id = Some(page_id);
-            note.notion_sync.page_url = Some(page_url);
-            note.notion_sync.database_id = Some(settings.notion_target_id.clone());
-            note.notion_sync.last_synced_at = Some(synced_at);
-            note.notion_sync.status = "synced".to_string();
-            note.notion_sync.last_error = None;
-            if settings.notion_viewer_mode || note.storage_mode == "notion_only" {
-                strip_local_note_body(&mut note);
-            }
             let mut data = state.data.lock().unwrap();
-            storage::upsert_note(&mut data, note.clone());
-            storage::append_audit(&mut data, "notion_synced", &format!("note_id={}", note.id));
+            let result_note = if let Some(latest) = data.notes.iter_mut().find(|n| n.id == note.id) {
+                let locally_edited_during_sync = latest.updated_at != note.updated_at
+                    || latest.title != note.title
+                    || latest.folder_id != note.folder_id;
+                latest.notion_sync.page_id = Some(page_id);
+                latest.notion_sync.page_url = Some(page_url);
+                latest.notion_sync.database_id = Some(settings.notion_target_id.clone());
+                latest.notion_sync.last_synced_at = Some(synced_at);
+                latest.notion_sync.last_error = None;
+                if locally_edited_during_sync {
+                    latest.notion_sync.status = "not_synced".to_string();
+                } else {
+                    latest.notion_sync.status = "synced".to_string();
+                    if settings.notion_viewer_mode || latest.storage_mode == "notion_only" {
+                        strip_local_note_body(latest);
+                    }
+                }
+                latest.clone()
+            } else {
+                note.notion_sync.page_id = Some(page_id);
+                note.notion_sync.page_url = Some(page_url);
+                note.notion_sync.database_id = Some(settings.notion_target_id.clone());
+                note.notion_sync.last_synced_at = Some(synced_at);
+                note.notion_sync.status = "synced".to_string();
+                note.notion_sync.last_error = None;
+                if settings.notion_viewer_mode || note.storage_mode == "notion_only" {
+                    strip_local_note_body(&mut note);
+                }
+                storage::upsert_note(&mut data, note.clone());
+                note
+            };
+            storage::append_audit(&mut data, "notion_synced", &format!("note_id={}", result_note.id));
             storage::save_snapshot(&data)?;
-            Ok(note)
+            Ok(result_note)
         }
         Err(err) => {
-            note.notion_sync.status = "failed".to_string();
-            note.notion_sync.last_error = Some(err.clone());
             let mut data = state.data.lock().unwrap();
-            storage::upsert_note(&mut data, note);
+            if let Some(latest) = data.notes.iter_mut().find(|n| n.id == note.id) {
+                latest.notion_sync.status = "failed".to_string();
+                latest.notion_sync.last_error = Some(err.clone());
+            } else {
+                note.notion_sync.status = "failed".to_string();
+                note.notion_sync.last_error = Some(err.clone());
+                storage::upsert_note(&mut data, note);
+            }
             let _ = storage::save_snapshot(&data);
             Err(err)
         }
@@ -1421,8 +1458,63 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
                 }
             }
 
+            if let Some(ref page_id) = page_id_opt {
+                if let Some(existing_n) = data
+                    .notes
+                    .iter_mut()
+                    .find(|n| n.notion_sync.page_id.as_ref() == Some(page_id))
+                {
+                    let local_ts = parse_rfc3339_millis(&existing_n.updated_at);
+                    let has_pending_local_edits = existing_n.notion_sync.status != "synced";
+                    if !blocks_loaded || has_pending_local_edits || local_ts >= notion_ts {
+                        // Local is up-to-date, newer, or has pending unpushed edits -> preserve local title & folder_id
+                        if existing_n.storage_mode != "notion_only"
+                            && (has_pending_local_edits || local_ts > notion_ts)
+                        {
+                            let existing_clone = existing_n.clone();
+                            let folder_name = data
+                                .folders
+                                .iter()
+                                .find(|f| f.id == existing_clone.folder_id)
+                                .map(|f| f.name.clone())
+                                .unwrap_or_else(|| "一般".to_string());
+                            notes_to_push_to_notion.push((existing_clone, folder_name));
+                        }
+                        continue;
+                    }
+                    // Notion is strictly newer and local has no pending edits -> update local note
+                    let resolved_folder_id = if let Some(existing_f) = data.folders.iter().find(|f| f.name == space_name) {
+                        existing_f.id.clone()
+                    } else {
+                        let new_f = Folder {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            name: space_name.clone(),
+                            is_shared: false,
+                            permission: "owner".to_string(),
+                        };
+                        let id = new_f.id.clone();
+                        data.folders.push(new_f);
+                        id
+                    };
+                    existing_n.title = note.title;
+                    existing_n.folder_id = resolved_folder_id;
+                    existing_n.updated_at = note.updated_at;
+                    if existing_n.storage_mode != "notion_only" && !settings.notion_viewer_mode {
+                        existing_n.summary = note.summary;
+                        existing_n.manual_notes = note.manual_notes;
+                        if !note.segments.is_empty() {
+                            existing_n.segments = note.segments;
+                        }
+                    } else {
+                        strip_local_note_body(existing_n);
+                    }
+                    existing_n.notion_sync.status = "synced".to_string();
+                    existing_n.notion_sync.last_error = None;
+                    continue;
+                }
+            }
             if blocks_loaded {
-                let folder_id = if let Some(existing_f) = data.folders.iter().find(|f| f.name == space_name) {
+                let resolved_folder_id = if let Some(existing_f) = data.folders.iter().find(|f| f.name == space_name) {
                     existing_f.id.clone()
                 } else {
                     let new_f = Folder {
@@ -1435,52 +1527,7 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
                     data.folders.push(new_f);
                     id
                 };
-                note.folder_id = folder_id;
-            }
-
-            if let Some(ref page_id) = page_id_opt {
-                if let Some(existing_n) = data
-                    .notes
-                    .iter_mut()
-                    .find(|n| n.notion_sync.page_id.as_ref() == Some(page_id))
-                {
-                    if !blocks_loaded {
-                        // Unchanged remote timestamp -> only refresh title/sync status
-                        existing_n.title = note.title;
-                        existing_n.notion_sync.status = "synced".to_string();
-                        existing_n.notion_sync.last_error = None;
-                        continue;
-                    }
-                    let local_ts = parse_rfc3339_millis(&existing_n.updated_at);
-                    if notion_ts > local_ts {
-                        // Notion is newer -> update local note
-                        existing_n.title = note.title;
-                        existing_n.folder_id = note.folder_id;
-                        existing_n.updated_at = note.updated_at;
-                        if existing_n.storage_mode != "notion_only" && !settings.notion_viewer_mode {
-                            existing_n.summary = note.summary;
-                            existing_n.manual_notes = note.manual_notes;
-                            if !note.segments.is_empty() {
-                                existing_n.segments = note.segments;
-                            }
-                        } else {
-                            strip_local_note_body(existing_n);
-                        }
-                        existing_n.notion_sync.status = "synced".to_string();
-                        existing_n.notion_sync.last_error = None;
-                    } else if local_ts > notion_ts && existing_n.storage_mode != "notion_only" {
-                        // Local is newer -> keep local and push back to Notion
-                        let existing_clone = existing_n.clone();
-                        let folder_name = data
-                            .folders
-                            .iter()
-                            .find(|f| f.id == existing_clone.folder_id)
-                            .map(|f| f.name.clone())
-                            .unwrap_or_else(|| "一般".to_string());
-                        notes_to_push_to_notion.push((existing_clone, folder_name));
-                    }
-                    continue;
-                }
+                note.folder_id = resolved_folder_id;
             }
             if data.settings.notion_viewer_mode {
                 strip_local_note_body(&mut note);

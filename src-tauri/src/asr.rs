@@ -416,8 +416,8 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
             data_handling: "録音音声ファイルを api.groq.com に送信して高速処理します。".into(),
         },
         AsrModelInfo {
-            id: "stepfun-stepaudio-2.5-asr".to_string(),
-            name: "StepFun StepAudio 2.5 ASR (クラウド・超高速)".to_string(),
+            id: "stepfun-stepaudio-3-asr-max".to_string(),
+            name: "StepFun StepAudio 3 ASR Max (クラウド・多言語/日本語対応)".to_string(),
             provider: AsrProviderKind::CloudStepFun,
             is_local: false,
             languages: vec![
@@ -442,7 +442,35 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
                 Some("StepFun APIキーが未設定です。".into())
             },
             installed: true,
-            data_handling: "録音音声ファイルを StepFun API に送信して超高速・高精度に文字起こしします。".into(),
+            data_handling: "録音音声ファイルを StepFun API (stepaudio-3-asr-max) に送信します。日本語を含む多言語の文脈認識・リアルタイム文字起こしに対応。".into(),
+        },
+        AsrModelInfo {
+            id: "stepfun-stepaudio-2.5-asr".to_string(),
+            name: "StepFun StepAudio 2.5 ASR (クラウド・超高速)".to_string(),
+            provider: AsrProviderKind::CloudStepFun,
+            is_local: false,
+            languages: vec![
+                "日本語".into(),
+                "英語".into(),
+                "中国語".into(),
+                "多言語(自動判定)".into(),
+            ],
+            environment: "クラウド API (api.stepfun.ai / api.stepfun.com)".into(),
+            memory_mb: 0,
+            license: "商用 API (StepFun 利用規約)".into(),
+            size_mb: 0,
+            download_url: String::new(),
+            filename: String::new(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible: secrets::has_secret("stepfun_api_key"),
+            compatibility_reason: if secrets::has_secret("stepfun_api_key") {
+                None
+            } else {
+                Some("StepFun APIキーが未設定です。".into())
+            },
+            installed: true,
+            data_handling: "録音音声ファイルを StepFun API に送信します（2.5は中英特化のため、日本語設定時は多言語対応の stepaudio-3-asr-max へ自動ルーティングします）。".into(),
         },
     ]
 }
@@ -1424,73 +1452,96 @@ pub async fn transcribe_wav(
             let bytes = bytes_res.map_err(|e| format!("音声読み込み失敗: {e}"))?;
             let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
-            let mut transcription = serde_json::json!({
-                "model": "stepaudio-2.5-asr",
-                "enable_itn": true,
-            });
-            if settings.language != "auto" {
-                let lang = if settings.language.is_empty() {
-                    "ja"
-                } else {
-                    settings.language.as_str()
-                };
-                transcription["language"] = serde_json::json!(lang);
-            }
-
-            let payload = serde_json::json!({
-                "audio": {
-                    "data": audio_b64,
-                    "input": {
-                        "transcription": transcription,
-                        "format": {
-                            "type": "wav"
-                        }
-                    }
-                }
-            });
+            // stepaudio-2.5-asr officially only supports Chinese & English, which causes
+            // Japanese speech to be transcribed into Chinese characters.
+            // Use stepaudio-3-asr-max (StepFun's multilingual ASR model) whenever Japanese
+            // or auto-detect is selected, or when explicitly chosen.
+            let is_ja_or_multilingual = settings.language.is_empty()
+                || settings.language == "ja"
+                || settings.language == "auto";
+            let candidate_models: Vec<&str> = if model.id == "stepfun-stepaudio-3-asr-max" {
+                vec!["stepaudio-3-asr-max"]
+            } else if is_ja_or_multilingual {
+                vec!["stepaudio-3-asr-max", "stepaudio-2.5-asr"]
+            } else {
+                vec!["stepaudio-2.5-asr"]
+            };
 
             let client = cloud_http_client();
             let endpoints = if STEPFUN_USE_CN_ENDPOINT.load(Ordering::Relaxed) {
                 [
                     ("https://api.stepfun.com/v1/audio/asr/sse", true),
                     ("https://api.stepfun.ai/v1/audio/asr/sse", false),
+                    ("https://api.stepfun.ai/step_plan/v1/audio/asr/sse", false),
                 ]
             } else {
                 [
                     ("https://api.stepfun.ai/v1/audio/asr/sse", false),
                     ("https://api.stepfun.com/v1/audio/asr/sse", true),
+                    ("https://api.stepfun.ai/step_plan/v1/audio/asr/sse", false),
                 ]
             };
             let mut last_status = reqwest::StatusCode::INTERNAL_SERVER_ERROR;
             let mut last_body = String::new();
             let mut success_body: Option<String> = None;
 
-            for (idx, (endpoint, is_cn)) in endpoints.iter().enumerate() {
-                let resp = client
-                    .post(*endpoint)
-                    .bearer_auth(&api_key)
-                    .header("Accept", "text/event-stream")
-                    .json(&payload)
-                    .send()
-                    .await
-                    .map_err(|e| format!("StepFun ASR 通信エラー: {e}"))?;
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                if status.is_success() {
-                    STEPFUN_USE_CN_ENDPOINT.store(*is_cn, Ordering::Relaxed);
-                    success_body = Some(body);
-                    break;
+            'model_loop: for api_model in &candidate_models {
+                let mut transcription = serde_json::json!({
+                    "model": api_model,
+                    "enable_itn": true,
+                });
+                if settings.language != "auto" {
+                    let lang = if settings.language.is_empty() {
+                        "ja"
+                    } else {
+                        settings.language.as_str()
+                    };
+                    transcription["language"] = serde_json::json!(lang);
                 }
-                last_status = status;
-                last_body = body;
-                // Overseas (.ai) vs China mainland (.com) keys are region-scoped; retry alternate endpoint on 401/403
-                if idx == 0
-                    && (status == reqwest::StatusCode::UNAUTHORIZED
-                        || status == reqwest::StatusCode::FORBIDDEN)
-                {
-                    continue;
+
+                let payload = serde_json::json!({
+                    "audio": {
+                        "data": &audio_b64,
+                        "input": {
+                            "transcription": transcription,
+                            "format": {
+                                "type": "wav"
+                            }
+                        }
+                    }
+                });
+
+                for (endpoint, is_cn) in &endpoints {
+                    let resp = client
+                        .post(*endpoint)
+                        .bearer_auth(&api_key)
+                        .header("Accept", "text/event-stream")
+                        .json(&payload)
+                        .send()
+                        .await
+                        .map_err(|e| format!("StepFun ASR 通信エラー: {e}"))?;
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        STEPFUN_USE_CN_ENDPOINT.store(*is_cn, Ordering::Relaxed);
+                        success_body = Some(body);
+                        break 'model_loop;
+                    }
+                    last_status = status;
+                    last_body = body;
+                    if status == reqwest::StatusCode::UNAUTHORIZED
+                        || status == reqwest::StatusCode::FORBIDDEN
+                    {
+                        continue;
+                    }
+                    // If the model itself isn't enabled (400/404), try fallback model
+                    if status == reqwest::StatusCode::BAD_REQUEST
+                        || status == reqwest::StatusCode::NOT_FOUND
+                    {
+                        continue 'model_loop;
+                    }
+                    break 'model_loop;
                 }
-                break;
             }
 
             let body = match success_body {
@@ -1500,14 +1551,22 @@ pub async fn transcribe_wav(
                         || last_status == reqwest::StatusCode::FORBIDDEN
                     {
                         return Err(format!(
-                            "StepFun ASR API エラー ({last_status}): StepFun APIキー（通常APIキー）が正しいか確認し、設定＞音声認識＞クラウド API で再保存してください。({last_body})"
+                            "StepFun ASR API エラー ({last_status}): StepFun APIキーが正しいか確認し、設定＞音声認識＞クラウド API で再保存してください。({last_body})"
                         ));
                     }
                     return Err(format!("StepFun ASR API エラー ({last_status}): {last_body}"));
                 }
             };
 
-            let segs = parse_stepfun_sse_response(&body)?;
+            let mut segs = parse_stepfun_sse_response(&body)?;
+            let force_jp_kanji = settings.language.is_empty() || settings.language == "ja";
+            for seg in &mut segs {
+                if force_jp_kanji
+                    || (settings.language == "auto" && contains_japanese_kana(&seg.text))
+                {
+                    seg.text = normalize_simplified_to_jp_shinjitai(&seg.text);
+                }
+            }
             Ok((segs, false, model.name))
         }
         AsrProviderKind::CloudDeepgram => {
@@ -1667,6 +1726,405 @@ fn parse_stepfun_sse_response(body: &str) -> Result<Vec<TranscriptSegment>, Stri
         speaker: String::new(),
         text: final_text.to_string(),
     }])
+}
+
+fn contains_japanese_kana(text: &str) -> bool {
+    text.chars()
+        .any(|c| ('\u{3040}'..='\u{309F}').contains(&c) || ('\u{30A0}'..='\u{30FF}').contains(&c))
+}
+
+fn normalize_simplified_to_jp_shinjitai(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '说' => '説',
+            '话' => '話',
+            '语' => '語',
+            '读' => '読',
+            '记' => '記',
+            '计' => '計',
+            '设' => '設',
+            '议' => '議',
+            '证' => '証',
+            '评' => '評',
+            '识' => '識',
+            '认' => '認',
+            '请' => '請',
+            '谢' => '謝',
+            '调' => '調',
+            '谈' => '談',
+            '论' => '論',
+            '讲' => '講',
+            '许' => '許',
+            '译' => '訳',
+            '试' => '試',
+            '误' => '誤',
+            '课' => '課',
+            '谁' => '誰',
+            '词' => '詞',
+            '诉' => '訴',
+            '详' => '詳',
+            '访' => '訪',
+            '订' => '訂',
+            '讨' => '討',
+            '训' => '訓',
+            '讯' => '訊',
+            '诚' => '誠',
+            '该' => '該',
+            '诸' => '諸',
+            '诺' => '諾',
+            '谱' => '譜',
+            '谨' => '謹',
+            '让' => '譲',
+            '时' => '時',
+            '间' => '間',
+            '门' => '門',
+            '开' => '開',
+            '闭' => '閉',
+            '问' => '問',
+            '闻' => '聞',
+            '阅' => '閲',
+            '阁' => '閣',
+            '闲' => '閑',
+            '闪' => '閃',
+            '关' => '関',
+            '发' => '発',
+            '对' => '対',
+            '电' => '電',
+            '录' => '録',
+            '进' => '進',
+            '远' => '遠',
+            '连' => '連',
+            '运' => '運',
+            '达' => '達',
+            '违' => '違',
+            '选' => '選',
+            '适' => '適',
+            '迟' => '遅',
+            '遗' => '遺',
+            '过' => '過',
+            '还' => '還',
+            '边' => '辺',
+            '邻' => '隣',
+            '经' => '経',
+            '结' => '結',
+            '线' => '線',
+            '级' => '級',
+            '组' => '組',
+            '织' => '織',
+            '维' => '維',
+            '续' => '続',
+            '约' => '約',
+            '统' => '統',
+            '总' => '総',
+            '给' => '給',
+            '绝' => '絶',
+            '终' => '終',
+            '细' => '細',
+            '绘' => '絵',
+            '纪' => '紀',
+            '纯' => '純',
+            '纳' => '納',
+            '纸' => '紙',
+            '纹' => '紋',
+            '纷' => '紛',
+            '纽' => '紐',
+            '练' => '練',
+            '编' => '編',
+            '缩' => '縮',
+            '综' => '総',
+            '绿' => '緑',
+            '缓' => '緩',
+            '缘' => '縁',
+            '继' => '継',
+            '绩' => '績',
+            '红' => '紅',
+            '网' => '網',
+            '罗' => '羅',
+            '实' => '実',
+            '际' => '際',
+            '动' => '動',
+            '机' => '機',
+            '构' => '構',
+            '题' => '題',
+            '页' => '頁',
+            '顺' => '順',
+            '须' => '須',
+            '领' => '領',
+            '额' => '額',
+            '颜' => '顔',
+            '愿' => '願',
+            '类' => '類',
+            '预' => '予',
+            '频' => '頻',
+            '顶' => '頂',
+            '项' => '項',
+            '顾' => '顧',
+            '顿' => '頓',
+            '颗' => '顆',
+            '见' => '見',
+            '现' => '現',
+            '观' => '観',
+            '视' => '視',
+            '规' => '規',
+            '觉' => '覚',
+            '览' => '覧',
+            '亲' => '親',
+            '场' => '場',
+            '业' => '業',
+            '务' => '務',
+            '员' => '員',
+            '长' => '長',
+            '车' => '車',
+            '转' => '転',
+            '轮' => '輪',
+            '轻' => '軽',
+            '较' => '較',
+            '载' => '載',
+            '辅' => '輔',
+            '输' => '輸',
+            '辑' => '輯',
+            '软' => '軟',
+            '轨' => '軌',
+            '辉' => '輝',
+            '辈' => '輩',
+            '东' => '東',
+            '马' => '馬',
+            '验' => '験',
+            '驱' => '駆',
+            '驻' => '駐',
+            '驾' => '駕',
+            '骑' => '騎',
+            '骚' => '騒',
+            '鸟' => '鳥',
+            '鸡' => '鶏',
+            '鸣' => '鳴',
+            '鱼' => '魚',
+            '鲜' => '鮮',
+            '风' => '風',
+            '云' => '雲',
+            '气' => '気',
+            '飞' => '飛',
+            '饭' => '飯',
+            '饮' => '飲',
+            '馆' => '館',
+            '养' => '養',
+            '饰' => '飾',
+            '饱' => '飽',
+            '饼' => '餅',
+            '书' => '書',
+            '图' => '図',
+            '广' => '広',
+            '应' => '応',
+            '庆' => '慶',
+            '废' => '廃',
+            '厅' => '庁',
+            '库' => '庫',
+            '换' => '換',
+            '变' => '変',
+            '传' => '伝',
+            '择' => '択',
+            '决' => '決',
+            '标' => '標',
+            '准' => '準',
+            '测' => '測',
+            '优' => '優',
+            '质' => '質',
+            '价' => '価',
+            '费' => '費',
+            '买' => '買',
+            '卖' => '売',
+            '货' => '貨',
+            '资' => '資',
+            '产' => '産',
+            '财' => '財',
+            '责' => '責',
+            '负' => '負',
+            '败' => '敗',
+            '购' => '購',
+            '贵' => '貴',
+            '贷' => '貸',
+            '贸' => '貿',
+            '赞' => '賛',
+            '赏' => '賞',
+            '赖' => '頼',
+            '赛' => '賽',
+            '赠' => '贈',
+            '贴' => '貼',
+            '贫' => '貧',
+            '贺' => '賀',
+            '贯' => '貫',
+            '账' => '帳',
+            '单' => '単',
+            '据' => '拠',
+            '报' => '報',
+            '导' => '導',
+            '师' => '師',
+            '习' => '習',
+            '节' => '節',
+            '简' => '簡',
+            '复' => '複',
+            '杂' => '雑',
+            '难' => '難',
+            '错' => '錯',
+            '专' => '専',
+            '别' => '別',
+            '欢' => '歓',
+            '听' => '聴',
+            '护' => '護',
+            '户' => '戸',
+            '无' => '無',
+            '为' => '為',
+            '从' => '従',
+            '众' => '衆',
+            '伤' => '傷',
+            '仅' => '僅',
+            '侧' => '側',
+            '债' => '債',
+            '倾' => '傾',
+            '储' => '儲',
+            '儿' => '児',
+            '兰' => '蘭',
+            '兴' => '興',
+            '举' => '挙',
+            '军' => '軍',
+            '农' => '農',
+            '冻' => '凍',
+            '净' => '浄',
+            '击' => '撃',
+            '则' => '則',
+            '刚' => '剛',
+            '创' => '創',
+            '剂' => '剤',
+            '剑' => '剣',
+            '剧' => '劇',
+            '劝' => '勧',
+            '劳' => '労',
+            '势' => '勢',
+            '勋' => '勲',
+            '华' => '華',
+            '协' => '協',
+            '卫' => '衛',
+            '历' => '歴',
+            '压' => '圧',
+            '县' => '県',
+            '团' => '団',
+            '园' => '園',
+            '围' => '囲',
+            '圆' => '円',
+            '圣' => '聖',
+            '坏' => '壊',
+            '块' => '塊',
+            '坚' => '堅',
+            '执' => '執',
+            '扫' => '掃',
+            '扬' => '揚',
+            '扰' => '擾',
+            '拥' => '擁',
+            '损' => '損',
+            '扩' => '拡',
+            '摄' => '撮',
+            '摇' => '揺',
+            '搜' => '捜',
+            '张' => '張',
+            '弹' => '弾',
+            '强' => '強',
+            '归' => '帰',
+            '彻' => '徹',
+            '忆' => '憶',
+            '忧' => '憂',
+            '怀' => '懐',
+            '态' => '態',
+            '恶' => '悪',
+            '恼' => '悩',
+            '悬' => '懸',
+            '惊' => '驚',
+            '惯' => '慣',
+            '戏' => '戯',
+            '战' => '戦',
+            '响' => '響',
+            '龄' => '齢',
+            '齿' => '歯',
+            '齐' => '斉',
+            '龙' => '龍',
+            '龟' => '亀',
+            '义' => '義',
+            '职' => '職',
+            '胜' => '勝',
+            '脑' => '脳',
+            '脏' => '臓',
+            '艺' => '芸',
+            '范' => '範',
+            '药' => '薬',
+            '获' => '獲',
+            '营' => '営',
+            '蓝' => '藍',
+            '处' => '処',
+            '补' => '補',
+            '队' => '隊',
+            '阳' => '陽',
+            '阴' => '陰',
+            '阵' => '陣',
+            '阶' => '階',
+            '陆' => '陸',
+            '陈' => '陳',
+            '险' => '険',
+            '隐' => '隠',
+            '雾' => '霧',
+            '韩' => '韓',
+            '铁' => '鉄',
+            '银' => '銀',
+            '铜' => '銅',
+            '钢' => '鋼',
+            '钱' => '銭',
+            '钟' => '鐘',
+            '镜' => '鏡',
+            '键' => '鍵',
+            '锁' => '鎖',
+            '镇' => '鎮',
+            '针' => '針',
+            '铃' => '鈴',
+            '铅' => '鉛',
+            '铭' => '銘',
+            '锅' => '鍋',
+            '邮' => '郵',
+            '乡' => '郷',
+            '释' => '釈',
+            '跃' => '躍',
+            '辩' => '弁',
+            '树' => '樹',
+            '桥' => '橋',
+            '检' => '検',
+            '权' => '権',
+            '极' => '極',
+            '样' => '様',
+            '乐' => '楽',
+            '岁' => '歳',
+            '汉' => '漢',
+            '泽' => '沢',
+            '济' => '済',
+            '满' => '満',
+            '灭' => '滅',
+            '灵' => '霊',
+            '热' => '熱',
+            '爱' => '愛',
+            '环' => '環',
+            '疗' => '療',
+            '盘' => '盤',
+            '确' => '確',
+            '础' => '礎',
+            '离' => '離',
+            '种' => '種',
+            '积' => '積',
+            '稳' => '穏',
+            '穷' => '窮',
+            '竞' => '競',
+            '笔' => '筆',
+            '粮' => '糧',
+            '联' => '連',
+            '荣' => '栄',
+            _ => c,
+        })
+        .collect()
 }
 
 fn strip_sense_voice_tags(raw: &str) -> String {

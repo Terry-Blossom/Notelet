@@ -229,10 +229,18 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    setViewingFolderId(null);
     setTitleDraft(note.title);
     titleSnapshotRef.current = note.title;
-    setViewingFolderId(null);
-  }, [note.id, note.title]);
+  }, [note.id]);
+
+  useEffect(() => {
+    if (titleInputRef.current && document.activeElement === titleInputRef.current) {
+      return;
+    }
+    setTitleDraft(note.title);
+    titleSnapshotRef.current = note.title;
+  }, [note.title]);
 
   // Tabs: 3 stages (文字起こし / 要約 / メモ)
   const [activeTab, setActiveTab] = useState<'transcript' | 'summary' | 'memo'>('transcript');
