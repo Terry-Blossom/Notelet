@@ -10,7 +10,7 @@ pub mod net_security;
 mod notion;
 mod secrets;
 pub mod storage;
-mod updater;
+pub mod updater;
 pub mod whisper_server;
 
 use audio::AudioManager;
@@ -1264,8 +1264,15 @@ async fn install_app_update(
     app: tauri::AppHandle,
     download_url: String,
     asset_name: String,
+    expected_sha256: Option<String>,
 ) -> Result<String, String> {
-    updater::download_and_launch_update(&app, &download_url, &asset_name).await
+    updater::download_and_launch_update(
+        &app,
+        &download_url,
+        &asset_name,
+        expected_sha256.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]

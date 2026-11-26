@@ -1,6 +1,6 @@
 [package]
 name = "notelet"
-version = "0.17.2"
+version = "0.17.3"
 description = "軽量なローカルファースト録音・文字起こし・Notion連携ノートアプリ"
 authors = ["Notelet Contributors"]
 edition = "2021"
@@ -29,3 +29,4 @@ aes-gcm = "0.10"
 rand = "0.8"
 base64 = "0.22"
 dirs = "6"
+sha2 = "0.10"

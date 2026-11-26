@@ -364,6 +364,8 @@ export interface SecretStatus {
   jira_api_token?: boolean;
 }
 
+export type InstallKind = 'appimage' | 'deb' | 'windows' | 'macos' | 'unknown';
+
 export interface UpdateCheckResult {
   current_version: string;
   latest_version: string;
@@ -373,4 +375,7 @@ export interface UpdateCheckResult {
   release_url: string;
   asset_name: string | null;
   download_url: string | null;
+  asset_sha256: string | null;
+  install_kind: InstallKind;
+  can_auto_install: boolean;
 }

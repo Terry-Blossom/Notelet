@@ -244,9 +244,14 @@ export async function apiCheckAppUpdate(): Promise<UpdateCheckResult> {
 
 export async function apiInstallAppUpdate(
   downloadUrl: string,
-  assetName: string
+  assetName: string,
+  expectedSha256?: string | null
 ): Promise<string> {
-  return invoke<string>('install_app_update', { downloadUrl, assetName });
+  return invoke<string>('install_app_update', {
+    downloadUrl,
+    assetName,
+    expectedSha256: expectedSha256 ?? null,
+  });
 }
 
 export async function apiReadNoteAudio(noteId: string): Promise<string> {

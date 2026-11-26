@@ -43,7 +43,11 @@ interface SettingsViewProps {
   onDownloadModel: (modelId: string) => Promise<void>;
   onInstallRuntime: (kind: 'whisper' | 'parakeet') => Promise<void>;
   onCheckUpdate: () => Promise<UpdateCheckResult>;
-  onInstallUpdate: (downloadUrl: string, assetName: string) => Promise<string>;
+  onInstallUpdate: (
+    downloadUrl: string,
+    assetName: string,
+    expectedSha256?: string | null
+  ) => Promise<string>;
   onSetSecret: (key: string, value: string) => Promise<void>;
   onExportAll: () => Promise<void>;
   onPurgeAll: () => Promise<void>;
