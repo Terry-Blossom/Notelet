@@ -709,4 +709,22 @@ mod migration_tests {
         assert!(!cli.contains("KoeNote"));
         let _ = fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn copies_missing_legacy_files_without_overwriting() {
+        let root = std::env::temp_dir().join(format!("notelet-copy-{}", Uuid::new_v4()));
+        let old = root.join("KoeNote");
+        let new = root.join("Notelet");
+        fs::create_dir_all(old.join("audio")).unwrap();
+        fs::create_dir_all(&new).unwrap();
+        fs::write(old.join("audio").join("a.wav"), b"legacy").unwrap();
+        fs::write(old.join("keep.txt"), b"old").unwrap();
+        fs::write(new.join("keep.txt"), b"new").unwrap();
+
+        copy_missing_dir_contents(&old, &new);
+
+        assert!(new.join("audio").join("a.wav").exists());
+        assert_eq!(fs::read_to_string(new.join("keep.txt")).unwrap(), "new");
+        let _ = fs::remove_dir_all(&root);
+    }
 }
