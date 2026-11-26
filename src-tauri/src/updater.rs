@@ -110,6 +110,16 @@ pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
                 } else {
                     name.ends_with("x64.dmg") || name.ends_with("x86_64.dmg")
                 }
+            } else if cfg!(target_arch = "x86_64") {
+                name.ends_with("amd64.AppImage")
+                    || name.ends_with("x86_64.AppImage")
+                    || name.ends_with("amd64.deb")
+            } else if cfg!(target_arch = "x86") {
+                name.ends_with("i386.AppImage")
+                    || name.ends_with("i686.AppImage")
+                    || name.ends_with("i386.deb")
+            } else if cfg!(target_arch = "aarch64") {
+                name.ends_with("aarch64.AppImage") || name.ends_with("arm64.deb")
             } else {
                 name.ends_with(".AppImage") || name.ends_with(".deb")
             };

@@ -64,6 +64,7 @@ AI プロバイダーの設定前でもカスタムプロンプトを事前保�
 | **Windows 10 / 11** | x64 | Windows WASAPI（マイク／システム音声ループバック／両方） | インストーラー（NSIS / MSI）配布 |
 | **macOS** | Apple Silicon（arm64） / Intel（x64） | CoreAudio（マイク／仮想デバイス経由システム音声／両方） | DMG / App バンドル配布 |
 | **Linux** | x64 | マイク（ALSA / PulseAudio / PipeWire） | AppImage / deb / rpm 配布 |
+| **Linux** | x86（32bit） | マイク（ALSA / PulseAudio / PipeWire） | AppImage 配布 |
 
 ---
 

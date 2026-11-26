@@ -18,6 +18,57 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  build-linux-x86:
+    needs: frontend-check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux x86 dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev:i386 \
+            libgtk-3-dev:i386 \
+            libappindicator3-dev:i386 \
+            librsvg2-dev:i386 \
+            libasound2-dev:i386 \
+            libssl-dev:i386 \
+            libsecret-1-dev:i386 \
+            gcc-multilib \
+            g++-multilib \
+            patchelf
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Build x86 AppImage
+        env:
+          PKG_CONFIG_ALLOW_CROSS: 1
+          PKG_CONFIG_PATH: /usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig
+          PKG_CONFIG_LIBDIR: /usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig
+        run: npx tauri build --target i686-unknown-linux-gnu --bundles appimage
+
+      - name: Upload x86 AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: notelet-linux-x86
+          path: src-tauri/target/i686-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
   build-desktop:
     needs: frontend-check
     strategy:
