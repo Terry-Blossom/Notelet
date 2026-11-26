@@ -90,12 +90,12 @@ jobs:
           chmod +x /tmp/appimagetool /tmp/runtime-i686
           ARCH=i686 APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool \
             --runtime-file /tmp/runtime-i686 --no-appstream \
-            "$APPDIR" "$OUT_DIR/Notelet_${VERSION}_i386.AppImage"
+            "$APPDIR" "$OUT_DIR/Notelet_${VERSION}_linux_i386.AppImage"
 
       - name: Upload x86 AppImage to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: src-tauri/target/i686-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+          files: src-tauri/target/i686-unknown-linux-gnu/release/bundle/appimage/Notelet_*_linux_i386.AppImage
 
   publish-release:
     strategy:
@@ -126,28 +126,32 @@ jobs:
       - run: npm ci
       - run: npx tauri build
 
-      - name: Verify Linux x86_64 AppImage and deb bundles
-        if: runner.os == 'Linux'
+      - name: Prepare normalized release assets
+        shell: bash
         run: |
+          set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
-          if [ -f "src-tauri/target/release/bundle/appimage/Notelet_${VERSION}_amd64.AppImage" ]; then
+          rm -rf release_assets
+          mkdir -p release_assets
+          if [ "${{ runner.os }}" = "Linux" ]; then
             cp "src-tauri/target/release/bundle/appimage/Notelet_${VERSION}_amd64.AppImage" \
-               "src-tauri/target/release/bundle/appimage/Notelet_${VERSION}_x86_64.AppImage"
+               "release_assets/Notelet_${VERSION}_linux_x86_64.AppImage"
+            cp "src-tauri/target/release/bundle/deb/Notelet_${VERSION}_amd64.deb" \
+               "release_assets/Notelet_${VERSION}_linux_x86_64.deb"
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            cp "src-tauri/target/release/bundle/nsis/Notelet_${VERSION}_x64-setup.exe" \
+               "release_assets/Notelet_${VERSION}_windows_x64-setup.exe"
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cp "src-tauri/target/release/bundle/dmg/Notelet_${VERSION}_aarch64.dmg" \
+               "release_assets/Notelet_${VERSION}_macos_aarch64.dmg"
+          elif [ "${{ matrix.os }}" = "macos-26-intel" ]; then
+            cp "src-tauri/target/release/bundle/dmg/Notelet_${VERSION}_x64.dmg" \
+               "release_assets/Notelet_${VERSION}_macos_x64.dmg"
           fi
-          ls -la src-tauri/target/release/bundle/appimage/*.AppImage
-          ls -la src-tauri/target/release/bundle/deb/*.deb
+          ls -la release_assets
 
       - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: |
-            src-tauri/target/release/notelet.exe
-            src-tauri/target/release/notelet
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/rpm/*.rpm
-            src-tauri/target/release/bundle/appimage/*.AppImage
+          files: release_assets/*
           generate_release_notes: true
