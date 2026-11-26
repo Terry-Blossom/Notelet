@@ -502,6 +502,108 @@ fn detect_gpu_capabilities_cmd() -> models::GpuCapabilities {
     asr::detect_gpu_capabilities()
 }
 
+fn apply_summary_result(
+    note: &mut Note,
+    snapshot: &Note,
+    summary: String,
+    decisions: Vec<String>,
+    action_items: Vec<models::ActionItem>,
+    generated_title: Option<String>,
+    model_label: &str,
+) {
+    let mut changed = false;
+    if note.title.trim().is_empty() {
+        if let Some(title) = generated_title {
+            note.title = title;
+            changed = true;
+        }
+    }
+    if note.summary == snapshot.summary {
+        if !note.summary.trim().is_empty() {
+            note.summary_history.insert(
+                0,
+                models::SummaryRevision {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    model_label: model_label.to_string(),
+                    summary: note.summary.clone(),
+                },
+            );
+            if note.summary_history.len() > 10 {
+                note.summary_history.truncate(10);
+            }
+        }
+        note.summary = summary;
+        changed = true;
+    }
+    if note.decisions == snapshot.decisions {
+        note.decisions = decisions;
+        changed = true;
+    }
+    if note.action_items == snapshot.action_items {
+        note.action_items = action_items;
+        changed = true;
+    }
+    if changed {
+        note.updated_at = chrono::Utc::now().to_rfc3339();
+    }
+}
+
+fn apply_follow_up_draft(note: &mut Note, snapshot: &Note, draft: String) {
+    if note.follow_up_draft == snapshot.follow_up_draft {
+        note.follow_up_draft = draft;
+        note.updated_at = chrono::Utc::now().to_rfc3339();
+    }
+}
+
+fn note_changed_since_snapshot(latest: &Note, snapshot: &Note) -> bool {
+    latest.updated_at != snapshot.updated_at
+        || latest.title != snapshot.title
+        || latest.folder_id != snapshot.folder_id
+        || latest.audio_path != snapshot.audio_path
+        || latest.audio_encrypted != snapshot.audio_encrypted
+        || latest.segments != snapshot.segments
+        || latest.summary != snapshot.summary
+        || latest.manual_notes != snapshot.manual_notes
+        || latest.decisions != snapshot.decisions
+        || latest.action_items != snapshot.action_items
+        || latest.follow_up_draft != snapshot.follow_up_draft
+}
+
+fn apply_notion_content(
+    latest: &mut Note,
+    snapshot: &Note,
+    content: (
+        String,
+        String,
+        String,
+        String,
+        Vec<models::TranscriptSegment>,
+        String,
+    ),
+) {
+    let (title, _space_name, summary, manual_notes, segments, updated_at) = content;
+    let content_unchanged = latest.title == snapshot.title
+        && latest.summary == snapshot.summary
+        && latest.manual_notes == snapshot.manual_notes
+        && latest.segments == snapshot.segments;
+    if latest.title == snapshot.title {
+        latest.title = title;
+    }
+    if latest.summary == snapshot.summary {
+        latest.summary = summary;
+    }
+    if latest.manual_notes == snapshot.manual_notes {
+        latest.manual_notes = manual_notes;
+    }
+    if latest.segments == snapshot.segments {
+        latest.segments = segments;
+    }
+    if content_unchanged && latest.updated_at == snapshot.updated_at {
+        latest.updated_at = updated_at;
+    }
+}
+
 #[tauri::command]
 async fn transcribe_recording(
     app: tauri::AppHandle,
@@ -821,7 +923,7 @@ async fn summarize_note_cmd(
     note_id: String,
     template_id: Option<String>,
 ) -> Result<Note, String> {
-    let (settings, mut note) = {
+    let (settings, note) = {
         let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
@@ -833,48 +935,58 @@ async fn summarize_note_cmd(
     };
     let (summary, decisions, action_items) =
         llm::summarize_note(&settings, &note, template_id.as_deref()).await?;
-    if note.title.trim().is_empty() {
+    let generated_title = if note.title.trim().is_empty() {
         let candidate = summary
             .lines()
-            .map(|l| l.trim().trim_start_matches('#').trim_start_matches('-').trim_start_matches('*').trim())
+            .map(|l| {
+                l.trim()
+                    .trim_start_matches('#')
+                    .trim_start_matches('-')
+                    .trim_start_matches('*')
+                    .trim()
+            })
             .find(|l| !l.is_empty() && !l.starts_with("```"))
             .unwrap_or("");
-        if !candidate.is_empty() {
-            let short: String = candidate.chars().take(32).collect();
-            note.title = short;
+        if candidate.is_empty() {
+            None
+        } else {
+            Some(candidate.chars().take(32).collect())
         }
-    }
-    if !note.summary.trim().is_empty() {
-        note.summary_history.insert(
-            0,
-            models::SummaryRevision {
-                id: uuid::Uuid::new_v4().to_string(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                model_label: format!("{}:{}", settings.llm_provider, settings.llm_model),
-                summary: note.summary.clone(),
-            },
-        );
-        if note.summary_history.len() > 10 {
-            note.summary_history.truncate(10);
-        }
-    }
-    note.summary = summary;
-    note.decisions = decisions;
-    note.action_items = action_items;
-    note.updated_at = chrono::Utc::now().to_rfc3339();
+    } else {
+        None
+    };
 
-    {
+    let note = {
         let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
+        let note = {
+            let latest = data
+                .notes
+                .iter_mut()
+                .find(|n| n.id == note_id)
+                .ok_or_else(|| "ノートが見つかりません".to_string())?;
+            apply_summary_result(
+                latest,
+                &note,
+                summary,
+                decisions,
+                action_items,
+                generated_title,
+                &format!("{}:{}", settings.llm_provider, settings.llm_model),
+            );
+            latest.clone()
+        };
         if let Some(ref tid) = template_id {
             if !tid.trim().is_empty() {
                 data.settings.active_template_id = tid.clone();
             }
         }
-        storage::upsert_note(&mut data, note.clone());
         storage::save_snapshot(&data)?;
-    }
+        note
+    };
 
-    if settings.auto_share_slack_folder_ids.contains(&note.folder_id)
+    if settings
+        .auto_share_slack_folder_ids
+        .contains(&note.folder_id)
         && secrets::has_secret("slack_webhook_url")
     {
         let note_for_slack = note.clone();
@@ -906,11 +1018,8 @@ async fn live_assist_cmd(
 }
 
 #[tauri::command]
-async fn draft_followup_cmd(
-    state: State<'_, AppState>,
-    note_id: String,
-) -> Result<Note, String> {
-    let (settings, mut note) = {
+async fn draft_followup_cmd(state: State<'_, AppState>, note_id: String) -> Result<Note, String> {
+    let (settings, note) = {
         let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
@@ -921,10 +1030,14 @@ async fn draft_followup_cmd(
         (data.settings.clone(), n)
     };
     let draft = llm::draft_followup_email(&settings, &note).await?;
-    note.follow_up_draft = draft;
-    note.updated_at = chrono::Utc::now().to_rfc3339();
     let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
-    storage::upsert_note(&mut data, note.clone());
+    let latest = data
+        .notes
+        .iter_mut()
+        .find(|n| n.id == note_id)
+        .ok_or_else(|| "ノートが見つかりません".to_string())?;
+    apply_follow_up_draft(latest, &note, draft);
+    let note = latest.clone();
     storage::save_snapshot(&data)?;
     Ok(note)
 }
@@ -1495,7 +1608,7 @@ async fn set_note_storage_mode(
     note_id: String,
     notion_only: bool,
 ) -> Result<Note, String> {
-    let (settings, mut note, folder_name) = {
+    let (settings, note, folder_name) = {
         let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
@@ -1512,33 +1625,63 @@ async fn set_note_storage_mode(
         (data.settings.clone(), n, fname)
     };
 
-    if notion_only {
+    let notion_sync_update = if notion_only {
         if note.notion_sync.page_id.is_none() || note.notion_sync.status != "synced" {
             let (page_id, page_url, synced_at) =
                 notion::save_note_to_notion(&note, &folder_name, &settings).await?;
-            note.notion_sync.page_id = Some(page_id);
-            note.notion_sync.page_url = Some(page_url);
-            note.notion_sync.database_id = Some(settings.notion_target_id.clone());
-            note.notion_sync.last_synced_at = Some(synced_at);
-            note.notion_sync.status = "synced".to_string();
-            note.notion_sync.last_error = None;
+            Some((page_id, page_url, synced_at))
+        } else {
+            None
         }
-        strip_local_note_body(&mut note);
     } else {
+        None
+    };
+    let notion_content = if !notion_only {
         if let Some(ref page_id) = note.notion_sync.page_id {
-            let (title, _space_name, summary, manual_notes, segments, updated_at) =
-                notion::fetch_notion_page_for_viewer(page_id).await?;
-            note.title = title;
-            note.summary = summary;
-            note.manual_notes = manual_notes;
-            note.segments = segments;
-            note.updated_at = updated_at;
+            Some(notion::fetch_notion_page_for_viewer(page_id).await?)
+        } else {
+            None
         }
-        note.storage_mode = "local".to_string();
-    }
+    } else {
+        None
+    };
 
     let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
-    storage::upsert_note(&mut data, note.clone());
+    let latest = data
+        .notes
+        .iter_mut()
+        .find(|n| n.id == note_id)
+        .ok_or_else(|| "ノートが見つかりません".to_string())?;
+    let locally_edited = note_changed_since_snapshot(latest, &note);
+    if let Some((page_id, page_url, synced_at)) = notion_sync_update {
+        latest.notion_sync.page_id = Some(page_id);
+        latest.notion_sync.page_url = Some(page_url);
+        latest.notion_sync.database_id = Some(settings.notion_target_id.clone());
+        latest.notion_sync.last_synced_at = Some(synced_at);
+        latest.notion_sync.status = if locally_edited {
+            "not_synced".to_string()
+        } else {
+            "synced".to_string()
+        };
+        latest.notion_sync.last_error = None;
+    }
+    if notion_only {
+        if locally_edited {
+            latest.notion_sync.status = "not_synced".to_string();
+            storage::save_snapshot(&data)?;
+            return Err(
+                "ノートが処理中に変更されました。変更内容を保持するため、もう一度お試しください。"
+                    .to_string(),
+            );
+        }
+        strip_local_note_body(latest);
+    } else {
+        if let Some(content) = notion_content {
+            apply_notion_content(latest, &note, content);
+        }
+        latest.storage_mode = "local".to_string();
+    }
+    let note = latest.clone();
     storage::save_snapshot(&data)?;
     Ok(note)
 }
@@ -2291,4 +2434,138 @@ pub fn run() {
                 whisper_server::stop_server_sync();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_note() -> Note {
+        Note {
+            id: "note-1".to_string(),
+            title: "Edited title".to_string(),
+            created_at: "created".to_string(),
+            updated_at: "before".to_string(),
+            duration_sec: 0,
+            folder_id: "folder-1".to_string(),
+            tags: vec!["edited-tag".to_string()],
+            participants: vec!["edited-participant".to_string()],
+            manual_notes: "edited notes".to_string(),
+            segments: Vec::new(),
+            summary: "latest summary".to_string(),
+            decisions: Vec::new(),
+            action_items: Vec::new(),
+            follow_up_draft: "old draft".to_string(),
+            asr_model_id: String::new(),
+            asr_provider_label: String::new(),
+            language: "ja".to_string(),
+            diarization_supported: false,
+            notion_sync: models::NotionSyncState::default(),
+            audio_path: None,
+            audio_encrypted: false,
+            storage_mode: "local".to_string(),
+            pinned: false,
+            summary_history: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn summary_result_updates_generated_fields_on_latest_note() {
+        let mut note = test_note();
+        let snapshot = note.clone();
+
+        apply_summary_result(
+            &mut note,
+            &snapshot,
+            "new summary".to_string(),
+            vec!["decision".to_string()],
+            Vec::new(),
+            Some("generated title".to_string()),
+            "provider:model",
+        );
+
+        assert_eq!(note.title, "Edited title");
+        assert_eq!(note.tags, ["edited-tag"]);
+        assert_eq!(note.manual_notes, "edited notes");
+        assert_eq!(note.summary, "new summary");
+        assert_eq!(note.summary_history[0].summary, "latest summary");
+        assert_eq!(note.decisions, ["decision"]);
+        assert_ne!(note.updated_at, "before");
+    }
+
+    #[test]
+    fn follow_up_result_preserves_unrelated_latest_fields() {
+        let mut note = test_note();
+        let snapshot = note.clone();
+
+        apply_follow_up_draft(&mut note, &snapshot, "new draft".to_string());
+
+        assert_eq!(note.follow_up_draft, "new draft");
+        assert_eq!(note.title, "Edited title");
+        assert_eq!(note.tags, ["edited-tag"]);
+        assert_eq!(note.manual_notes, "edited notes");
+        assert_ne!(note.updated_at, "before");
+    }
+
+    #[test]
+    fn summary_result_preserves_concurrent_edits_to_generated_fields() {
+        let snapshot = test_note();
+        let mut latest = snapshot.clone();
+        latest.summary = "concurrent summary".to_string();
+        latest.decisions = vec!["concurrent decision".to_string()];
+        latest.updated_at = "concurrent update".to_string();
+
+        apply_summary_result(
+            &mut latest,
+            &snapshot,
+            "generated summary".to_string(),
+            vec!["generated decision".to_string()],
+            Vec::new(),
+            None,
+            "provider:model",
+        );
+
+        assert_eq!(latest.summary, "concurrent summary");
+        assert_eq!(latest.decisions, ["concurrent decision"]);
+        assert!(latest.summary_history.is_empty());
+        assert_ne!(latest.updated_at, "before");
+    }
+
+    #[test]
+    fn follow_up_result_preserves_concurrent_draft_edit() {
+        let snapshot = test_note();
+        let mut latest = snapshot.clone();
+        latest.follow_up_draft = "concurrent draft".to_string();
+
+        apply_follow_up_draft(&mut latest, &snapshot, "generated draft".to_string());
+
+        assert_eq!(latest.follow_up_draft, "concurrent draft");
+    }
+
+    #[test]
+    fn notion_content_preserves_fields_edited_during_fetch() {
+        let snapshot = test_note();
+        let mut latest = snapshot.clone();
+        latest.title = "Concurrent title".to_string();
+        latest.summary = "concurrent summary".to_string();
+        latest.updated_at = "concurrent update".to_string();
+
+        apply_notion_content(
+            &mut latest,
+            &snapshot,
+            (
+                "Notion title".to_string(),
+                "space".to_string(),
+                "Notion summary".to_string(),
+                "Notion notes".to_string(),
+                Vec::new(),
+                "Notion timestamp".to_string(),
+            ),
+        );
+
+        assert_eq!(latest.title, "Concurrent title");
+        assert_eq!(latest.summary, "concurrent summary");
+        assert_eq!(latest.manual_notes, "Notion notes");
+        assert_eq!(latest.updated_at, "concurrent update");
+    }
 }
