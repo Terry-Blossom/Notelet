@@ -105,7 +105,11 @@ pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
                     || name.ends_with(".msi")
                     || name.eq_ignore_ascii_case("notelet.exe")
             } else if cfg!(target_os = "macos") {
-                name.ends_with(".dmg")
+                if cfg!(target_arch = "aarch64") {
+                    name.ends_with("aarch64.dmg")
+                } else {
+                    name.ends_with("x64.dmg") || name.ends_with("x86_64.dmg")
+                }
             } else {
                 name.ends_with(".AppImage") || name.ends_with(".deb")
             };
