@@ -131,6 +131,8 @@ impl AudioManager {
 
     pub fn list_devices() -> Vec<AudioDeviceInfo> {
         let host = cpal::default_host();
+        #[cfg(target_os = "linux")]
+        eprintln!("[audio] listing devices host={:?}", host.id());
         let mut devices = Vec::new();
         let default_in_name = host
             .default_input_device()
@@ -139,19 +141,29 @@ impl AudioManager {
         if let Ok(inputs) = host.input_devices() {
             for (idx, dev) in inputs.enumerate() {
                 if let Ok(name) = dev.name() {
+                    #[cfg(target_os = "linux")]
+                    let is_monitor = name.to_ascii_lowercase().contains("monitor");
+                    #[cfg(not(target_os = "linux"))]
+                    let is_monitor = false;
                     devices.push(AudioDeviceInfo {
                         id: format!("in:{idx}:{name}"),
                         is_default: name == default_in_name,
-                        name,
-                        kind: "input".to_string(),
+                        name: if is_monitor {
+                            format!("{name}（システム音声）")
+                        } else {
+                            name
+                        },
+                        kind: if is_monitor { "loopback" } else { "input" }.to_string(),
                     });
                 }
             }
         }
+        #[cfg(not(target_os = "linux"))]
         let default_out_name = host
             .default_output_device()
             .and_then(|d| d.name().ok())
             .unwrap_or_default();
+        #[cfg(not(target_os = "linux"))]
         if let Ok(outputs) = host.output_devices() {
             for (idx, dev) in outputs.enumerate() {
                 if let Ok(name) = dev.name() {
@@ -163,6 +175,13 @@ impl AudioManager {
                     });
                 }
             }
+        }
+        #[cfg(target_os = "linux")]
+        for device in &devices {
+            eprintln!(
+                "[audio] listed device id={:?} name={:?} kind={}",
+                device.id, device.name, device.kind
+            );
         }
         devices
     }
@@ -231,6 +250,7 @@ impl AudioManager {
             host.default_input_device()
         };
 
+        #[cfg(not(target_os = "linux"))]
         let pick_output_device = |did: Option<&String>| -> Option<Device> {
             if let Some(d_str) = did {
                 if d_str.starts_with("out:") {
@@ -259,6 +279,63 @@ impl AudioManager {
             None
         };
 
+        #[cfg(target_os = "linux")]
+        let sys_device = if matches!(source_mode, AudioSourceMode::System | AudioSourceMode::Both) {
+            let default_output_name = host
+                .default_output_device()
+                .and_then(|device| device.name().ok())
+                .map(|name| name.to_ascii_lowercase());
+            let selected_monitor = if source_mode == AudioSourceMode::System {
+                device_id.as_ref().and_then(|id| {
+                    if id.starts_with("in:") {
+                        let target_name = id.splitn(3, ':').nth(2).unwrap_or("");
+                        host.input_devices().ok().and_then(|mut it| {
+                            it.find(|d| {
+                                d.name().ok().as_deref() == Some(target_name)
+                                    && target_name.to_ascii_lowercase().contains("monitor")
+                            })
+                        })
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+            Some(
+                selected_monitor
+                    .or_else(|| {
+                        host.input_devices().ok().and_then(|mut devices| {
+                            devices.find(|device| {
+                                let Ok(name) = device.name() else {
+                                    return false;
+                                };
+                                let name = name.to_ascii_lowercase();
+                                name.contains("monitor")
+                                    && default_output_name
+                                        .as_ref()
+                                        .is_some_and(|output| name.contains(output))
+                            })
+                        })
+                    })
+                    .or_else(|| {
+                        host.input_devices().ok().and_then(|mut devices| {
+                            devices.find(|device| {
+                                device
+                                    .name()
+                                    .map(|name| name.to_ascii_lowercase().contains("monitor"))
+                                    .unwrap_or(false)
+                            })
+                        })
+                    })
+                    .ok_or_else(|| {
+                        "システム音声のモニターデバイスが見つかりません。PipeWire/PulseAudio のモニター入力を有効にしてください。".to_string()
+                    })?,
+            )
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "linux"))]
         let sys_device = if matches!(source_mode, AudioSourceMode::System | AudioSourceMode::Both) {
             Some(pick_output_device(device_id.as_ref()).ok_or_else(|| {
                 "システム音声（出力デバイス）が見つかりません。".to_string()
@@ -266,6 +343,14 @@ impl AudioManager {
         } else {
             None
         };
+
+        eprintln!(
+            "[audio] host={:?} mode={:?} microphone={:?} system_device={:?}",
+            host.id(),
+            source_mode,
+            mic_device.as_ref().and_then(|device| device.name().ok()),
+            sys_device.as_ref().and_then(|device| device.name().ok())
+        );
 
         let device_name = match (&mic_device, &sys_device) {
             (Some(m), Some(s)) => format!(
@@ -359,7 +444,13 @@ impl AudioManager {
             }
 
             if let Some(ref sdev) = sys_device {
-                match build_resampled_stream(sdev, true, Arc::clone(&sys_queue), Arc::clone(&paused_flag), Arc::clone(&runtime)) {
+                match build_resampled_stream(
+                    sdev,
+                    !cfg!(target_os = "linux"),
+                    Arc::clone(&sys_queue),
+                    Arc::clone(&paused_flag),
+                    Arc::clone(&runtime),
+                ) {
                     Ok(s) => {
                         if let Err(e) = s.play() {
                             if mode_clone == AudioSourceMode::System {
@@ -384,6 +475,11 @@ impl AudioManager {
             }
 
             let mut last_tick = Instant::now();
+            let stream_started = Instant::now();
+            let mut mic_sample_count = 0usize;
+            let mut sys_sample_count = 0usize;
+            let mut mic_no_samples_reported = false;
+            let mut sys_no_samples_reported = false;
             while !stop_flag.load(Ordering::SeqCst) {
                 thread::sleep(Duration::from_millis(45));
                 let now = Instant::now();
@@ -415,7 +511,23 @@ impl AudioManager {
                     .lock()
                     .map(|mut q| q.drain(..).collect())
                     .unwrap_or_default();
+                mic_sample_count += mic_samples.len();
+                sys_sample_count += sys_samples.len();
 
+                if stream_started.elapsed() >= Duration::from_secs(2) {
+                    if mic_device.is_some() && mic_sample_count == 0 && !mic_no_samples_reported {
+                        eprintln!(
+                            "[audio] no microphone samples received after 2s; total_samples={mic_sample_count}"
+                        );
+                        mic_no_samples_reported = true;
+                    }
+                    if sys_device.is_some() && sys_sample_count == 0 && !sys_no_samples_reported {
+                        eprintln!(
+                            "[audio] no system-audio samples received after 2s; total_samples={sys_sample_count}"
+                        );
+                        sys_no_samples_reported = true;
+                    }
+                }
                 if !mic_samples.is_empty() || !sys_samples.is_empty() {
                     let me: f64 = mic_samples.iter().map(|&v| (v as f64) * (v as f64)).sum();
                     let se: f64 = sys_samples.iter().map(|&v| (v as f64) * (v as f64)).sum();
@@ -460,6 +572,9 @@ impl AudioManager {
             }
 
             drop(streams);
+            eprintln!(
+                "[audio] recording stream ended; microphone_samples={mic_sample_count} system_samples={sys_sample_count}"
+            );
             if let Some(w) = writer.take() {
                 let _ = w.finalize();
             }
@@ -544,6 +659,14 @@ impl AudioManager {
 
 pub type _UnusedBuf = BufWriter<File>;
 
+fn normalize_i32(sample: i32) -> f32 {
+    (sample as f64 / 2_147_483_648.0) as f32
+}
+
+fn normalize_u32(sample: u32) -> f32 {
+    ((sample as f64 - 2_147_483_648.0) / 2_147_483_648.0) as f32
+}
+
 fn build_resampled_stream(
     device: &Device,
     is_loopback: bool,
@@ -563,6 +686,10 @@ fn build_resampled_stream(
     let sample_rate = supported_config.sample_rate().0;
     let channels = supported_config.channels().max(1) as usize;
     let sample_format = supported_config.sample_format();
+    eprintln!(
+        "[audio] stream device={:?} sample_rate={sample_rate} channels={channels} format={sample_format:?} loopback={is_loopback}",
+        device.name().ok()
+    );
     let stream_config: StreamConfig = supported_config.into();
     let resample_ratio = (sample_rate as f64 / 16_000.0).max(0.1);
     let phase = Arc::new(Mutex::new(0.0f64));
@@ -593,58 +720,46 @@ fn build_resampled_stream(
         }
     };
 
+    macro_rules! build_typed_stream {
+        ($sample_type:ty, $normalize:expr) => {
+            device
+                .build_input_stream(
+                    &stream_config,
+                    move |data: &[$sample_type], _| {
+                        let mono: Vec<f32> = data
+                            .chunks(channels)
+                            .map(|frame| {
+                                frame.iter().map(|&sample| $normalize(sample)).sum::<f32>()
+                                    / channels as f32
+                            })
+                            .collect();
+                        push_mono(&mono);
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| format!("オーディオ入力を開けませんでした: {e}"))
+        };
+    }
+
     match sample_format {
-        SampleFormat::F32 => device
-            .build_input_stream(
-                &stream_config,
-                move |data: &[f32], _| {
-                    let mono: Vec<f32> = data
-                        .chunks(channels)
-                        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-                        .collect();
-                    push_mono(&mono);
-                },
-                err_fn,
-                None,
-            )
-            .map_err(|e| format!("オーディオ入力を開けませんでした: {e}")),
-        SampleFormat::I16 => device
-            .build_input_stream(
-                &stream_config,
-                move |data: &[i16], _| {
-                    let mono: Vec<f32> = data
-                        .chunks(channels)
-                        .map(|frame| {
-                            frame.iter().map(|&v| v as f32 / i16::MAX as f32).sum::<f32>()
-                                / channels as f32
-                        })
-                        .collect();
-                    push_mono(&mono);
-                },
-                err_fn,
-                None,
-            )
-            .map_err(|e| format!("オーディオ入力を開けませんでした: {e}")),
-        SampleFormat::U16 => device
-            .build_input_stream(
-                &stream_config,
-                move |data: &[u16], _| {
-                    let mono: Vec<f32> = data
-                        .chunks(channels)
-                        .map(|frame| {
-                            frame
-                                .iter()
-                                .map(|&v| (v as f32 / u16::MAX as f32) * 2.0 - 1.0)
-                                .sum::<f32>()
-                                / channels as f32
-                        })
-                        .collect();
-                    push_mono(&mono);
-                },
-                err_fn,
-                None,
-            )
-            .map_err(|e| format!("オーディオ入力を開けませんでした: {e}")),
+        SampleFormat::F32 => build_typed_stream!(f32, |sample: f32| sample),
+        SampleFormat::F64 => build_typed_stream!(f64, |sample: f64| sample as f32),
+        SampleFormat::I8 => build_typed_stream!(i8, |sample: i8| sample as f32 / 128.0),
+        SampleFormat::I16 => build_typed_stream!(i16, |sample: i16| sample as f32 / 32768.0),
+        SampleFormat::I32 => build_typed_stream!(i32, normalize_i32),
+        SampleFormat::I64 => build_typed_stream!(i64, |sample: i64| (sample as f64
+            / 9_223_372_036_854_775_808.0)
+            as f32),
+        SampleFormat::U8 => build_typed_stream!(u8, |sample: u8| (sample as f32 - 128.0) / 128.0),
+        SampleFormat::U16 => {
+            build_typed_stream!(u16, |sample: u16| (sample as f32 - 32768.0) / 32768.0)
+        }
+        SampleFormat::U32 => build_typed_stream!(u32, normalize_u32),
+        SampleFormat::U64 => build_typed_stream!(u64, |sample: u64| ((sample as f64
+            - 9_223_372_036_854_775_808.0)
+            / 9_223_372_036_854_775_808.0)
+            as f32),
         _ => Err("未対応の音声サンプル形式です".to_string()),
     }
 }
@@ -721,66 +836,92 @@ pub fn test_mic_level(device_id: Option<String>) -> Result<(f32, String), String
     let config = device
         .default_input_config()
         .map_err(|e| format!("マイク設定の取得に失敗しました: {e}"))?;
+    let channels = config.channels();
+    let sample_rate = config.sample_rate().0;
+    let sample_format = config.sample_format();
+    eprintln!(
+        "[audio] microphone test host={:?} device={dev_name:?} sample_rate={sample_rate} channels={channels} format={sample_format:?}",
+        host.id()
+    );
     let acc = Arc::new(Mutex::new((0.0f64, 0usize)));
     let acc_cb = acc.clone();
 
-    let stream = match config.sample_format() {
-        SampleFormat::F32 => device.build_input_stream(
-            &config.into(),
-            move |data: &[f32], _| {
-                if let Ok(mut g) = acc_cb.lock() {
-                    for &s in data {
-                        g.0 += (s as f64) * (s as f64);
-                        g.1 += 1;
+    macro_rules! build_test_stream {
+        ($sample_type:ty, $normalize:expr) => {
+            device.build_input_stream(
+                &config.clone().into(),
+                move |data: &[$sample_type], _| {
+                    if let Ok(mut g) = acc_cb.lock() {
+                        for &sample in data {
+                            let normalized = $normalize(sample);
+                            g.0 += normalized * normalized;
+                            g.1 += 1;
+                        }
                     }
-                }
-            },
-            |_| {},
-            None,
-        ),
-        SampleFormat::I16 => device.build_input_stream(
-            &config.into(),
-            move |data: &[i16], _| {
-                if let Ok(mut g) = acc_cb.lock() {
-                    for &s in data {
-                        let f = s as f64 / i16::MAX as f64;
-                        g.0 += f * f;
-                        g.1 += 1;
-                    }
-                }
-            },
-            |_| {},
-            None,
-        ),
-        SampleFormat::U16 => device.build_input_stream(
-            &config.into(),
-            move |data: &[u16], _| {
-                if let Ok(mut g) = acc_cb.lock() {
-                    for &s in data {
-                        let f = (s as f64 - 32768.0) / 32768.0;
-                        g.0 += f * f;
-                        g.1 += 1;
-                    }
-                }
-            },
-            |_| {},
-            None,
-        ),
-        _ => return Err("非対応のマイクサンプル形式です。".to_string()),
+                },
+                |_| {},
+                None,
+            )
+        };
+    }
+    let stream = match sample_format {
+        SampleFormat::F32 => build_test_stream!(f32, |sample: f32| sample as f64),
+        SampleFormat::F64 => build_test_stream!(f64, |sample: f64| sample),
+        SampleFormat::I8 => build_test_stream!(i8, |sample: i8| sample as f64 / 128.0),
+        SampleFormat::I16 => build_test_stream!(i16, |sample: i16| sample as f64 / 32768.0),
+        SampleFormat::I32 => build_test_stream!(i32, |sample: i32| normalize_i32(sample) as f64),
+        SampleFormat::I64 => build_test_stream!(i64, |sample: i64| sample as f64
+            / 9_223_372_036_854_775_808.0),
+        SampleFormat::U8 => build_test_stream!(u8, |sample: u8| (sample as f64 - 128.0) / 128.0),
+        SampleFormat::U16 => {
+            build_test_stream!(u16, |sample: u16| (sample as f64 - 32768.0) / 32768.0)
+        }
+        SampleFormat::U32 => build_test_stream!(u32, |sample: u32| normalize_u32(sample) as f64),
+        SampleFormat::U64 => build_test_stream!(u64, |sample: u64| (sample as f64
+            - 9_223_372_036_854_775_808.0)
+            / 9_223_372_036_854_775_808.0),
+        _ => return Err(format!("非対応のマイクサンプル形式です: {sample_format:?}")),
     }
     .map_err(|e| format!("マイクテストの開始に失敗しました: {e}"))?;
 
     stream
         .play()
         .map_err(|e| format!("マイクストリームの再生に失敗しました: {e}"))?;
-    thread::sleep(Duration::from_millis(350));
+    let started = Instant::now();
+    let min_wait = Duration::from_millis(350);
+    let timeout = Duration::from_secs(2);
+    loop {
+        let count = acc.lock().map(|g| g.1).unwrap_or(0);
+        if (count > 0 && started.elapsed() >= min_wait) || started.elapsed() >= timeout {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
     drop(stream);
 
     let (sum_sq, count) = acc.lock().map(|g| *g).unwrap_or((0.0, 0));
+    if count == 0 {
+        eprintln!("[audio] microphone test received no samples from {dev_name:?} within 2s");
+        return Err(format!(
+            "マイクから音声サンプルを受信できませんでした（デバイス: {dev_name}、サンプルレート: {sample_rate} Hz、チャンネル数: {channels}、形式: {sample_format:?}）。OSの入力デバイス設定を確認してください。"
+        ));
+    }
+    eprintln!("[audio] microphone test samples_received={count}");
     let rms = if count > 0 {
         ((sum_sq / count as f64).sqrt() as f32).min(1.0)
     } else {
         0.0
     };
     Ok((rms, dev_name))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn normalizes_32_bit_integer_audio_samples() {
+        assert_eq!(super::normalize_i32(i32::MIN), -1.0);
+        assert!(super::normalize_i32(i32::MAX) > 0.999_999);
+        assert_eq!(super::normalize_u32(0), -1.0);
+        assert!(super::normalize_u32(u32::MAX) > 0.999_999);
+    }
 }

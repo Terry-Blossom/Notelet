@@ -63,10 +63,17 @@ AI プロバイダーの設定前でもカスタムプロンプトを事前保�
 |---|---|---|---|
 | **Windows 10 / 11** | x64 | Windows WASAPI（マイク／システム音声ループバック／両方） | インストーラー（NSIS / MSI）配布 |
 | **macOS** | Apple Silicon（arm64） / Intel（x64） | CoreAudio（マイク／仮想デバイス経由システム音声／両方） | DMG / App バンドル配布 |
-| **Linux** | x64 | マイク（ALSA / PulseAudio / PipeWire） | AppImage / deb / rpm 配布 |
-| **Linux** | x86（32bit） | マイク（ALSA / PulseAudio / PipeWire） | AppImage 配布（i386版 GTK3 / WebKitGTK 4.1 が必要） |
+| **Linux** | x64 | マイク（ALSA / PulseAudio / PipeWire）、列挙できるモニター入力経由のシステム音声 | AppImage / deb / rpm 配布 |
+| **Linux** | x86（32bit） | マイク（ALSA / PulseAudio / PipeWire）、列挙できるモニター入力経由のシステム音声 | AppImage 配布（i386版 GTK3 / WebKitGTK 4.1 が必要） |
 
 ---
+
+### Linux 音声入力の確認
+
+1. PulseAudio / PipeWire を使用する場合は、オーディオ設定で録音元に「Monitor of ...」の入力が存在することを確認します。ALSA では利用可能な入力デバイスを確認してください。
+2. Notelet の録音設定でマイクを選び、マイクテスト中に発話して入力レベルが変化することを確認します。
+3. システム音声を録音する場合は「本体音声」を選び、表示されたモニター入力を選択して音声再生中の波形と録音結果を確認します。
+4. 入力が列挙されない場合は PipeWire / PulseAudio / ALSA の入力設定を確認します。録音ログにはホスト、デバイス設定、受信サンプル数が出力され、マイクテストでは未受信時に設定情報を含むエラーが表示されます。
 
 ## 主な機能
 

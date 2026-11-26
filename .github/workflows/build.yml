@@ -99,7 +99,7 @@ jobs:
           chmod +x /tmp/appimagetool /tmp/runtime-i686
           ARCH=i686 APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool \
             --runtime-file /tmp/runtime-i686 --no-appstream \
-            "$APPDIR" "$OUT_DIR/Notelet_${VERSION}_i386.AppImage"
+            "$APPDIR" "$OUT_DIR/Notelet_${VERSION}_linux_i386.AppImage"
 
       - name: Upload x86 AppImage
         uses: actions/upload-artifact@v7

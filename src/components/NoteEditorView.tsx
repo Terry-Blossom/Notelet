@@ -2910,7 +2910,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   if (id === 'groq-whisper-large-v3-turbo') return 'Groq Whisper';
                   if (id === 'openai-whisper-1') return 'OpenAI Whisper';
                   if (id === 'deepgram-nova-2') return 'Deepgram Nova-2';
-                  return id || 'Whisper';
+                  return id || 'モデル未選択';
                 })()}
               </span>
             </button>

@@ -1,6 +1,27 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
+const MAX_REMOTE_BYTES: u64 = 500 * 1024 * 1024;
+
+fn validate_response_size(content_length: Option<u64>, max_bytes: u64) -> Result<(), String> {
+    if content_length.is_some_and(|length| length > max_bytes) {
+        return Err("動画・音声データがサイズ上限 (500 MiB) を超えています。".to_string());
+    }
+    Ok(())
+}
+
+fn append_limited_chunk(bytes: &mut Vec<u8>, chunk: &[u8], max_bytes: u64) -> Result<(), String> {
+    let new_len = bytes
+        .len()
+        .checked_add(chunk.len())
+        .ok_or_else(|| "動画・音声データがサイズ上限 (500 MiB) を超えています。".to_string())?;
+    if new_len as u64 > max_bytes {
+        return Err("動画・音声データがサイズ上限 (500 MiB) を超えています。".to_string());
+    }
+    bytes.extend_from_slice(chunk);
+    Ok(())
+}
+
 fn parse_ipv4_part(part: &str) -> Option<u32> {
     if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
         u32::from_str_radix(hex, 16).ok()
@@ -144,7 +165,7 @@ pub async fn download_remote_bytes(raw_url: &str, max_redirects: usize) -> Resul
             .build()
             .map_err(|e| format!("HTTPクライアント構築に失敗: {e}"))?;
 
-        let resp = client
+        let mut resp = client
             .get(parsed.clone())
             .send()
             .await
@@ -167,11 +188,16 @@ pub async fn download_remote_bytes(raw_url: &str, max_redirects: usize) -> Resul
             return Err(format!("動画・音声リンクの取得に失敗 ({})", resp.status()));
         }
 
-        let bytes = resp
-            .bytes()
+        validate_response_size(resp.content_length(), MAX_REMOTE_BYTES)?;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = resp
+            .chunk()
             .await
-            .map_err(|e| format!("動画・音声データの読み込みに失敗: {e}"))?;
-        return Ok(bytes.to_vec());
+            .map_err(|e| format!("動画・音声データの読み込みに失敗: {e}"))?
+        {
+            append_limited_chunk(&mut bytes, &chunk, MAX_REMOTE_BYTES)?;
+        }
+        return Ok(bytes);
     }
     Err("リダイレクト回数が上限を超えました。".to_string())
 }
@@ -179,6 +205,17 @@ pub async fn download_remote_bytes(raw_url: &str, max_redirects: usize) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limits_response_size_by_content_length_and_chunks() {
+        assert!(validate_response_size(Some(5), 5).is_ok());
+        assert!(validate_response_size(Some(6), 5).is_err());
+        assert!(validate_response_size(None, 5).is_ok());
+
+        let mut bytes = vec![0; 4];
+        assert!(append_limited_chunk(&mut bytes, &[1], 5).is_ok());
+        assert!(append_limited_chunk(&mut bytes, &[2], 5).is_err());
+    }
 
     #[test]
     fn blocks_loopback_private_and_obfuscated_hosts() {
