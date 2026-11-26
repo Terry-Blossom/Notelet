@@ -129,6 +129,11 @@ jobs:
       - name: Verify Linux x86_64 AppImage and deb bundles
         if: runner.os == 'Linux'
         run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ -f "src-tauri/target/release/bundle/appimage/Notelet_${VERSION}_amd64.AppImage" ]; then
+            cp "src-tauri/target/release/bundle/appimage/Notelet_${VERSION}_amd64.AppImage" \
+               "src-tauri/target/release/bundle/appimage/Notelet_${VERSION}_x86_64.AppImage"
+          fi
           ls -la src-tauri/target/release/bundle/appimage/*.AppImage
           ls -la src-tauri/target/release/bundle/deb/*.deb
 

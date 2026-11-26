@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowUp,
@@ -14,7 +14,7 @@ import { AppSettings, ChatActionResult, ChatAnswer, ChatCitation, ChatHistoryIte
 import { formatDateTime } from '../lib/format';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 import { confirmActionDialog, confirmDeleteDialog } from './ConfirmDialog';
-import { isTauriRuntime } from '../lib/tauri';
+import { useTauriEvent } from '../lib/tauriEvents';
 
 interface ChatViewProps {
   notes: Note[];
@@ -57,20 +57,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState('');
 
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-    let unlisten: (() => void) | undefined;
-    void import('@tauri-apps/api/event').then(async ({ listen }) => {
-      unlisten = await listen<string>('chat-stream-chunk', (ev) => {
-        if (typeof ev.payload === 'string') {
-          setStreamingText(ev.payload);
-        }
-      });
-    });
-    return () => {
-      unlisten?.();
-    };
-  }, []);
+  useTauriEvent<string>('chat-stream-chunk', (payload) => {
+    if (typeof payload === 'string') {
+      setStreamingText(payload);
+    }
+  });
 
   const llmConfigured = settings.llm_provider !== 'none' && settings.llm_provider !== '';
 

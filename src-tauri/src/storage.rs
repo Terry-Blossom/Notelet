@@ -216,6 +216,7 @@ pub fn load_snapshot() -> AppDataSnapshot {
         settings: AppSettings::default(),
         audit_logs: Vec::new(),
         chat_history: Vec::new(),
+        popup_chat_sessions: Vec::new(),
         deleted_notes: Vec::new(),
     }
 }
@@ -529,24 +530,81 @@ fn resample_mono(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     out
 }
 
-/// 保持済みの音声（復号済みバイト列）の末尾に新しい録音を連結した 16kHz WAV を作る。
+fn stream_wav_to_16k_writer<R: std::io::Read, W: std::io::Write + std::io::Seek>(
+    reader: &mut hound::WavReader<R>,
+    writer: &mut hound::WavWriter<W>,
+) -> Result<usize, String> {
+    const FRAME_CHUNK: usize = 4096;
+    let spec = reader.spec();
+    let ch = spec.channels.max(1) as usize;
+    let from_rate = spec.sample_rate.max(1);
+
+    let mut raw_iter: Box<dyn Iterator<Item = f32> + '_> = match spec.sample_format {
+        hound::SampleFormat::Int => match spec.bits_per_sample {
+            8 => Box::new(
+                reader
+                    .samples::<i8>()
+                    .filter_map(|s| s.ok())
+                    .map(|v| (v as u8 as f32 - 128.0) / 128.0),
+            ),
+            16 => Box::new(
+                reader
+                    .samples::<i16>()
+                    .filter_map(|s| s.ok())
+                    .map(|v| v as f32 / 32_768.0),
+            ),
+            bits => {
+                let scale = (1i64 << (bits.min(32).saturating_sub(1))) as f32;
+                Box::new(
+                    reader
+                        .samples::<i32>()
+                        .filter_map(|s| s.ok())
+                        .map(move |v| v as f32 / scale.max(1.0)),
+                )
+            }
+        },
+        hound::SampleFormat::Float => Box::new(reader.samples::<f32>().filter_map(|s| s.ok())),
+    };
+
+    let mut total_written = 0usize;
+    let mut carry = Vec::with_capacity(ch);
+    let mut chunk_mono = Vec::with_capacity(FRAME_CHUNK);
+    loop {
+        chunk_mono.clear();
+        for _ in 0..FRAME_CHUNK {
+            carry.clear();
+            for _ in 0..ch {
+                match raw_iter.next() {
+                    Some(v) => carry.push(v),
+                    None => break,
+                }
+            }
+            if carry.len() < ch {
+                break;
+            }
+            chunk_mono.push(carry.iter().sum::<f32>() / ch as f32);
+        }
+        if chunk_mono.is_empty() {
+            break;
+        }
+        let out_chunk = resample_mono(&chunk_mono, from_rate, 16_000);
+        for s in out_chunk {
+            let sample = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+            writer
+                .write_sample(sample)
+                .map_err(|e| format!("連結音声の書き込みに失敗: {e}"))?;
+            total_written += 1;
+        }
+    }
+    Ok(total_written)
+}
+
+/// 保持済みの音声（復号済みバイト列）の末尾に新しい録音を連結した 16kHz WAV を作る（チャンク単位ストリーミング処理）。
 pub fn concat_wav_audio(existing: &[u8], additional: &Path) -> Result<PathBuf, String> {
     let mut old_reader = hound::WavReader::new(std::io::Cursor::new(existing))
         .map_err(|e| format!("既存音声の読み込みに失敗: {e}"))?;
-    let old_spec = old_reader.spec();
-    let mut old_mono = wav_reader_mono_f32(&mut old_reader);
-    old_mono = resample_mono(&old_mono, old_spec.sample_rate.max(1), 16_000);
-
     let mut new_reader = hound::WavReader::open(additional)
         .map_err(|e| format!("追加音声の読み込みに失敗: {e}"))?;
-    let new_spec = new_reader.spec();
-    let mut new_mono = wav_reader_mono_f32(&mut new_reader);
-    new_mono = resample_mono(&new_mono, new_spec.sample_rate.max(1), 16_000);
-
-    if old_mono.is_empty() && new_mono.is_empty() {
-        return Err("連結する音声データがありません".to_string());
-    }
-    old_mono.extend(new_mono);
 
     let temp_dir = app_data_dir().join("temp_recordings");
     let _ = fs::create_dir_all(&temp_dir);
@@ -559,12 +617,15 @@ pub fn concat_wav_audio(existing: &[u8], additional: &Path) -> Result<PathBuf, S
     };
     let mut writer = hound::WavWriter::create(&out_wav, out_spec)
         .map_err(|e| format!("連結音声の作成に失敗: {e}"))?;
-    for s in old_mono {
-        let sample = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-        writer
-            .write_sample(sample)
-            .map_err(|e| format!("連結音声の書き込みに失敗: {e}"))?;
+
+    let n1 = stream_wav_to_16k_writer(&mut old_reader, &mut writer)?;
+    let n2 = stream_wav_to_16k_writer(&mut new_reader, &mut writer)?;
+    if n1 == 0 && n2 == 0 {
+        drop(writer);
+        let _ = fs::remove_file(&out_wav);
+        return Err("連結する音声データがありません".to_string());
     }
+
     writer
         .finalize()
         .map_err(|e| format!("連結音声の確定に失敗: {e}"))?;

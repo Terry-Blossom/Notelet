@@ -258,6 +258,7 @@ printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n{"jsonrpc":"
 
 - **macOS でのシステム音声録音**: macOS の仕様上、PC のシステム音声単体またはマイクとの同時録音を行うには、BlackHole などの仮想オーディオデバイスの導入と複数出力装置の設定が必要です。
 - **エンタープライズ向け中央管理機能**: SSO（SAML / OIDC）、SCIM プロビジョニング、集中監査 API、一元請求サーバーなどのサーバーサイド基盤は未実装です（ローカルファースト設計のため）。
+- **旧ブランド（KoeNote）互換フォールバックの廃止予定**: `KOENOTE_DATA_DIR` / `KOENOTE_MCP_SCOPE` 環境変数および `koenote_data.json` / 旧キーチェーンサービス名の移行フォールバックは **v1.0.0** で削除予定です。
 
 ---
 

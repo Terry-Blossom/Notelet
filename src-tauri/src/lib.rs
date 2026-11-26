@@ -1,8 +1,10 @@
 pub mod asr;
+pub mod asr_diarization;
 mod audio;
 mod integrations;
 mod llm;
 pub mod models;
+pub mod net_security;
 mod notion;
 mod secrets;
 pub mod storage;
@@ -28,7 +30,7 @@ struct AppState {
 
 #[tauri::command]
 fn get_snapshot(state: State<AppState>) -> AppDataSnapshot {
-    state.data.lock().unwrap().clone()
+    state.data.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 #[tauri::command]
@@ -37,7 +39,7 @@ fn save_settings(
     state: State<AppState>,
     settings: AppSettings,
 ) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     data.settings = settings.clone();
     storage::append_audit(&mut data, "settings_updated", "アプリ設定を更新");
     storage::save_snapshot(&data)?;
@@ -60,12 +62,12 @@ fn save_settings(
             let _ = notion::ensure_database_schema(&db_id).await;
         });
     }
-    Ok(state.data.lock().unwrap().clone())
+    Ok(state.data.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
 #[tauri::command]
 fn save_note(state: State<AppState>, mut note: Note) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     let id = note.id.clone();
     let encrypt = data.settings.encrypt_retained_audio;
 
@@ -111,7 +113,7 @@ fn save_note(state: State<AppState>, mut note: Note) -> Result<AppDataSnapshot, 
 
 #[tauri::command]
 fn delete_note(state: State<AppState>, note_id: String) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     let page_id_to_archive = data
         .notes
         .iter()
@@ -134,7 +136,7 @@ fn save_dictionary_entry(
     state: State<AppState>,
     entry: DictionaryEntry,
 ) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     storage::upsert_dictionary(&mut data, entry);
     storage::save_snapshot(&data)?;
     Ok(data.clone())
@@ -145,7 +147,7 @@ fn delete_dictionary_entry(
     state: State<AppState>,
     entry_id: String,
 ) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     data.dictionary.retain(|d| d.id != entry_id);
     storage::save_snapshot(&data)?;
     Ok(data.clone())
@@ -153,7 +155,7 @@ fn delete_dictionary_entry(
 
 #[tauri::command]
 fn save_recipe(state: State<AppState>, recipe: Recipe) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(existing) = data.recipes.iter_mut().find(|r| r.id == recipe.id) {
         *existing = recipe;
     } else {
@@ -165,7 +167,7 @@ fn save_recipe(state: State<AppState>, recipe: Recipe) -> Result<AppDataSnapshot
 
 #[tauri::command]
 fn save_folder(state: State<AppState>, folder: Folder) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     let clean = Folder {
         is_shared: false,
         ..folder
@@ -181,7 +183,7 @@ fn save_folder(state: State<AppState>, folder: Folder) -> Result<AppDataSnapshot
 
 #[tauri::command]
 fn delete_folder(state: State<AppState>, folder_id: String) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     if folder_id == "personal" {
         return Err("既定のスペースは削除できません。".to_string());
     }
@@ -197,7 +199,7 @@ fn delete_folder(state: State<AppState>, folder_id: String) -> Result<AppDataSna
 
 #[tauri::command]
 fn clear_chat_history(state: State<AppState>) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     data.chat_history.clear();
     storage::save_snapshot(&data)?;
     Ok(data.clone())
@@ -208,8 +210,19 @@ fn delete_chat_history_items(
     state: State<AppState>,
     item_ids: Vec<String>,
 ) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     data.chat_history.retain(|item| !item_ids.contains(&item.id));
+    storage::save_snapshot(&data)?;
+    Ok(data.clone())
+}
+
+#[tauri::command]
+fn save_popup_chat_sessions(
+    state: State<AppState>,
+    sessions: Vec<models::PopupChatSession>,
+) -> Result<AppDataSnapshot, String> {
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
+    data.popup_chat_sessions = sessions.into_iter().take(100).collect();
     storage::save_snapshot(&data)?;
     Ok(data.clone())
 }
@@ -227,11 +240,11 @@ async fn start_recording(
     device_id: Option<String>,
 ) -> Result<RecordingStatus, String> {
     let (mic_gain, system_gain) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         (data.settings.mic_gain, data.settings.system_gain)
     };
     let status = {
-        let mut audio = state.audio.lock().unwrap();
+        let mut audio = state.audio.lock().unwrap_or_else(|e| e.into_inner());
         audio.start(source_mode, device_id, mic_gain, system_gain)?
     };
 
@@ -241,7 +254,7 @@ async fn start_recording(
 
     if let Some(win) = app.get_webview_window("recording-overlay") {
         let (saved_x, saved_y) = {
-            let data = state.data.lock().unwrap();
+            let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
             (data.settings.recording_overlay_x, data.settings.recording_overlay_y)
         };
         if let (Some(x), Some(y)) = (saved_x, saved_y) {
@@ -264,7 +277,7 @@ async fn start_recording(
         {
             let st_ref = app_handle.state::<AppState>();
             let initial_settings = {
-                let data = st_ref.data.lock().unwrap();
+                let data = st_ref.data.lock().unwrap_or_else(|e| e.into_inner());
                 data.settings.clone()
             };
             asr::prewarm_whisper_server(&initial_settings).await;
@@ -275,7 +288,7 @@ async fn start_recording(
             tokio::time::sleep(std::time::Duration::from_millis(600)).await;
             let st_ref = app_handle.state::<AppState>();
             let rec_state = {
-                let audio = st_ref.audio.lock().unwrap();
+                let audio = st_ref.audio.lock().unwrap_or_else(|e| e.into_inner());
                 audio.status().state
             };
             if rec_state == "idle" || rec_state == "error" {
@@ -285,7 +298,7 @@ async fn start_recording(
                 continue;
             }
             let (settings, dictionary) = {
-                let data = st_ref.data.lock().unwrap();
+                let data = st_ref.data.lock().unwrap_or_else(|e| e.into_inner());
                 (data.settings.clone(), data.dictionary.clone())
             };
             let is_cloud_provider = matches!(
@@ -304,7 +317,7 @@ async fn start_recording(
             let min_samples = if is_cloud_provider { 48_000 } else { 32_000 };
             let chunk_span_ms = if is_cloud_provider { 3000 } else { 2000 };
             let chunk_opt = {
-                let audio = st_ref.audio.lock().unwrap();
+                let audio = st_ref.audio.lock().unwrap_or_else(|e| e.into_inner());
                 audio.take_live_chunk(min_samples)
             };
             if let Some((chunk_path, elapsed_ms, _dominant_source)) = chunk_opt {
@@ -338,12 +351,12 @@ async fn start_recording(
 
 #[tauri::command]
 fn pause_recording(state: State<AppState>) -> RecordingStatus {
-    state.audio.lock().unwrap().pause()
+    state.audio.lock().unwrap_or_else(|e| e.into_inner()).pause()
 }
 
 #[tauri::command]
 fn resume_recording(state: State<AppState>) -> RecordingStatus {
-    state.audio.lock().unwrap().resume()
+    state.audio.lock().unwrap_or_else(|e| e.into_inner()).resume()
 }
 
 #[tauri::command]
@@ -351,20 +364,20 @@ fn stop_recording(app: tauri::AppHandle, state: State<AppState>) -> RecordingSta
     if let Some(win) = app.get_webview_window("recording-overlay") {
         if let (Ok(pos), Ok(scale)) = (win.outer_position(), win.scale_factor()) {
             let logical = pos.to_logical::<f64>(scale);
-            let mut data = state.data.lock().unwrap();
+            let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
             data.settings.recording_overlay_x = Some(logical.x);
             data.settings.recording_overlay_y = Some(logical.y);
             let _ = storage::save_snapshot(&data);
         }
         let _ = win.hide();
     }
-    state.audio.lock().unwrap().stop()
+    state.audio.lock().unwrap_or_else(|e| e.into_inner()).stop()
 }
 
 #[tauri::command]
 fn read_note_audio(state: State<AppState>, note_id: String) -> Result<String, String> {
     let (audio_path, encrypted) = {
-        let mut data = state.data.lock().unwrap();
+        let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let encrypt_pref = data.settings.encrypt_retained_audio;
         let note = data
             .notes
@@ -448,12 +461,12 @@ fn open_external_url(url: String) -> Result<(), String> {
 
 #[tauri::command]
 fn get_recording_status(state: State<AppState>) -> RecordingStatus {
-    state.audio.lock().unwrap().status()
+    state.audio.lock().unwrap_or_else(|e| e.into_inner()).status()
 }
 
 #[tauri::command]
 fn list_asr_models(state: State<AppState>) -> Vec<AsrModelInfo> {
-    let data = state.data.lock().unwrap();
+    let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     asr::list_models(&data.settings)
 }
 
@@ -463,7 +476,7 @@ async fn download_asr_model(
     state: State<'_, AppState>,
     model_id: String,
 ) -> Result<String, String> {
-    let settings = state.data.lock().unwrap().settings.clone();
+    let settings = state.data.lock().unwrap_or_else(|e| e.into_inner()).settings.clone();
     asr::download_whisper_model(&app, &model_id, &settings).await
 }
 
@@ -474,7 +487,7 @@ async fn install_asr_runtime(
     kind: String,
 ) -> Result<String, String> {
     let installed_path = asr::install_runtime_binary(&app, &kind).await?;
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     if kind == "whisper" {
         data.settings.whisper_cli_path = installed_path.clone();
     } else if kind == "parakeet" {
@@ -498,7 +511,7 @@ async fn transcribe_recording(
     append: Option<bool>,
 ) -> Result<Note, String> {
     let (settings, dictionary, existing_note) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let note = data.notes.iter().find(|n| n.id == note_id).cloned();
         (data.settings.clone(), data.dictionary.clone(), note)
     };
@@ -619,7 +632,7 @@ async fn transcribe_recording(
                     note.audio_path = Some(retained_path);
                     note.audio_encrypted = encrypted;
                     note.updated_at = chrono::Utc::now().to_rfc3339();
-                    let mut data = state.data.lock().unwrap();
+                    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
                     storage::upsert_note(&mut data, note);
                     let _ = storage::save_snapshot(&data);
                 }
@@ -708,11 +721,26 @@ async fn transcribe_recording(
         }),
     );
 
-    let mut data = state.data.lock().unwrap();
-    storage::upsert_note(&mut data, note.clone());
-    storage::append_audit(&mut data, "transcribed", &format!("note_id={}", note.id));
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
+    let final_note = if let Some(latest) = data.notes.iter_mut().find(|n| n.id == note.id) {
+        latest.segments = note.segments;
+        latest.audio_path = note.audio_path;
+        latest.audio_encrypted = note.audio_encrypted;
+        if latest.duration_sec == 0 && note.duration_sec > 0 {
+            latest.duration_sec = note.duration_sec;
+        }
+        latest.diarization_supported = note.diarization_supported;
+        latest.asr_model_id = note.asr_model_id;
+        latest.asr_provider_label = note.asr_provider_label;
+        latest.updated_at = note.updated_at;
+        latest.clone()
+    } else {
+        storage::upsert_note(&mut data, note.clone());
+        note
+    };
+    storage::append_audit(&mut data, "transcribed", &format!("note_id={}", final_note.id));
     storage::save_snapshot(&data)?;
-    Ok(note)
+    Ok(final_note)
 }
 
 #[tauri::command]
@@ -732,73 +760,6 @@ async fn transcribe_uploaded_audio(
     transcribe_recording(app, state, path_str, note_id, Some(false)).await
 }
 
-fn parse_ipv4_part(part: &str) -> Option<u32> {
-    if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
-        u32::from_str_radix(hex, 16).ok()
-    } else if part.len() > 1 && part.starts_with('0') {
-        u32::from_str_radix(&part[1..], 8).ok()
-    } else {
-        part.parse::<u32>().ok()
-    }
-}
-
-fn parse_obfuscated_ipv4(host: &str) -> Option<std::net::Ipv4Addr> {
-    let parts: Vec<&str> = host.split('.').collect();
-    if parts.is_empty() || parts.len() > 4 {
-        return None;
-    }
-    let values: Vec<u32> = parts
-        .iter()
-        .map(|p| parse_ipv4_part(p))
-        .collect::<Option<Vec<_>>>()?;
-    let addr = match values.as_slice() {
-        [a] => *a,
-        [a, b] if *a <= 0xff && *b <= 0xff_ffff => (*a << 24) | *b,
-        [a, b, c] if *a <= 0xff && *b <= 0xff && *c <= 0xffff => {
-            (*a << 24) | (*b << 16) | *c
-        }
-        [a, b, c, d] if values.iter().all(|v| *v <= 0xff) => {
-            (*a << 24) | (*b << 16) | (*c << 8) | *d
-        }
-        _ => return None,
-    };
-    Some(std::net::Ipv4Addr::from(addr))
-}
-
-fn is_blocked_remote_host(host: &str) -> bool {
-    let h = host
-        .trim_matches(['[', ']'])
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    if h == "localhost" || h.ends_with(".localhost") || h.ends_with(".local") {
-        return true;
-    }
-    let blocked_v4 = |v4: std::net::Ipv4Addr| {
-        v4.is_loopback()
-            || v4.is_private()
-            || v4.is_link_local()
-            || v4.is_unspecified()
-            || v4.is_broadcast()
-            || v4.octets()[0] == 0
-    };
-    let parsed = h
-        .parse::<std::net::IpAddr>()
-        .ok()
-        .or_else(|| parse_obfuscated_ipv4(&h).map(std::net::IpAddr::V4));
-    match parsed {
-        Some(std::net::IpAddr::V4(v4)) => blocked_v4(v4),
-        Some(std::net::IpAddr::V6(v6)) => {
-            let seg0 = v6.segments()[0];
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || (seg0 & 0xfe00) == 0xfc00
-                || (seg0 & 0xffc0) == 0xfe80
-                || v6.to_ipv4_mapped().map(blocked_v4).unwrap_or(false)
-        }
-        None => false,
-    }
-}
-
 #[tauri::command]
 async fn transcribe_uploaded_url(
     app: tauri::AppHandle,
@@ -806,20 +767,11 @@ async fn transcribe_uploaded_url(
     url: String,
     note_id: String,
 ) -> Result<Note, String> {
-    let trimmed = url.trim();
-    let parsed = reqwest::Url::parse(trimmed)
-        .map_err(|_| "有効な http:// または https:// の動画・音声リンクを入力してください。".to_string())?;
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err("有効な http:// または https:// の動画・音声リンクを入力してください。".to_string());
-    }
-    if let Some(host) = parsed.host_str() {
-        if is_blocked_remote_host(host) {
-            return Err("ローカルネットワーク・内部アドレスへのアクセスはセキュリティ上許可されていません。".to_string());
-        }
-    }
+    let (parsed, _) = net_security::resolve_and_validate_url(&url).await?;
+    let trimmed = parsed.as_str().to_string();
     let temp_dir = storage::app_data_dir().join("temp_recordings");
     let _ = std::fs::create_dir_all(&temp_dir);
-    let url_path = trimmed.split('?').next().unwrap_or(trimmed);
+    let url_path = trimmed.split('?').next().unwrap_or(&trimmed);
     let ext = url_path
         .rsplit('.')
         .next()
@@ -827,7 +779,7 @@ async fn transcribe_uploaded_url(
         .unwrap_or("mp4");
     let temp_path = temp_dir.join(format!("url_{}.{}", uuid::Uuid::new_v4(), ext));
 
-    // Try yt-dlp first for web video links if available, otherwise direct HTTP download
+    // Try yt-dlp first for web video links if available, otherwise direct HTTP download with redirect & DNS re-validation
     let mut downloaded = false;
     let ytdlp_out = temp_dir.join(format!("url_{}.%(ext)s", uuid::Uuid::new_v4()));
     let mut ytdlp_cmd = std::process::Command::new("yt-dlp");
@@ -837,10 +789,10 @@ async fn transcribe_uploaded_url(
         ytdlp_cmd.creation_flags(0x0800_0000);
     }
     if let Ok(out) = ytdlp_cmd
-        .args(["-x", "--audio-format", "wav", "-o"])
+        .args(["--proto", "http,https", "--no-exec", "-x", "--audio-format", "wav", "-o"])
         .arg(&ytdlp_out)
         .arg("--")
-        .arg(trimmed)
+        .arg(&trimmed)
         .output()
     {
         if out.status.success() {
@@ -854,19 +806,7 @@ async fn transcribe_uploaded_url(
     }
 
     if !downloaded {
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(trimmed)
-            .send()
-            .await
-            .map_err(|e| format!("動画・音声リンクの取得に失敗: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("動画・音声リンクの取得に失敗 ({})", resp.status()));
-        }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| format!("動画・音声データの読み込みに失敗: {e}"))?;
+        let bytes = net_security::download_remote_bytes(&trimmed, 5).await?;
         std::fs::write(&temp_path, &bytes)
             .map_err(|e| format!("一時ファイルの保存に失敗: {e}"))?;
     }
@@ -882,7 +822,7 @@ async fn summarize_note_cmd(
     template_id: Option<String>,
 ) -> Result<Note, String> {
     let (settings, mut note) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
             .iter()
@@ -924,7 +864,7 @@ async fn summarize_note_cmd(
     note.updated_at = chrono::Utc::now().to_rfc3339();
 
     {
-        let mut data = state.data.lock().unwrap();
+        let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref tid) = template_id {
             if !tid.trim().is_empty() {
                 data.settings.active_template_id = tid.clone();
@@ -953,7 +893,7 @@ async fn live_assist_cmd(
     live_segments: Option<Vec<models::TranscriptSegment>>,
 ) -> Result<LiveAssistResult, String> {
     let (settings, note) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
             .iter()
@@ -971,7 +911,7 @@ async fn draft_followup_cmd(
     note_id: String,
 ) -> Result<Note, String> {
     let (settings, mut note) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
             .iter()
@@ -983,7 +923,7 @@ async fn draft_followup_cmd(
     let draft = llm::draft_followup_email(&settings, &note).await?;
     note.follow_up_draft = draft;
     note.updated_at = chrono::Utc::now().to_rfc3339();
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     storage::upsert_note(&mut data, note.clone());
     storage::save_snapshot(&data)?;
     Ok(note)
@@ -996,7 +936,7 @@ async fn run_recipe_cmd(
     recipe_prompt: String,
 ) -> Result<String, String> {
     let (settings, note) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
             .iter()
@@ -1318,7 +1258,7 @@ async fn chat_notes_cmd(
     space_id: Option<String>,
 ) -> Result<ChatAnswer, String> {
     let (settings, notes, folders) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let filtered: Vec<Note> = if !note_ids.is_empty() {
             data.notes
                 .iter()
@@ -1348,7 +1288,7 @@ async fn chat_notes_cmd(
         let _ = app.emit("chat-stream-chunk", &partial);
         tokio::time::sleep(std::time::Duration::from_millis(12)).await;
     }
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     if !specs.is_empty() {
         ans.actions = apply_chat_actions(&mut data, &specs, default_note_id.as_deref());
     }
@@ -1451,7 +1391,7 @@ fn strip_local_note_body(note: &mut Note) {
 #[tauri::command]
 async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result<Note, String> {
     let (settings, mut note, folder_name) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
             .iter()
@@ -1469,7 +1409,7 @@ async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result
 
     match notion::save_note_to_notion(&note, &folder_name, &settings).await {
         Ok((page_id, page_url, synced_at)) => {
-            let mut data = state.data.lock().unwrap();
+            let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
             let result_note = if let Some(latest) = data.notes.iter_mut().find(|n| n.id == note.id) {
                 let locally_edited_during_sync = latest.updated_at != note.updated_at
                     || latest.title != note.title
@@ -1506,7 +1446,7 @@ async fn notion_save_note(state: State<'_, AppState>, note_id: String) -> Result
             Ok(result_note)
         }
         Err(err) => {
-            let mut data = state.data.lock().unwrap();
+            let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(latest) = data.notes.iter_mut().find(|n| n.id == note.id) {
                 latest.notion_sync.status = "failed".to_string();
                 latest.notion_sync.last_error = Some(err.clone());
@@ -1527,7 +1467,7 @@ async fn fetch_notion_note_content(
     note_id: String,
 ) -> Result<Note, String> {
     let mut note = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         data.notes
             .iter()
             .find(|n| n.id == note_id)
@@ -1556,7 +1496,7 @@ async fn set_note_storage_mode(
     notion_only: bool,
 ) -> Result<Note, String> {
     let (settings, mut note, folder_name) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
             .iter()
@@ -1597,7 +1537,7 @@ async fn set_note_storage_mode(
         note.storage_mode = "local".to_string();
     }
 
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     storage::upsert_note(&mut data, note.clone());
     storage::save_snapshot(&data)?;
     Ok(note)
@@ -1605,7 +1545,7 @@ async fn set_note_storage_mode(
 
 #[tauri::command]
 async fn purge_synced_local_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     for n in &mut data.notes {
         if n.notion_sync.status == "synced" && n.notion_sync.page_id.is_some() {
             strip_local_note_body(n);
@@ -1625,7 +1565,7 @@ fn parse_rfc3339_millis(s: &str) -> i64 {
 #[tauri::command]
 async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot, String> {
     let (settings, known_timestamps) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let mut map = std::collections::HashMap::new();
         for n in &data.notes {
             if let Some(ref pid) = n.notion_sync.page_id {
@@ -1645,7 +1585,7 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
 
     // Check if any locally synced notes missing from query results were archived/deleted in Notion
     let missing_synced: Vec<(String, String, String)> = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         data.notes
             .iter()
             .filter_map(|n| {
@@ -1673,7 +1613,7 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
     let mut notes_to_push_to_notion: Vec<(Note, String)> = Vec::new();
 
     {
-        let mut data = state.data.lock().unwrap();
+        let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
 
         for nid in notion_deleted_note_ids {
             storage::delete_note(&mut data, &nid);
@@ -1792,7 +1732,7 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
         if let Ok((page_id, page_url, synced_at)) =
             notion::save_note_to_notion(&local_note, &folder_name, &settings).await
         {
-            let mut data = state.data.lock().unwrap();
+            let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(n) = data.notes.iter_mut().find(|n| n.id == local_note.id) {
                 n.notion_sync.page_id = Some(page_id);
                 n.notion_sync.page_url = Some(page_url);
@@ -1805,20 +1745,20 @@ async fn notion_pull_notes(state: State<'_, AppState>) -> Result<AppDataSnapshot
         }
     }
 
-    let data = state.data.lock().unwrap();
+    let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     Ok(data.clone())
 }
 
 #[tauri::command]
 fn list_integration_adapters(state: State<AppState>) -> Vec<IntegrationAdapterInfo> {
-    let data = state.data.lock().unwrap();
+    let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     integrations::list_adapters(&data.settings)
 }
 
 #[tauri::command]
 async fn share_to_slack_cmd(state: State<'_, AppState>, note_id: String) -> Result<(), String> {
     let note = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         data.notes
             .iter()
             .find(|x| x.id == note_id)
@@ -1831,7 +1771,7 @@ async fn share_to_slack_cmd(state: State<'_, AppState>, note_id: String) -> Resu
 #[tauri::command]
 async fn send_webhook_cmd(state: State<'_, AppState>, note_id: String) -> Result<(), String> {
     let (note, url) = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         let n = data
             .notes
             .iter()
@@ -1845,7 +1785,7 @@ async fn send_webhook_cmd(state: State<'_, AppState>, note_id: String) -> Result
 
 #[tauri::command]
 fn get_mcp_config_preview(state: State<AppState>) -> String {
-    let data = state.data.lock().unwrap();
+    let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     integrations::build_mcp_config_preview(&data.settings)
 }
 
@@ -1863,13 +1803,13 @@ fn copy_and_prepare_paste(app: tauri::AppHandle, text: String) -> Result<String,
 
 #[tauri::command]
 fn export_all_data(state: State<AppState>) -> Result<String, String> {
-    let data = state.data.lock().unwrap();
+    let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     storage::export_all_json(&data)
 }
 
 #[tauri::command]
 fn purge_all_data(state: State<AppState>) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     for n in &data.notes {
         if let Some(ref p) = n.audio_path {
             storage::remove_file_if_exists(p);
@@ -1916,7 +1856,7 @@ fn open_storage_folder_cmd() -> Result<(), String> {
 
 #[tauri::command]
 fn compress_retained_audio_cmd(state: State<AppState>) -> Result<serde_json::Value, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     let (count, saved_bytes) = storage::compress_all_retained_audio(&mut data)?;
     storage::save_snapshot(&data)?;
     let stats = storage::compute_storage_stats();
@@ -1931,7 +1871,7 @@ fn compress_retained_audio_cmd(state: State<AppState>) -> Result<serde_json::Val
 async fn get_upcoming_calendar_events_cmd(state: State<'_, AppState>) -> Result<Vec<CalendarEventMock>, String> {
     use chrono::{Local, Timelike};
     let ics_url = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         data.settings.calendar_ics_url.clone()
     };
 
@@ -1999,11 +1939,11 @@ async fn create_issue_from_action_cmd(
     body: String,
 ) -> Result<models::IssueCreateResult, String> {
     let settings = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         data.settings.clone()
     };
     let result = integrations::create_issue_from_action(&provider, &settings, &title, &body).await?;
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     storage::append_audit(&mut data, "issue_created", &format!("{}:{}", result.provider, result.key));
     storage::save_snapshot(&data)?;
     Ok(result)
@@ -2014,7 +1954,7 @@ fn restore_backup_snapshot(
     state: State<'_, AppState>,
     snapshot: AppDataSnapshot,
 ) -> Result<AppDataSnapshot, String> {
-    let mut data = state.data.lock().unwrap();
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     data.notes = snapshot.notes;
     data.folders = snapshot.folders;
     data.dictionary = snapshot.dictionary;
@@ -2088,7 +2028,7 @@ async fn test_cloud_asr_connection_cmd(provider: models::AsrProviderKind) -> Res
 #[tauri::command]
 async fn test_llm_connection_cmd(state: State<'_, AppState>) -> Result<String, String> {
     let settings = {
-        let data = state.data.lock().unwrap();
+        let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
         data.settings.clone()
     };
     llm::test_llm_connection(&settings).await
@@ -2119,7 +2059,7 @@ pub fn run() {
                         let role = {
                             let state = app.state::<AppState>();
                             let (record, voice) = {
-                                let data = state.data.lock().unwrap();
+                                let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
                                 (
                                     data.settings.record_shortcut.clone(),
                                     data.settings.voice_typing_shortcut.clone(),
@@ -2153,7 +2093,7 @@ pub fn run() {
         .setup(|app| {
             let (shortcut_str, voice_typing_str, mw_x, mw_y, mw_w, mw_h) = {
                 let state = app.state::<AppState>();
-                let data = state.data.lock().unwrap();
+                let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
                 (
                     data.settings.record_shortcut.clone(),
                     data.settings.voice_typing_shortcut.clone(),
@@ -2191,7 +2131,7 @@ pub fn run() {
                     tokio::time::sleep(std::time::Duration::from_secs(8)).await;
                     let is_rec = {
                         let st = app_handle.state::<AppState>();
-                        let audio = st.audio.lock().unwrap();
+                        let audio = st.audio.lock().unwrap_or_else(|e| e.into_inner());
                         let s = audio.status().state;
                         s == "recording" || s == "paused"
                     };
@@ -2292,6 +2232,7 @@ pub fn run() {
             delete_folder,
             clear_chat_history,
             delete_chat_history_items,
+            save_popup_chat_sessions,
             list_audio_devices,
             start_recording,
             pause_recording,

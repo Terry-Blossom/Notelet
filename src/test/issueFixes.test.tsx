@@ -43,6 +43,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 import { App } from '../App';
 import { NoteEditorView } from '../components/NoteEditorView';
 import { SettingsView } from '../components/SettingsView';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 
 const baseSettings: AppSettings = {
   plan_tier: 'enterprise',
@@ -103,6 +104,7 @@ describe('Regression fixes for #25-#31', () => {
     invokeMock.mockReset();
     listenHandlers.clear();
     callbackMap.clear();
+    localStorage.clear();
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       invoke: invokeMock,
       transformCallback: registerCallback,
@@ -303,6 +305,11 @@ describe('Regression fixes for #25-#31', () => {
         }
         case 'plugin:event|unlisten':
           return null;
+        case 'save_popup_chat_sessions': {
+          const sessions = (args as { sessions: AppDataSnapshot['popup_chat_sessions'] }).sessions;
+          currentSnap = { ...currentSnap, popup_chat_sessions: sessions };
+          return currentSnap;
+        }
         case 'transcribe_recording':
           return { ...initialNote, segments: [] };
         default:
@@ -416,5 +423,27 @@ describe('Regression fixes for #25-#31', () => {
       fireEvent.click(btn);
     });
     expect(onInstallRuntime).not.toHaveBeenCalled();
+  });
+
+  it('#19: ErrorBoundary catches render errors and recovers on reset', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let shouldThrow = true;
+    const Boom = () => {
+      if (shouldThrow) throw new Error('boom render failure');
+      return <div>recovered ok</div>;
+    };
+
+    render(
+      <ErrorBoundary fallbackTitle="テストエラー境界">
+        <Boom />
+      </ErrorBoundary>
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('テストエラー境界');
+    expect(screen.getByRole('alert')).toHaveTextContent('boom render failure');
+
+    shouldThrow = false;
+    fireEvent.click(screen.getByRole('button', { name: '再試行' }));
+    expect(screen.getByText('recovered ok')).toBeInTheDocument();
+    spy.mockRestore();
   });
 });

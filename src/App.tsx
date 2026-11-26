@@ -80,12 +80,14 @@ import {
   apiTranscribeUploadedAudio,
   apiTranscribeUploadedUrl,
   apiGetUpcomingCalendarEvents,
+  apiSavePopupChatSessions,
   isTauriRuntime,
 } from './lib/tauri';
 import { createEmptyNote, findNoteSearchMatches, formatMs } from './lib/format';
 import { exportNotesAsObsidianZip, mergeNoteletBackupJson } from './lib/noteExportImport';
 import { HomeView } from './components/HomeView';
 import { ConfirmDialogHost } from './components/ConfirmDialog';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { RecordingView } from './components/RecordingView';
 import { NoteEditorView } from './components/NoteEditorView';
 import { ChatView } from './components/ChatView';
@@ -2030,6 +2032,7 @@ const MainApp: React.FC = () => {
         )}
 
         {(view === 'editor' || view === 'notes') && activeNote && (
+          <ErrorBoundary fallbackTitle="ノート画面の表示中にエラーが発生しました">
           <NoteEditorView
             note={activeNote}
             allNotes={snapshot.notes}
@@ -2039,6 +2042,15 @@ const MainApp: React.FC = () => {
             recipes={snapshot.recipes}
             secretStatus={secretStatus}
             chatHistory={snapshot.chat_history || []}
+            popupChatSessions={snapshot.popup_chat_sessions || []}
+            onSavePopupChatSessions={async (sessions) => {
+              if (isTauriRuntime()) {
+                const next = await apiSavePopupChatSessions(sessions);
+                if (next) setSnapshot(next);
+              } else {
+                setSnapshot((prev) => ({ ...prev, popup_chat_sessions: sessions }));
+              }
+            }}
             initialSearchQuery={pendingSearchQuery || undefined}
             openNoteSeq={openNoteSeq}
             pendingSeekMs={pendingSeekMs}
@@ -2159,6 +2171,7 @@ const MainApp: React.FC = () => {
             onGoSettings={() => setSettingsOpen(true)}
             onGoHome={() => setView('home')}
           />
+          </ErrorBoundary>
         )}
 
           </div>

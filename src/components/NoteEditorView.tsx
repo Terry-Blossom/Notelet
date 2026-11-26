@@ -41,13 +41,13 @@ import {
 import {
   AppSettings,
   CalendarEventItem,
-  ChatActionResult,
   ChatAnswer,
   ChatCitation,
   ChatHistoryItem,
   DEFAULT_SUMMARY_PRESETS,
   Folder,
   Note,
+  PopupChatSession,
   Recipe,
   RecordingStatus,
   SecretStatus,
@@ -59,6 +59,8 @@ import {
   formatNoteForCopy,
   formatNoteTimer,
 } from '../lib/format';
+import { useTauriEvent } from '../lib/tauriEvents';
+import { NoteChatPopup } from './note-editor/NoteChatPopup';
 import { NoteWaveform } from './NoteWaveform';
 import { NotionSyncBadge } from './NotionSyncBadge';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
@@ -71,23 +73,6 @@ import {
   apiSetNoteStorageMode,
   isTauriRuntime,
 } from '../lib/tauri';
-
-interface PopupChatMessage {
-  role: 'user' | 'assistant';
-  text: string;
-  citations?: ChatCitation[];
-  actions?: ChatActionResult[];
-  thinking?: string | null;
-  createdAt: string;
-}
-
-interface PopupChatSession {
-  id: string;
-  scopeKey: string;
-  title: string;
-  updatedAt: string;
-  messages: PopupChatMessage[];
-}
 
 const CHAT_SESSIONS_KEY = 'notelet_chat_sessions_v1';
 const LAST_CHAT_SESSION_KEY = 'notelet_last_chat_session_v1';
@@ -117,6 +102,8 @@ interface NoteEditorViewProps {
   allNotes?: Note[];
   folders?: Folder[];
   chatHistory?: ChatHistoryItem[];
+  popupChatSessions?: PopupChatSession[];
+  onSavePopupChatSessions?: (sessions: PopupChatSession[]) => Promise<void> | void;
   initialSearchQuery?: string | null;
   openNoteSeq?: number;
   pendingSeekMs?: number | null;
@@ -159,6 +146,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   allNotes,
   folders = [{ id: 'personal', name: '一般', is_shared: false, permission: 'owner' }],
   chatHistory = [],
+  popupChatSessions,
+  onSavePopupChatSessions,
   initialSearchQuery = null,
   openNoteSeq = 0,
   pendingSeekMs = null,
@@ -376,23 +365,29 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [inNoteSearchOpen]);
 
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-    let unlisten: (() => void) | undefined;
-    void import('@tauri-apps/api/event').then(async ({ listen }) => {
-      unlisten = await listen<string>('chat-stream-chunk', (ev) => {
-        if (typeof ev.payload === 'string') {
-          setStreamingChatText(ev.payload);
-        }
-      });
-    });
-    return () => {
-      unlisten?.();
-    };
-  }, []);
+  useTauriEvent<string>('chat-stream-chunk', (payload) => {
+    if (typeof payload === 'string') {
+      setStreamingChatText(payload);
+    }
+  });
 
-  // Persistent popup chat sessions
-  const [chatSessions, setChatSessions] = useState<PopupChatSession[]>(() => loadChatSessions());
+  // Persistent popup chat sessions (synced with AppDataSnapshot + one-time localStorage migration)
+  const [chatSessions, setChatSessions] = useState<PopupChatSession[]>(() =>
+    popupChatSessions && popupChatSessions.length > 0 ? popupChatSessions : loadChatSessions()
+  );
+  const migratedPopupRef = useRef(false);
+  useEffect(() => {
+    if (popupChatSessions && popupChatSessions.length > 0) {
+      setChatSessions(popupChatSessions);
+      migratedPopupRef.current = true;
+    } else if (!migratedPopupRef.current && popupChatSessions && popupChatSessions.length === 0) {
+      migratedPopupRef.current = true;
+      const legacy = loadChatSessions();
+      if (legacy.length > 0 && onSavePopupChatSessions) {
+        void onSavePopupChatSessions(legacy.slice(0, 100));
+      }
+    }
+  }, [popupChatSessions]);
   const [lastSessionByScope, setLastSessionByScope] = useState<Record<string, string>>(() => loadLastSessionMap());
   const [chatPopupOpen, setChatPopupOpen] = useState<boolean>(false);
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
@@ -401,12 +396,19 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const currentScopeKey = viewingFolderId ? `space:${viewingFolderId}` : `note:${note.id}`;
 
   useEffect(() => {
+    const trimmed = chatSessions.slice(0, 100);
     try {
-      localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions.slice(0, 100)));
+      localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(trimmed));
     } catch {
       // ignore storage quota errors
     }
   }, [chatSessions]);
+
+  const persistPopupSessions = (next: PopupChatSession[]) => {
+    if (onSavePopupChatSessions) {
+      void onSavePopupChatSessions(next.slice(0, 100));
+    }
+  };
 
   useEffect(() => {
     try {
@@ -1081,8 +1083,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         chatScope === 'space' ? note.folder_id : null
       );
       const now = new Date().toISOString();
-      setChatSessions((prev) =>
-        prev.map((s) =>
+      setChatSessions((prev) => {
+        const next: PopupChatSession[] = prev.map((s) =>
           s.id === sid
             ? {
                 ...s,
@@ -1090,7 +1092,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 messages: [
                   ...s.messages,
                   {
-                    role: 'assistant',
+                    role: 'assistant' as const,
                     text: res.answer,
                     citations: res.citations,
                     actions: res.actions,
@@ -1100,8 +1102,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 ],
               }
             : s
-        )
-      );
+        );
+        persistPopupSessions(next);
+        return next;
+      });
     } catch (err) {
       setAiErrorByNote((prev) => ({ ...prev, [targetNoteId]: String(err) }));
     } finally {
@@ -1110,289 +1114,41 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     }
   };
 
-  const renderChatPopup = (scopeKey: string, busy: boolean, isSpacePage = false) => {
-    if (!chatPopupOpen) return null;
-    // Merge local popup sessions with shared app chatHistory so Chat tab and Note tab share history
-    const sharedSessions: PopupChatSession[] = chatHistory
-      .filter((h) => !chatSessions.some((s) => s.messages[0]?.text === h.question && Math.abs(Date.parse(s.updatedAt) - Date.parse(h.timestamp)) < 60_000))
-      .map((h) => ({
-        id: `shared:${h.id}`,
-        scopeKey: h.space_id ? `space:${h.space_id}` : 'all',
-        title: h.question.slice(0, 32),
-        updatedAt: h.timestamp,
-        messages: [
-          { role: 'user', text: h.question, createdAt: h.timestamp },
-          {
-            role: 'assistant',
-            text: h.answer,
-            citations: h.citations,
-            actions: h.actions,
-            thinking: h.thinking,
-            createdAt: h.timestamp,
-          },
-        ],
-      }));
-    const allSortedSessions = [...chatSessions, ...sharedSessions].sort((a, b) =>
-      b.updatedAt.localeCompare(a.updatedAt)
-    );
-    const session = allSortedSessions.find((s) => s.id === lastSessionByScope[scopeKey]) ?? null;
-
-    return (
-      <div className="note-chat-popup" role="dialog" aria-label="チャット">
-        <div className="note-chat-popup-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0, flexWrap: 'wrap' }}>
-            {!isSpacePage ? (
-              <>
-                <button
-                  type="button"
-                  className={`tab-btn ${chatScope === 'note' ? 'active' : ''}`}
-                  style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
-                  onClick={() => setChatScope('note')}
-                >
-                  このノート
-                </button>
-                <button
-                  type="button"
-                  className={`tab-btn ${chatScope === 'space' ? 'active' : ''}`}
-                  style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
-                  onClick={() => setChatScope('space')}
-                >
-                  スペース全体
-                </button>
-                <button
-                  type="button"
-                  className={`tab-btn ${chatScope === 'all' ? 'active' : ''}`}
-                  style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
-                  onClick={() => setChatScope('all')}
-                >
-                  アプリ全体
-                </button>
-              </>
-            ) : (
-              <span className="status-chip" style={{ fontSize: '12px' }}>
-                スペース全体
-              </span>
-            )}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-            <button
-              type="button"
-              aria-label="新しいチャット"
-              title="新しいチャット"
-              className="btn btn-ghost"
-              style={{ width: '28px', height: '28px', padding: 0 }}
-              onClick={() => {
-                setLastSessionByScope((prev) => {
-                  const next = { ...prev };
-                  delete next[scopeKey];
-                  return next;
-                });
-                setChatHistoryOpen(false);
-              }}
-            >
-              <Plus size={14} strokeWidth={1.75} />
-            </button>
-            <button
-              type="button"
-              aria-label="チャット履歴"
-              title="チャット履歴"
-              aria-pressed={chatHistoryOpen}
-              className={`btn btn-ghost ${chatHistoryOpen ? 'active' : ''}`}
-              style={{
-                width: '28px',
-                height: '28px',
-                padding: 0,
-                backgroundColor: chatHistoryOpen ? 'var(--ns-text-primary)' : undefined,
-                color: chatHistoryOpen ? 'var(--ns-text-on-primary)' : undefined,
-              }}
-              onClick={() => setChatHistoryOpen((v) => !v)}
-            >
-              <History size={14} strokeWidth={1.75} />
-            </button>
-            <button
-              type="button"
-              aria-label="チャットを閉じる"
-              title="閉じる"
-              className="btn btn-ghost"
-              style={{ width: '28px', height: '28px', padding: 0 }}
-              onClick={() => {
-                setChatPopupOpen(false);
-                setChatHistoryOpen(false);
-              }}
-            >
-              <X size={14} strokeWidth={1.75} />
-            </button>
-          </div>
-        </div>
-
-        <div
-          ref={chatMessagesScrollRef}
-          className="note-chat-popup-body"
-          style={{ position: 'relative' }}
-        >
-          {chatHistoryOpen ? (
-            allSortedSessions.length === 0 ? (
-              <div className="text-muted" style={{ fontSize: '13px' }}>
-                チャット履歴はまだありません。
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {allSortedSessions.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className="flat-row"
-                    style={{
-                      padding: '8px 12px',
-                      borderRadius: '8px',
-                      backgroundColor: s.id === session?.id ? 'var(--bg-subtle)' : 'transparent',
-                      textAlign: 'left',
-                    }}
-                    onClick={() => {
-                      setLastSessionByScope((prev) => ({ ...prev, [scopeKey]: s.id }));
-                      setChatHistoryOpen(false);
-                    }}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
-                      <strong style={{ fontSize: '13px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {s.title}
-                      </strong>
-                      <span className="text-muted mono-num" style={{ fontSize: '11px' }}>
-                        {formatDateTime(s.updatedAt)} ・ {s.messages.length} 件のメッセージ
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )
-          ) : !session || session.messages.length === 0 ? (
-            <div className="text-muted" style={{ fontSize: '13px' }}>
-              下の入力欄から何でも質問できます。過去のチャットは右上の履歴ボタンから呼び出せます。
-            </div>
-          ) : (
-            <>
-              {session.messages.map((m, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    alignSelf: m.role === 'user' ? 'flex-end' : 'stretch',
-                    maxWidth: m.role === 'user' ? '85%' : '100%',
-                    padding: m.role === 'user' ? '8px 12px' : '4px 0',
-                    borderRadius: m.role === 'user' ? '12px' : '0',
-                    backgroundColor: m.role === 'user' ? 'var(--ns-surface-pill)' : 'transparent',
-                    fontSize: '13px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                  }}
-                >
-                  {m.role === 'user' ? (
-                    <span>{m.text}</span>
-                  ) : (
-                    <>
-                      <StreamingMarkdownArticle
-                        content={m.text}
-                        isGenerating={false}
-                        citations={m.citations}
-                        thinking={m.thinking}
-                        onCitationClick={(c) => void handleCitationNavigate(c)}
-                      />
-                      {m.actions && m.actions.length > 0 && (
-                        <div className="chat-actions-bar">
-                          {m.actions.map((a, aIdx) => (
-                            <span key={aIdx} className="chat-action-chip">
-                              <Check size={12} strokeWidth={2} color="var(--accent)" />
-                              <span>{a.description}</span>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {m.citations && m.citations.length > 0 && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingTop: '8px', borderTop: '1px solid var(--ns-border-sidebar)' }}>
-                          <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--ns-text-muted)' }}>
-                            引用元のノート・該当箇所
-                          </span>
-                          {m.citations.map((c, cIdx) => (
-                            <button
-                              key={`${c.note_id}-${cIdx}`}
-                              type="button"
-                              onClick={() => void handleCitationNavigate(c)}
-                              style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '4px',
-                                padding: '8px',
-                                borderRadius: '8px',
-                                backgroundColor: 'var(--ns-bg-sidebar)',
-                                border: '1px solid var(--ns-border-sidebar)',
-                                textAlign: 'left',
-                              }}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                <span className="inline-citation-badge" style={{ marginLeft: 0, verticalAlign: 'middle' }}>
-                                  {cIdx + 1}
-                                </span>
-                                <FileText size={12} strokeWidth={1.75} />
-                                <strong style={{ fontSize: '12px', fontWeight: 600 }}>{c.note_title}</strong>
-                                {c.timestamp && (
-                                  <span className="status-chip mono-num" style={{ fontSize: '11px' }}>
-                                    {c.timestamp}
-                                  </span>
-                                )}
-                              </div>
-                              {c.excerpt && (
-                                <div style={{ fontSize: '12px', color: 'var(--ns-text-secondary)', lineHeight: '1.5' }}>
-                                  「{c.excerpt}」
-                                </div>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              ))}
-              {busy && (
-                <StreamingMarkdownArticle
-                  content={streamingChatText}
-                  isGenerating={!streamingChatText}
-                  animateOnChange={false}
-                />
-              )}
-              {(isSpacePage ? spaceChatError : aiError) && (
-                <div
-                  role="alert"
-                  style={{
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    backgroundColor: 'var(--danger-bg)',
-                    color: 'var(--danger)',
-                    fontSize: '12px',
-                  }}
-                >
-                  {isSpacePage ? spaceChatError : aiError}
-                </div>
-              )}
-              <button
-                type="button"
-                className="note-jump-latest"
-                style={{ alignSelf: 'flex-end', position: 'sticky', bottom: '4px', marginTop: '4px' }}
-                onClick={() => {
-                  if (chatMessagesScrollRef.current) {
-                    chatMessagesScrollRef.current.scrollTop = chatMessagesScrollRef.current.scrollHeight;
-                  }
-                }}
-              >
-                <ArrowDown size={13} strokeWidth={1.75} aria-hidden="true" />
-                <span>最新↓</span>
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  };
+  const renderChatPopup = (scopeKey: string, busy: boolean, isSpacePage = false) => (
+    <NoteChatPopup
+      open={chatPopupOpen}
+      scopeKey={scopeKey}
+      busy={busy}
+      isSpacePage={isSpacePage}
+      chatScope={chatScope}
+      onChangeChatScope={setChatScope}
+      chatHistoryOpen={chatHistoryOpen}
+      onToggleHistory={() => setChatHistoryOpen((v) => !v)}
+      onClose={() => {
+        setChatPopupOpen(false);
+        setChatHistoryOpen(false);
+      }}
+      chatSessions={chatSessions}
+      chatHistory={chatHistory}
+      lastSessionByScope={lastSessionByScope}
+      onSelectSession={(key, sid) => {
+        setLastSessionByScope((prev) => ({ ...prev, [key]: sid }));
+        setChatHistoryOpen(false);
+      }}
+      onNewChat={(key) => {
+        setLastSessionByScope((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        setChatHistoryOpen(false);
+      }}
+      streamingChatText={streamingChatText}
+      errorText={isSpacePage ? spaceChatError : aiError}
+      scrollRef={chatMessagesScrollRef}
+      onCitationClick={(c) => void handleCitationNavigate(c)}
+    />
+  );
 
   const handleQuestionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1806,20 +1562,22 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   ) => Promise<ChatAnswer>
                 )(targetIds, prompt, targetFolder.id);
                 const now = new Date().toISOString();
-                setChatSessions((prev) =>
-                  prev.map((s) =>
+                setChatSessions((prev) => {
+                  const next: PopupChatSession[] = prev.map((s) =>
                     s.id === sid
                       ? {
                           ...s,
                           updatedAt: now,
                           messages: [
                             ...s.messages,
-                            { role: 'assistant', text: res.answer, citations: res.citations, actions: res.actions, createdAt: now },
+                            { role: 'assistant' as const, text: res.answer, citations: res.citations, actions: res.actions, createdAt: now },
                           ],
                         }
                       : s
-                  )
-                );
+                  );
+                  persistPopupSessions(next);
+                  return next;
+                });
               } catch (err) {
                 setSpaceChatError(err instanceof Error ? err.message : String(err));
               } finally {

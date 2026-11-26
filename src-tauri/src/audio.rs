@@ -168,7 +168,7 @@ impl AudioManager {
     }
 
     pub fn status(&self) -> RecordingStatus {
-        let rt = self.runtime.lock().unwrap();
+        let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         RecordingStatus {
             state: rt.state.clone(),
             elapsed_ms: rt.elapsed_ms,
@@ -292,7 +292,7 @@ impl AudioManager {
         }
 
         {
-            let mut rt = self.runtime.lock().unwrap();
+            let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
             *rt = RecordingRuntime {
                 state: "recording".to_string(),
                 elapsed_ms: 0,
@@ -326,7 +326,7 @@ impl AudioManager {
             let mut writer = match WavWriter::create(&wav_path_clone, spec) {
                 Ok(w) => Some(w),
                 Err(e) => {
-                    let mut rt = runtime.lock().unwrap();
+                    let mut rt = runtime.lock().unwrap_or_else(|e| e.into_inner());
                     rt.state = "error".to_string();
                     rt.error_message = Some(format!("録音ファイルを作成できません: {e}"));
                     rt.recovery_hint = Some("ディスクの空き容量と書き込み権限を確認してください。".to_string());
@@ -342,7 +342,7 @@ impl AudioManager {
                 match build_resampled_stream(mdev, false, Arc::clone(&mic_queue), Arc::clone(&paused_flag), Arc::clone(&runtime)) {
                     Ok(s) => {
                         if let Err(e) = s.play() {
-                            let mut rt = runtime.lock().unwrap();
+                            let mut rt = runtime.lock().unwrap_or_else(|e| e.into_inner());
                             rt.state = "error".to_string();
                             rt.error_message = Some(format!("マイクストリーム開始に失敗: {e}"));
                             return;
@@ -350,7 +350,7 @@ impl AudioManager {
                         streams.push(s);
                     }
                     Err(e) => {
-                        let mut rt = runtime.lock().unwrap();
+                        let mut rt = runtime.lock().unwrap_or_else(|e| e.into_inner());
                         rt.state = "error".to_string();
                         rt.error_message = Some(e);
                         return;
@@ -363,7 +363,7 @@ impl AudioManager {
                     Ok(s) => {
                         if let Err(e) = s.play() {
                             if mode_clone == AudioSourceMode::System {
-                                let mut rt = runtime.lock().unwrap();
+                                let mut rt = runtime.lock().unwrap_or_else(|e| e.into_inner());
                                 rt.state = "error".to_string();
                                 rt.error_message = Some(format!("本体音声ストリーム開始に失敗: {e}"));
                                 return;
@@ -374,7 +374,7 @@ impl AudioManager {
                     }
                     Err(e) => {
                         if mode_clone == AudioSourceMode::System {
-                            let mut rt = runtime.lock().unwrap();
+                            let mut rt = runtime.lock().unwrap_or_else(|e| e.into_inner());
                             rt.state = "error".to_string();
                             rt.error_message = Some(e);
                             return;
@@ -401,7 +401,7 @@ impl AudioManager {
                 }
 
                 {
-                    let mut rt = runtime.lock().unwrap();
+                    let mut rt = runtime.lock().unwrap_or_else(|e| e.into_inner());
                     if rt.state == "recording" {
                         rt.elapsed_ms += dt;
                     }
@@ -429,7 +429,7 @@ impl AudioManager {
                     (true, true) => {
                         // In System mode when nothing is playing on PC, WASAPI loopback produces no packets
                         if mode_clone == AudioSourceMode::System {
-                            let mut rt = runtime.lock().unwrap();
+                            let mut rt = runtime.lock().unwrap_or_else(|e| e.into_inner());
                             rt.level_rms = 0.0;
                             rt.waveform.remove(0);
                             rt.waveform.push(0.0);
@@ -471,7 +471,7 @@ impl AudioManager {
 
     pub fn pause(&mut self) -> RecordingStatus {
         self.paused_flag.store(true, Ordering::SeqCst);
-        let mut rt = self.runtime.lock().unwrap();
+        let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         if rt.state == "recording" {
             rt.state = "paused".to_string();
         }
@@ -494,7 +494,7 @@ impl AudioManager {
 
     pub fn resume(&mut self) -> RecordingStatus {
         self.paused_flag.store(false, Ordering::SeqCst);
-        let mut rt = self.runtime.lock().unwrap();
+        let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         if rt.state == "paused" {
             rt.state = "recording".to_string();
             rt.silent_since = Some(Instant::now());
@@ -521,7 +521,7 @@ impl AudioManager {
         if let Some(handle) = self.worker.take() {
             let _ = handle.join();
         }
-        let mut rt = self.runtime.lock().unwrap();
+        let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         rt.state = "idle".to_string();
         rt.level_rms = 0.0;
         RecordingStatus {
@@ -571,7 +571,7 @@ fn build_resampled_stream(
         if paused.load(Ordering::SeqCst) || mono.is_empty() {
             return;
         }
-        let mut p = phase.lock().unwrap();
+        let mut p = phase.lock().unwrap_or_else(|e| e.into_inner());
         let mut idx = *p;
         if let Ok(mut q) = queue.lock() {
             while (idx as usize) < mono.len() {

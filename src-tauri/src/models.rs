@@ -500,6 +500,31 @@ pub struct DeletedNoteRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PopupChatMessage {
+    pub role: String,
+    pub text: String,
+    #[serde(default)]
+    pub citations: Vec<ChatCitation>,
+    #[serde(default)]
+    pub actions: Vec<ChatActionResult>,
+    #[serde(default)]
+    pub thinking: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PopupChatSession {
+    pub id: String,
+    pub scope_key: String,
+    pub title: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub messages: Vec<PopupChatMessage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppDataSnapshot {
     pub notes: Vec<Note>,
     pub folders: Vec<Folder>,
@@ -509,6 +534,8 @@ pub struct AppDataSnapshot {
     pub audit_logs: Vec<AuditEvent>,
     #[serde(default)]
     pub chat_history: Vec<ChatHistoryItem>,
+    #[serde(default)]
+    pub popup_chat_sessions: Vec<PopupChatSession>,
     #[serde(default)]
     pub deleted_notes: Vec<DeletedNoteRecord>,
 }

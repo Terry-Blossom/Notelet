@@ -1186,6 +1186,7 @@ pub async fn chat_with_notes_and_actions(
     }
 }
 
+#[allow(dead_code)]
 pub async fn chat_with_notes(
     settings: &AppSettings,
     notes: &[Note],

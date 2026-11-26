@@ -48,6 +48,7 @@ struct ServerState {
     model_path: PathBuf,
     language: String,
     use_gpu: bool,
+    #[allow(dead_code)]
     stderr_log: Arc<StdMutex<String>>,
 }
 
@@ -465,9 +466,11 @@ pub fn stop_server_sync() {
             return;
         }
     }
-    // 起動処理がロックを保持している間でも、PID が分かれば直接終了させる。
+    // 起動中などでロック取得できない場合のみ、管理下の PID が残っていれば終了を試みる
     let pid = SERVER_PID.swap(0, Ordering::SeqCst);
-    kill_pid(pid);
+    if pid != 0 {
+        kill_pid(pid);
+    }
 }
 
 pub async fn stop_server_async() {

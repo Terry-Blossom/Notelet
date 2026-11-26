@@ -56,6 +56,7 @@ function firstExisting(candidates) {
 }
 
 function parseArgs(argv) {
+  // Legacy KOENOTE_* / koenote_data.json migration fallbacks are scheduled for removal in v1.0.0.
   let dataDir = process.env.NOTELET_DATA_DIR || process.env.KOENOTE_DATA_DIR || '';
   let scope = process.env.NOTELET_MCP_SCOPE || process.env.KOENOTE_MCP_SCOPE || 'workspace';
   for (let i = 2; i < argv.length; i += 1) {

@@ -309,6 +309,23 @@ export interface ChatHistoryItem {
   thinking?: string | null;
 }
 
+export interface PopupChatMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  citations?: ChatCitation[];
+  actions?: ChatActionResult[];
+  thinking?: string | null;
+  createdAt: string;
+}
+
+export interface PopupChatSession {
+  id: string;
+  scopeKey: string;
+  title: string;
+  updatedAt: string;
+  messages: PopupChatMessage[];
+}
+
 export interface AppDataSnapshot {
   notes: Note[];
   folders: Folder[];
@@ -317,6 +334,7 @@ export interface AppDataSnapshot {
   settings: AppSettings;
   audit_logs: AuditEvent[];
   chat_history?: ChatHistoryItem[];
+  popup_chat_sessions?: PopupChatSession[];
 }
 
 export interface NotionTarget {

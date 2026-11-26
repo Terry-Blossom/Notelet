@@ -140,9 +140,11 @@ jobs:
       - name: Build Tauri application
         run: npx tauri build
 
-      - name: Run Rust unit tests
+      - name: Run Rust clippy and unit tests
         if: runner.os == 'Linux'
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+        run: |
+          cargo clippy --manifest-path src-tauri/Cargo.toml --lib -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v7

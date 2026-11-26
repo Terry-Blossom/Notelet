@@ -10,6 +10,7 @@ use std::sync::{Mutex, OnceLock};
 
 const SERVICE_NAME: &str = "app.notelet.desktop";
 const KEYCHAIN_ACCOUNT: &str = "__notelet_master_key__";
+// Legacy KoeNote migration fallback (scheduled for removal in v1.0.0)
 const LEGACY_SERVICE_NAME: &str = "app.koenote.desktop";
 const LEGACY_KEYCHAIN_ACCOUNT: &str = "__koenote_master_key__";
 const ENC_PREFIX: &str = "ENCv1:";
@@ -471,6 +472,7 @@ pub fn has_secret(key: &str) -> bool {
     matches!(get_secret(key), Ok(Some(v)) if !v.trim().is_empty())
 }
 
+#[allow(dead_code)]
 pub fn delete_secret(key: &str) -> Result<(), String> {
     {
         let _guard = vault_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -486,4 +488,34 @@ pub fn delete_secret(key: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_strips_bearer_and_whitespace() {
+        assert_eq!(sanitize_secret_value("openai_api_key", " Bearer  sk-test \n"), "sk-test");
+        assert_eq!(sanitize_secret_value("notion_access_token", "  secret_abc  "), "secret_abc");
+    }
+
+    #[test]
+    fn aes_gcm_roundtrip_with_fixed_key() {
+        let key = [42u8; 32];
+        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+        let mut nonce_bytes = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ct = cipher.encrypt(nonce, b"sk-roundtrip-secret".as_ref()).unwrap();
+        let mut combined = nonce_bytes.to_vec();
+        combined.extend_from_slice(&ct);
+        let encoded = format!("{ENC_PREFIX}{}", B64.encode(&combined));
+        assert!(encoded.starts_with(ENC_PREFIX));
+
+        let raw = B64.decode(encoded.trim_start_matches(ENC_PREFIX)).unwrap();
+        let (n, c) = raw.split_at(12);
+        let pt = cipher.decrypt(Nonce::from_slice(n), c).unwrap();
+        assert_eq!(String::from_utf8(pt).unwrap(), "sk-roundtrip-secret");
+    }
 }

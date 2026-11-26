@@ -15,6 +15,7 @@ import {
   LiveAssistResult,
   Note,
   NotionTarget,
+  PopupChatSession,
   Recipe,
   RecordingStatus,
   SecretStatus,
@@ -314,4 +315,10 @@ export async function apiTestMicLevel(
   return invoke<{ rms: number; device_name: string }>('test_mic_level_cmd', {
     deviceId: deviceId ?? null,
   });
+}
+
+export async function apiSavePopupChatSessions(
+  sessions: PopupChatSession[]
+): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>('save_popup_chat_sessions', { sessions });
 }
