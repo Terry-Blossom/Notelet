@@ -17,6 +17,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - run: npm run check:ui
 
   build-linux-x86:
     needs: frontend-check

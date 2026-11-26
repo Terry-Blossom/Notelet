@@ -16,7 +16,6 @@ import {
   FileText,
   Folder as FolderIcon,
   GitMerge,
-  History,
   Link2,
   List,
   Loader2,
@@ -27,7 +26,6 @@ import {
   Pin,
   Play,
   Plus,
-  RotateCcw,
   Search,
   Send,
   Shield,
@@ -61,9 +59,10 @@ import {
 } from '../lib/format';
 import { useTauriEvent } from '../lib/tauriEvents';
 import { NoteChatPopup } from './note-editor/NoteChatPopup';
+import { NoteMemoPanel } from './note-editor/NoteMemoPanel';
+import { NoteSummaryPanel } from './note-editor/NoteSummaryPanel';
 import { NoteWaveform } from './NoteWaveform';
 import { NotionSyncBadge } from './NotionSyncBadge';
-import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 import { confirmActionDialog, confirmDeleteDialog } from './ConfirmDialog';
 import {
   apiCreateIssueFromAction,
@@ -3294,250 +3293,33 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             )}
 
             {activeTab === 'summary' && (
-              <div className="note-notes-tab">
-                <section className="note-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <h2 className="note-card-title">要約</h2>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      {suggestedPresetId && suggestedPresetId !== selectedTemplateId && (
-                        <button
-                          type="button"
-                          className="chip-filter"
-                          style={{ height: '24px', fontSize: '11px', color: 'var(--accent)', borderColor: 'var(--accent-border)' }}
-                          onClick={() => setSelectedTemplateId(suggestedPresetId)}
-                        >
-                          推奨: {summaryPresets.find((p) => p.id === suggestedPresetId)?.name} を適用
-                        </button>
-                      )}
-                      <select
-                        aria-label="要約テンプレート"
-                        className="input"
-                        style={{ width: '160px', height: '28px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
-                        value={selectedTemplateId}
-                        onChange={(e) => setSelectedTemplateId(e.target.value)}
-                      >
-                        {summaryPresets.map((preset) => (
-                          <option key={preset.id} value={preset.id}>
-                            {preset.name}
-                          </option>
-                        ))}
-                      </select>
-                      {(note.summary_history?.length ?? 0) > 0 && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          style={{ height: '28px', fontSize: '12px', padding: '0 8px' }}
-                          onClick={() => setHistoryOpen((o) => !o)}
-                        >
-                          <History size={13} strokeWidth={1.75} />
-                          履歴 ({note.summary_history?.length})
-                        </button>
-                      )}
-                      {llmConfigured && (
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          style={{ height: '28px', fontSize: '12px' }}
-                          disabled={isSummarizingThisNote}
-                          onClick={handleRunSummarize}
-                        >
-                          <Sparkles size={13} strokeWidth={1.75} />
-                          {isSummarizingThisNote ? '生成中' : '要約を生成'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {historyOpen && (note.summary_history?.length ?? 0) > 0 && (
-                    <div
-                      style={{
-                        marginTop: '12px',
-                        padding: '12px',
-                        borderRadius: '8px',
-                        backgroundColor: 'var(--bg-subtle)',
-                        border: '1px solid var(--border-subtle)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '8px',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px' }}>
-                        <strong>過去の要約バージョン</strong>
-                        <button type="button" className="btn btn-ghost" style={{ height: '22px', fontSize: '11px' }} onClick={() => setHistoryOpen(false)}>
-                          閉じる
-                        </button>
-                      </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                        {note.summary_history!.map((rev) => (
-                          <button
-                            key={rev.id}
-                            type="button"
-                            className={`chip-filter ${compareRevisionId === rev.id ? 'active' : ''}`}
-                            style={{ fontSize: '11px', height: '24px' }}
-                            onClick={() => setCompareRevisionId(rev.id === compareRevisionId ? null : rev.id)}
-                          >
-                            {rev.created_at.slice(0, 16).replace('T', ' ')} ({rev.model_label || '要約'})
-                          </button>
-                        ))}
-                      </div>
-                      {compareRevisionId && (() => {
-                        const rev = note.summary_history!.find((r) => r.id === compareRevisionId);
-                        if (!rev) return null;
-                        return (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '8px' }}>
-                            <div style={{ fontSize: '12px', whiteSpace: 'pre-wrap', maxHeight: '180px', overflowY: 'auto', color: 'var(--text-secondary)' }}>
-                              {rev.summary}
-                            </div>
-                            <button
-                              type="button"
-                              className="btn btn-secondary"
-                              style={{ alignSelf: 'flex-start', height: '26px', fontSize: '12px' }}
-                              onClick={() => {
-                                onUpdateNote({
-                                  ...note,
-                                  summary: rev.summary,
-                                  updated_at: new Date().toISOString(),
-                                });
-                                setHistoryOpen(false);
-                                notify('過去の要約を復元しました');
-                              }}
-                            >
-                              <RotateCcw size={12} />
-                              このバージョンを復元
-                            </button>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
-
-                  <div aria-label="要約内容" style={{ padding: '4px 0' }}>
-                    <StreamingMarkdownArticle
-                      key={note.id}
-                      content={isSummarizingThisNote ? '' : effectiveNote.summary}
-                      isGenerating={isSummarizingThisNote}
-                      animateOnChange
-                      placeholder="要約はまだ生成されていません（下のボタンまたは右上から生成できます）"
-                    />
-                  </div>
-                </section>
-
-                {note.decisions.length > 0 && (
-                  <section className="note-card">
-                    <h2 className="note-card-title">決定事項</h2>
-                    <ul style={{ margin: '0px', paddingLeft: '20px', lineHeight: '24px' }}>
-                      {note.decisions.map((d, i) => (
-                        <li key={`d-${i}`}>{d}</li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-
-                {!llmConfigured && (
-                  <section className="note-card">
-                    <div style={{ fontWeight: 600 }}>LLMが未設定です</div>
-                    <p style={{ margin: '0px', color: 'var(--ns-text-secondary)' }}>
-                      AI要約や質問応答を使うには設定画面でプロバイダを設定してください。
-                    </p>
-                    <button
-                      type="button"
-                      className="note-inline-link"
-                      style={{ alignSelf: 'flex-start' }}
-                      onClick={onGoSettings}
-                    >
-                      AI設定を開く
-                    </button>
-                  </section>
-                )}
-
-                {aiError && (
-                  <div style={{ color: 'var(--danger)' }}>{aiError}</div>
-                )}
-              </div>
+              <NoteSummaryPanel
+                note={note}
+                effectiveNote={effectiveNote}
+                summaryPresets={summaryPresets}
+                selectedTemplateId={selectedTemplateId}
+                setSelectedTemplateId={setSelectedTemplateId}
+                suggestedPresetId={suggestedPresetId}
+                historyOpen={historyOpen}
+                setHistoryOpen={setHistoryOpen}
+                compareRevisionId={compareRevisionId}
+                setCompareRevisionId={setCompareRevisionId}
+                isSummarizing={isSummarizingThisNote}
+                onRunSummarize={handleRunSummarize}
+                llmConfigured={llmConfigured}
+                onUpdateNote={onUpdateNote}
+                onNotify={notify}
+                aiError={aiError}
+                onGoSettings={onGoSettings}
+              />
             )}
 
             {activeTab === 'memo' && (
-              <div className="note-notes-tab">
-                <section className="note-card" style={{ padding: 0 }}>
-                  <div className="rich-memo-toolbar" role="toolbar" aria-label="メモ書式ツールバー">
-                    <button
-                      type="button"
-                      className="rich-memo-tool-btn"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        applyMemoCommand('formatBlock', 'h1');
-                      }}
-                    >
-                      H1
-                    </button>
-                    <button
-                      type="button"
-                      className="rich-memo-tool-btn"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        applyMemoCommand('formatBlock', 'h2');
-                      }}
-                    >
-                      H2
-                    </button>
-                    <button
-                      type="button"
-                      className="rich-memo-tool-btn"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        applyMemoCommand('formatBlock', 'h3');
-                      }}
-                    >
-                      H3
-                    </button>
-                    <button
-                      type="button"
-                      className="rich-memo-tool-btn"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        applyMemoCommand('bold');
-                      }}
-                    >
-                      <strong>太字</strong>
-                    </button>
-                    <button
-                      type="button"
-                      className="rich-memo-tool-btn"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        applyMemoCommand('underline');
-                      }}
-                    >
-                      <u>下線</u>
-                    </button>
-                    <button
-                      type="button"
-                      className="rich-memo-tool-btn"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        applyMemoCommand('insertUnorderedList');
-                      }}
-                    >
-                      箇条書き
-                    </button>
-                  </div>
-                  <div
-                    ref={memoEditorRef}
-                    role="textbox"
-                    aria-label="自由メモ帳"
-                    aria-multiline="true"
-                    contentEditable
-                    suppressContentEditableWarning
-                    className="rich-memo-editor"
-                    onInput={(e) => {
-                      saveMemoHtml(e.currentTarget.innerHTML);
-                    }}
-                    onBlur={(e) => {
-                      saveMemoHtml(e.currentTarget.innerHTML);
-                    }}
-                  />
-                </section>
-              </div>
+              <NoteMemoPanel
+                memoEditorRef={memoEditorRef}
+                applyMemoCommand={applyMemoCommand}
+                saveMemoHtml={saveMemoHtml}
+              />
             )}
           </div>
 

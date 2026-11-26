@@ -141,12 +141,32 @@ jobs:
           elif [ "${{ runner.os }}" = "Windows" ]; then
             cp "src-tauri/target/release/bundle/nsis/Notelet_${VERSION}_x64-setup.exe" \
                "release_assets/Notelet_${VERSION}_windows_x64-setup.exe"
-          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            cp "src-tauri/target/release/bundle/dmg/Notelet_${VERSION}_aarch64.dmg" \
-               "release_assets/Notelet_${VERSION}_macos_aarch64.dmg"
-          elif [ "${{ matrix.os }}" = "macos-26-intel" ]; then
-            cp "src-tauri/target/release/bundle/dmg/Notelet_${VERSION}_x64.dmg" \
-               "release_assets/Notelet_${VERSION}_macos_x64.dmg"
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            shopt -s nullglob
+            dmg_candidates=(src-tauri/target/release/bundle/dmg/Notelet_"${VERSION}"_*.dmg)
+            if [ "${#dmg_candidates[@]}" -ne 1 ]; then
+              echo "Expected exactly one macOS DMG, found ${#dmg_candidates[@]}" >&2
+              exit 1
+            fi
+            dmg_name=$(basename "${dmg_candidates[0]}")
+            case "$dmg_name" in
+              "Notelet_${VERSION}_aarch64.dmg")
+                asset_arch=aarch64
+                ;;
+              "Notelet_${VERSION}_x64.dmg")
+                asset_arch=x64
+                ;;
+              *)
+                echo "Unsupported macOS DMG architecture: $dmg_name" >&2
+                exit 1
+                ;;
+            esac
+            cp "${dmg_candidates[0]}" \
+               "release_assets/Notelet_${VERSION}_macos_${asset_arch}.dmg"
+          fi
+          if [ -z "$(find release_assets -maxdepth 1 -type f -print -quit)" ]; then
+            echo "No normalized release assets were produced" >&2
+            exit 1
           fi
           ls -la release_assets
 
