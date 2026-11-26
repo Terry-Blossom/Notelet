@@ -146,6 +146,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   active_template_id: 'standard',
   enable_gpu_asr: true,
   summary_presets: DEFAULT_SUMMARY_PRESETS,
+  preferred_mic_device_id: null,
 };
 
 const INITIAL_RECORDING_STATUS: RecordingStatus = {
@@ -554,6 +555,12 @@ const MainApp: React.FC = () => {
   const [sourceMode, setSourceMode] = useState<AudioSourceMode>('mic');
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [recordOptionsOpen, setRecordOptionsOpen] = useState(false);
+
+  useEffect(() => {
+    if (sourceMode !== 'system') {
+      setSelectedDeviceId(snapshot.settings.preferred_mic_device_id ?? '');
+    }
+  }, [snapshot.settings.preferred_mic_device_id, sourceMode]);
 
   useEffect(() => {
     if (!recordOptionsOpen) return;
@@ -1603,7 +1610,21 @@ const MainApp: React.FC = () => {
                     className="input"
                     style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
                     value={selectedDeviceId}
-                    onChange={(e) => setSelectedDeviceId(e.target.value)}
+                    onChange={(e) => {
+                      const deviceId = e.target.value;
+                      setSelectedDeviceId(deviceId);
+                      const settings = {
+                        ...snapshot.settings,
+                        preferred_mic_device_id: deviceId || null,
+                      };
+                      if (isTauriRuntime()) {
+                        void apiSaveSettings(settings)
+                          .then(setSnapshot)
+                          .catch((error) => setBannerMessage(String(error)));
+                      } else {
+                        setSnapshot((prev) => ({ ...prev, settings }));
+                      }
+                    }}
                   >
                     <option value="">既定のマイク (自動)</option>
                     {devices

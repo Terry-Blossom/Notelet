@@ -286,6 +286,8 @@ pub struct AppSettings {
     pub auto_share_slack_folder_ids: Vec<String>,
     #[serde(default)]
     pub calendar_reminder_enabled: bool,
+    #[serde(default)]
+    pub preferred_mic_device_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -405,6 +407,7 @@ impl Default for AppSettings {
             system_gain: 1.0,
             auto_share_slack_folder_ids: Vec::new(),
             calendar_reminder_enabled: false,
+            preferred_mic_device_id: None,
         }
     }
 }
@@ -416,6 +419,23 @@ mod tests {
     #[test]
     fn default_settings_have_no_selected_asr_model() {
         assert!(AppSettings::default().active_asr_model_id.is_empty());
+    }
+
+    #[test]
+    fn default_settings_have_no_preferred_mic_device() {
+        assert!(AppSettings::default().preferred_mic_device_id.is_none());
+    }
+
+    #[test]
+    fn settings_without_preferred_mic_device_remain_compatible() {
+        let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("preferred_mic_device_id");
+
+        let settings: AppSettings = serde_json::from_value(value).unwrap();
+        assert!(settings.preferred_mic_device_id.is_none());
     }
 }
 

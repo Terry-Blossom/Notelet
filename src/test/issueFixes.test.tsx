@@ -565,6 +565,9 @@ describe('Regression fixes for #25-#31', () => {
 
   it('#31: Qwen runtime button is disabled when parakeet_cli_path is already set', async () => {
     const onInstallRuntime = vi.fn();
+    invokeMock.mockImplementation(async (cmd: string) => (
+      cmd === 'list_audio_devices' ? [] : null
+    ));
     render(
       <SettingsView
         settings={{ ...baseSettings, parakeet_cli_path: 'C:\\tools\\sherpa.exe' }}
@@ -592,6 +595,120 @@ describe('Regression fixes for #25-#31', () => {
       fireEvent.click(btn);
     });
     expect(onInstallRuntime).not.toHaveBeenCalled();
+  });
+
+  it('selects and tests the preferred microphone input device', async () => {
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_audio_devices') {
+        return [
+          { id: 'mic-usb', name: 'USB Mic', kind: 'input', is_default: false },
+          { id: 'speaker-loopback', name: 'Speaker', kind: 'loopback', is_default: true },
+        ];
+      }
+      if (cmd === 'test_mic_level_cmd') return { rms: 0.1, device_name: 'USB Mic' };
+      return null;
+    });
+
+    render(
+      <SettingsView
+        settings={{ ...baseSettings, preferred_mic_device_id: 'mic-usb' }}
+        models={[]}
+        secretStatus={null}
+        downloadProgress={{}}
+        updateProgress={null}
+        onSaveSettings={onSaveSettings}
+        onDownloadModel={vi.fn()}
+        onInstallRuntime={vi.fn()}
+        onCheckUpdate={vi.fn()}
+        onInstallUpdate={vi.fn()}
+        onSetSecret={vi.fn()}
+        onExportAll={vi.fn()}
+        onPurgeAll={vi.fn()}
+      />
+    );
+
+    const micSelect = await screen.findByRole('combobox', { name: 'マイク入力元' });
+    expect(await screen.findByRole('option', { name: 'USB Mic' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Speaker' })).not.toBeInTheDocument();
+    expect(micSelect).toHaveValue('mic-usb');
+
+    fireEvent.change(micSelect, { target: { value: '' } });
+    expect(onSaveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ preferred_mic_device_id: null })
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'マイクをテスト' }));
+    });
+    expect(invokeMock).toHaveBeenCalledWith('test_mic_level_cmd', { deviceId: 'mic-usb' });
+  });
+
+  it('uses the saved preferred microphone when starting a recording', async () => {
+    const snapshot: AppDataSnapshot = {
+      settings: { ...baseSettings, preferred_mic_device_id: 'mic-usb' },
+      notes: [],
+      folders: [{ id: 'personal', name: '個人ノート', is_shared: false, permission: 'owner' }],
+      dictionary: [],
+      recipes: [],
+      audit_logs: [],
+      chat_history: [],
+    };
+    invokeMock.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'get_snapshot') return snapshot;
+      if (cmd === 'list_asr_models') {
+        return [{
+          id: baseSettings.active_asr_model_id,
+          name: 'Whisper Small',
+          provider: 'local_whisper',
+          is_local: true,
+          is_compatible: true,
+          compatibility_reason: null,
+          installed: true,
+          supports_realtime: true,
+        }];
+      }
+      if (cmd === 'list_audio_devices') {
+        return [
+          { id: 'mic-usb', name: 'USB Mic', kind: 'input', is_default: false },
+          { id: 'mic-usb-alt', name: 'USB Mic 2', kind: 'input', is_default: false },
+        ];
+      }
+      if (cmd === 'list_integration_adapters') return [];
+      if (cmd === 'get_secret_status_cmd') return {};
+      if (cmd === 'get_mcp_config_preview') return '';
+      if (cmd === 'save_note') return snapshot;
+      if (cmd === 'save_settings') {
+        return { ...snapshot, settings: (args?.settings as AppSettings) };
+      }
+      if (cmd === 'start_recording') {
+        return { state: 'recording', elapsed_ms: 0, level_rms: 0, waveform: [], device_name: 'USB Mic', source_mode: 'mic', is_silent_warning: false, error_message: null, recovery_hint: null, temp_wav_path: null };
+      }
+      return null;
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '録音オプション' }));
+    const micSelect = await screen.findByRole('combobox', { name: '使用するマイク' });
+    await waitFor(() => expect(micSelect).toHaveValue('mic-usb'));
+    fireEvent.change(micSelect, { target: { value: 'mic-usb-alt' } });
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'save_settings',
+        expect.objectContaining({
+          settings: expect.objectContaining({ preferred_mic_device_id: 'mic-usb-alt' }),
+        })
+      );
+    });
+    fireEvent.click(screen.getByRole('button', { name: '両方' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '録音' }));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'start_recording',
+        expect.objectContaining({ sourceMode: 'both', deviceId: 'mic-usb-alt' })
+      );
+    });
   });
 
   it('#19: ErrorBoundary catches render errors and recovers on reset', () => {
