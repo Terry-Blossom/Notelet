@@ -767,7 +767,7 @@ async fn transcribe_uploaded_url(
     url: String,
     note_id: String,
 ) -> Result<Note, String> {
-    let (parsed, _) = net_security::resolve_and_validate_url(&url).await?;
+    let parsed = net_security::validate_remote_url(&url)?;
     let trimmed = parsed.as_str().to_string();
     let temp_dir = storage::app_data_dir().join("temp_recordings");
     let _ = std::fs::create_dir_all(&temp_dir);
@@ -779,37 +779,9 @@ async fn transcribe_uploaded_url(
         .unwrap_or("mp4");
     let temp_path = temp_dir.join(format!("url_{}.{}", uuid::Uuid::new_v4(), ext));
 
-    // Try yt-dlp first for web video links if available, otherwise direct HTTP download with redirect & DNS re-validation
-    let mut downloaded = false;
-    let ytdlp_out = temp_dir.join(format!("url_{}.%(ext)s", uuid::Uuid::new_v4()));
-    let mut ytdlp_cmd = std::process::Command::new("yt-dlp");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        ytdlp_cmd.creation_flags(0x0800_0000);
-    }
-    if let Ok(out) = ytdlp_cmd
-        .args(["--proto", "http,https", "--no-exec", "-x", "--audio-format", "wav", "-o"])
-        .arg(&ytdlp_out)
-        .arg("--")
-        .arg(&trimmed)
-        .output()
-    {
-        if out.status.success() {
-            let wav_cand = ytdlp_out.with_extension("wav");
-            if wav_cand.exists() {
-                let path_str = wav_cand.to_string_lossy().to_string();
-                return transcribe_recording(app, state, path_str, note_id, Some(false)).await;
-            }
-            downloaded = true;
-        }
-    }
-
-    if !downloaded {
-        let bytes = net_security::download_remote_bytes(&trimmed, 5).await?;
-        std::fs::write(&temp_path, &bytes)
-            .map_err(|e| format!("一時ファイルの保存に失敗: {e}"))?;
-    }
+    let bytes = net_security::download_remote_bytes(&trimmed, 5).await?;
+    std::fs::write(&temp_path, &bytes)
+        .map_err(|e| format!("一時ファイルの保存に失敗: {e}"))?;
 
     let path_str = temp_path.to_string_lossy().to_string();
     transcribe_recording(app, state, path_str, note_id, Some(false)).await
