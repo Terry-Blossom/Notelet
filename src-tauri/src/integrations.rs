@@ -157,6 +157,7 @@ pub fn build_mcp_config_preview(settings: &AppSettings) -> String {
     .unwrap_or_default()
 }
 
+#[allow(dead_code)]
 pub fn sample_calendar_notice() -> Vec<CalendarEventMock> {
     Vec::new()
 }

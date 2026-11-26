@@ -416,7 +416,7 @@ impl AudioManager {
                     .map(|mut q| q.drain(..).collect())
                     .unwrap_or_default();
 
-                if (!mic_samples.is_empty() || !sys_samples.is_empty()) {
+                if !mic_samples.is_empty() || !sys_samples.is_empty() {
                     let me: f64 = mic_samples.iter().map(|&v| (v as f64) * (v as f64)).sum();
                     let se: f64 = sys_samples.iter().map(|&v| (v as f64) * (v as f64)).sum();
                     if let Ok(mut eg) = energy_cb.lock() {

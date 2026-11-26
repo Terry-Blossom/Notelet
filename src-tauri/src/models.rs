@@ -1,31 +1,21 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanTier {
+    #[default]
     Basic,
     Business,
     Enterprise,
 }
 
-impl Default for PlanTier {
-    fn default() -> Self {
-        Self::Basic
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioSourceMode {
+    #[default]
     Mic,
     System,
     Both,
-}
-
-impl Default for AudioSourceMode {
-    fn default() -> Self {
-        Self::Mic
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

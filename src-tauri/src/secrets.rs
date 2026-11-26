@@ -23,7 +23,7 @@ fn vault_lock() -> &'static Mutex<()> {
 
 fn ensure_legacy_migration() {
     static MIGRATION: OnceLock<()> = OnceLock::new();
-    MIGRATION.get_or_init(|| migrate_legacy_secrets());
+    MIGRATION.get_or_init(migrate_legacy_secrets);
 }
 
 fn restrict_dir_permissions(dir: &Path) {

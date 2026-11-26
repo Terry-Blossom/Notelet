@@ -407,7 +407,7 @@ pub async fn save_note_to_notion(
             }
 
             let all_blocks = build_children_blocks(note, folder_name);
-            let total_pages = write_blocks_with_portal(&client, &token, existing_page_id, &title_text, note, folder_name, &all_blocks).await?;
+            let total_pages = write_blocks_with_portal(&client, &token, existing_page_id, title_text, note, folder_name, &all_blocks).await?;
             if settings.notion_target_type == "database" {
                 let _ = ensure_database_schema(&settings.notion_target_id).await;
                 let space_label = if folder_name.trim().is_empty() { "一般" } else { folder_name.trim() };
@@ -534,7 +534,7 @@ pub async fn save_note_to_notion(
     let url = v["url"].as_str().unwrap_or("").to_string();
 
     if total_pages > 1 && !page_id.is_empty() {
-        let _ = write_blocks_with_portal(&client, &token, &page_id, &title_text, note, folder_name, &all_blocks).await?;
+        let _ = write_blocks_with_portal(&client, &token, &page_id, title_text, note, folder_name, &all_blocks).await?;
     }
 
     Ok((page_id, url, Utc::now().to_rfc3339()))
@@ -662,21 +662,19 @@ where
         match resp_res {
             Ok(resp) => {
                 let status = resp.status();
-                if status.as_u16() == 429 || status.is_server_error() {
-                    if attempt < 3 {
-                        let retry_after_secs = resp
-                            .headers()
-                            .get("retry-after")
-                            .and_then(|v| v.to_str().ok())
-                            .and_then(|s| s.trim().parse::<u64>().ok())
-                            .unwrap_or(1 + attempt as u64);
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            (retry_after_secs * 1000).min(8000),
-                        ))
-                        .await;
-                        attempt += 1;
-                        continue;
-                    }
+                if (status.as_u16() == 429 || status.is_server_error()) && attempt < 3 {
+                    let retry_after_secs = resp
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                        .unwrap_or(1 + attempt as u64);
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        (retry_after_secs * 1000).min(8000),
+                    ))
+                    .await;
+                    attempt += 1;
+                    continue;
                 }
                 return Ok(resp);
             }

@@ -637,7 +637,7 @@ fn strip_html_tags(raw: &str) -> String {
 fn extract_sentence_excerpt(text: &str, query_lower: &str) -> String {
     let clean = strip_html_tags(text);
     let sentences: Vec<&str> = clean
-        .split(|c| c == '。' || c == '！' || c == '？' || c == '\n')
+        .split(['。', '！', '？', '\n'])
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();

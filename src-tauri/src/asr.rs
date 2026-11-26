@@ -1117,9 +1117,7 @@ pub async fn transcribe_wav_with_progress(
                     model.filename
                 ));
             }
-            let whisper_lang = if model.id.starts_with("kotoba-whisper") {
-                "ja"
-            } else if settings.language.is_empty() {
+            let whisper_lang = if model.id.starts_with("kotoba-whisper") || settings.language.is_empty() {
                 "ja"
             } else {
                 &settings.language
@@ -2446,7 +2444,7 @@ fn strip_sense_voice_tags(raw: &str) -> String {
 fn is_silence_hallucination(text: &str) -> bool {
     let cleaned = text
         .trim()
-        .trim_end_matches(|c: char| matches!(c, '。' | '、' | '.' | '!' | '！' | '?' | '？'));
+        .trim_end_matches(['。', '、', '.', '!', '！', '?', '？']);
     matches!(
         cleaned,
         "ご視聴ありがとうございました"
@@ -2539,9 +2537,7 @@ pub async fn prewarm_whisper_server(settings: &AppSettings) {
     if !model_path.exists() {
         return;
     }
-    let whisper_lang = if model.id.starts_with("kotoba-whisper") {
-        "ja"
-    } else if settings.language.is_empty() {
+    let whisper_lang = if model.id.starts_with("kotoba-whisper") || settings.language.is_empty() {
         "ja"
     } else {
         &settings.language
@@ -2591,9 +2587,7 @@ pub async fn transcribe_chunk_async(
         {
             let prompt_terms: Vec<String> = dictionary.iter().map(|d| d.term.clone()).collect();
             let prompt_hint = prompt_terms.join("、");
-            let whisper_lang = if model.id.starts_with("kotoba-whisper") {
-                "ja"
-            } else if settings.language.is_empty() {
+            let whisper_lang = if model.id.starts_with("kotoba-whisper") || settings.language.is_empty() {
                 "ja"
             } else {
                 &settings.language
@@ -2680,9 +2674,7 @@ pub fn transcribe_chunk_sync(
                 ));
             }
             let out_base = chunk_wav.with_extension("chunk_out");
-            let whisper_lang = if model.id.starts_with("kotoba-whisper") {
-                "ja"
-            } else if settings.language.is_empty() {
+            let whisper_lang = if model.id.starts_with("kotoba-whisper") || settings.language.is_empty() {
                 "ja"
             } else {
                 &settings.language
