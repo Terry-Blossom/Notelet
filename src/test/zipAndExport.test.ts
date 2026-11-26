@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createEmptyNote } from '../lib/format';
 import { exportNotesAsObsidianZip, mergeNoteletBackupJson, noteToObsidianMarkdown } from '../lib/noteExportImport';
 import { createZipBytes, unzipTextFiles } from '../lib/zip';
-import { AppDataSnapshot } from '../types';
+import { AppDataSnapshot, PopupChatSession } from '../types';
 
 describe('ZIP, Obsidian Markdown export, and Backup restore', () => {
   it('creates and extracts UTF-8 ZIP archives round-trip', async () => {
@@ -55,6 +55,29 @@ describe('ZIP, Obsidian Markdown export, and Backup restore', () => {
     incomingNew.title = 'Restored';
     incomingNew.created_at = '2026-11-21T09:00:00Z';
 
+    const existingChat: PopupChatSession = {
+      id: 'chat-1',
+      scopeKey: 'note:note-1',
+      title: 'Current chat',
+      updatedAt: '2026-11-20T09:00:00Z',
+      messages: [],
+    };
+    const currentOnlyChat: PopupChatSession = {
+      id: 'chat-current-only',
+      scopeKey: 'note:note-3',
+      title: 'Keep current chat',
+      updatedAt: '2026-11-19T09:00:00Z',
+      messages: [],
+    };
+    const updatedChat: PopupChatSession = { ...existingChat, title: 'Restored chat' };
+    const addedChat: PopupChatSession = {
+      id: 'chat-2',
+      scopeKey: 'note:note-2',
+      title: 'New chat',
+      updatedAt: '2026-11-21T09:00:00Z',
+      messages: [],
+    };
+
     const current: AppDataSnapshot = {
       notes: [existing],
       folders: [{ id: 'meeting', name: '会議', is_shared: false, permission: 'owner' }],
@@ -62,12 +85,14 @@ describe('ZIP, Obsidian Markdown export, and Backup restore', () => {
       recipes: [],
       settings: {} as AppDataSnapshot['settings'],
       audit_logs: [],
+      popup_chat_sessions: [existingChat, currentOnlyChat],
     };
 
     const backupJson = JSON.stringify({
       notes: [existing, incomingNew],
       folders: [{ id: 'proj', name: 'プロジェクト', is_shared: false, permission: 'owner' }],
       dictionary: [{ id: 'd1', term: 'Notelet', reading: 'ノートレット', note: '', scope: 'personal' }],
+      popup_chat_sessions: [updatedChat, addedChat],
     });
 
     const result = mergeNoteletBackupJson(backupJson, current);
@@ -77,5 +102,6 @@ describe('ZIP, Obsidian Markdown export, and Backup restore', () => {
     expect(result.addedDictionary).toBe(1);
     expect(result.snapshot.notes).toHaveLength(2);
     expect(result.snapshot.notes[0].id).toBe('note-2');
+    expect(result.snapshot.popup_chat_sessions).toEqual([updatedChat, currentOnlyChat, addedChat]);
   });
 });

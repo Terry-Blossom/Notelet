@@ -175,6 +175,15 @@ export function mergeNoteletBackupJson(
     }
   }
 
+  const popupSessionMap = new Map((current.popup_chat_sessions || []).map((s) => [s.id, s]));
+  if (Array.isArray(obj.popup_chat_sessions)) {
+    for (const session of obj.popup_chat_sessions) {
+      if (session && typeof session === 'object' && typeof session.id === 'string') {
+        popupSessionMap.set(session.id, session);
+      }
+    }
+  }
+
   return {
     snapshot: {
       ...current,
@@ -182,6 +191,7 @@ export function mergeNoteletBackupJson(
       folders: Array.from(folderMap.values()),
       dictionary: Array.from(dictMap.values()),
       recipes: Array.from(recipeMap.values()),
+      popup_chat_sessions: Array.from(popupSessionMap.values()),
     },
     addedNotes,
     updatedNotes,

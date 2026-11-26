@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
-import { AppDataSnapshot, AppSettings, Note } from '../types';
+import { AppDataSnapshot, AppSettings, ChatAnswer, Note, PopupChatSession } from '../types';
 import { createEmptyNote } from '../lib/format';
 
 const { invokeMock, listenHandlers, callbackMap, registerCallback } = vi.hoisted(() => {
@@ -253,6 +253,107 @@ describe('Regression fixes for #25-#31', () => {
     await new Promise((r) => setTimeout(r, 20));
     nodeProc?.off('unhandledRejection', onUnhandled);
     expect(unhandled).toHaveLength(0);
+  });
+
+  it('migrates legacy popup chat sessions once and removes the localStorage copy', async () => {
+    const note = makeNote();
+    const legacy: PopupChatSession = {
+      id: 'legacy-session',
+      scopeKey: 'note:note-1',
+      title: '旧チャット',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      messages: [{ role: 'user', text: '以前の質問', createdAt: '2026-01-01T00:00:00.000Z' }],
+    };
+    localStorage.setItem('notelet_chat_sessions_v1', JSON.stringify([legacy]));
+    const onSavePopupChatSessions = vi.fn().mockResolvedValue(undefined);
+    const props = {
+      note,
+      allNotes: [note],
+      settings: baseSettings,
+      recipes: [],
+      secretStatus: null,
+      transcribing: false,
+      transcribeError: null,
+      onUpdateNote: vi.fn(),
+      onCopyText: vi.fn(),
+      onPastePrepare: vi.fn(),
+      onSaveToNotion: vi.fn(),
+      onSummarize: vi.fn(),
+      onDraftFollowup: vi.fn(),
+      onRunRecipe: vi.fn(),
+      onSaveRecipe: vi.fn(),
+      onChatNote: vi.fn(),
+      onShareSlack: vi.fn(),
+      onSendWebhook: vi.fn(),
+      onAddDictionaryTerm: vi.fn(),
+      onGoSettings: vi.fn(),
+      popupChatSessions: [],
+      onSavePopupChatSessions,
+    };
+
+    const { unmount } = render(<NoteEditorView {...props} />);
+    await waitFor(() => {
+      expect(onSavePopupChatSessions).toHaveBeenCalledWith([legacy]);
+      expect(localStorage.getItem('notelet_chat_sessions_v1')).toBeNull();
+    });
+    unmount();
+
+    render(<NoteEditorView {...props} />);
+    expect(onSavePopupChatSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a popup chat user message before waiting for the assistant response', async () => {
+    const note = makeNote();
+    let resolveAnswer!: (answer: ChatAnswer) => void;
+    const onChatNote = vi.fn(
+      () =>
+        new Promise<ChatAnswer>((resolve) => {
+          resolveAnswer = resolve;
+        })
+    );
+    const onSavePopupChatSessions = vi.fn();
+    render(
+      <NoteEditorView
+        note={note}
+        allNotes={[note]}
+        settings={baseSettings}
+        recipes={[]}
+        secretStatus={null}
+        transcribing={false}
+        transcribeError={null}
+        onUpdateNote={vi.fn()}
+        onCopyText={vi.fn()}
+        onPastePrepare={vi.fn()}
+        onSaveToNotion={vi.fn()}
+        onSummarize={vi.fn()}
+        onDraftFollowup={vi.fn()}
+        onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
+        onChatNote={onChatNote}
+        onShareSlack={vi.fn()}
+        onSendWebhook={vi.fn()}
+        onAddDictionaryTerm={vi.fn()}
+        onGoSettings={vi.fn()}
+        popupChatSessions={[]}
+        onSavePopupChatSessions={onSavePopupChatSessions}
+      />
+    );
+
+    const chatInput = screen.getByRole('textbox', { name: 'ノートについて何でも質問' });
+    fireEvent.change(chatInput, { target: { value: '送信直後に保存' } });
+    await act(async () => {
+      fireEvent.keyDown(chatInput, { key: 'Enter' });
+    });
+
+    expect(onChatNote).toHaveBeenCalled();
+    expect(onSavePopupChatSessions).toHaveBeenCalled();
+    expect(onSavePopupChatSessions.mock.calls[0][0][0].messages).toEqual([
+      expect.objectContaining({ role: 'user', text: '送信直後に保存' }),
+    ]);
+
+    await act(async () => {
+      resolveAnswer({ answer: '回答', citations: [] });
+    });
   });
 
   it('blocks starting a new recording when no ASR model is selected', async () => {
