@@ -380,29 +380,40 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     if (popupChatSessions && popupChatSessions.length > 0) {
       setChatSessions(popupChatSessions);
       migratedPopupRef.current = true;
+      try {
+        localStorage.removeItem(CHAT_SESSIONS_KEY);
+      } catch {
+        // ignore storage errors
+      }
     } else if (!migratedPopupRef.current && popupChatSessions && popupChatSessions.length === 0) {
-      migratedPopupRef.current = true;
       const legacy = loadChatSessions();
       if (legacy.length > 0 && onSavePopupChatSessions) {
-        void onSavePopupChatSessions(legacy.slice(0, 100));
+        migratedPopupRef.current = true;
+        try {
+          void Promise.resolve(onSavePopupChatSessions(legacy.slice(0, 100))).then(() => {
+            localStorage.removeItem(CHAT_SESSIONS_KEY);
+          }).catch(() => {
+            migratedPopupRef.current = false;
+          });
+        } catch {
+          migratedPopupRef.current = false;
+        }
+      } else if (legacy.length === 0) {
+        migratedPopupRef.current = true;
+        try {
+          localStorage.removeItem(CHAT_SESSIONS_KEY);
+        } catch {
+          // ignore storage errors
+        }
       }
     }
-  }, [popupChatSessions]);
+  }, [popupChatSessions, onSavePopupChatSessions]);
   const [lastSessionByScope, setLastSessionByScope] = useState<Record<string, string>>(() => loadLastSessionMap());
   const [chatPopupOpen, setChatPopupOpen] = useState<boolean>(false);
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
   const composerUnifiedRef = useRef<HTMLDivElement | null>(null);
 
   const currentScopeKey = viewingFolderId ? `space:${viewingFolderId}` : `note:${note.id}`;
-
-  useEffect(() => {
-    const trimmed = chatSessions.slice(0, 100);
-    try {
-      localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(trimmed));
-    } catch {
-      // ignore storage quota errors
-    }
-  }, [chatSessions]);
 
   const persistPopupSessions = (next: PopupChatSession[]) => {
     if (onSavePopupChatSessions) {
@@ -1022,19 +1033,19 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     const existingId = lastSessionByScope[scopeKey];
     const existing = chatSessions.find((s) => s.id === existingId);
     if (existing) {
-      setChatSessions((prev) =>
-        prev.map((s) => {
-          if (s.id !== existing.id) return s;
-          const nextMsgs = [...s.messages];
-          if (userText) {
-            nextMsgs.push({ role: 'user', text: userText, createdAt: now });
-          }
-          if (assistantText !== undefined) {
-            nextMsgs.push({ role: 'assistant', text: assistantText, createdAt: now });
-          }
-          return { ...s, updatedAt: now, messages: nextMsgs };
-        })
-      );
+      const next = chatSessions.map((s) => {
+        if (s.id !== existing.id) return s;
+        const nextMsgs = [...s.messages];
+        if (userText) {
+          nextMsgs.push({ role: 'user', text: userText, createdAt: now });
+        }
+        if (assistantText !== undefined) {
+          nextMsgs.push({ role: 'assistant', text: assistantText, createdAt: now });
+        }
+        return { ...s, updatedAt: now, messages: nextMsgs };
+      });
+      setChatSessions(next);
+      persistPopupSessions(next);
       return existing.id;
     } else {
       const newId = crypto.randomUUID();
@@ -1045,7 +1056,9 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         updatedAt: now,
         messages: userText ? [{ role: 'user', text: userText, createdAt: now }] : [],
       };
-      setChatSessions((prev) => [newSession, ...prev]);
+      const next = [newSession, ...chatSessions];
+      setChatSessions(next);
+      persistPopupSessions(next);
       setLastSessionByScope((prev) => ({ ...prev, [scopeKey]: newId }));
       return newId;
     }
@@ -2897,7 +2910,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   if (id === 'groq-whisper-large-v3-turbo') return 'Groq Whisper';
                   if (id === 'openai-whisper-1') return 'OpenAI Whisper';
                   if (id === 'deepgram-nova-2') return 'Deepgram Nova-2';
-                  return id || 'Whisper';
+                  return id || 'モデル未選択';
                 })()}
               </span>
             </button>

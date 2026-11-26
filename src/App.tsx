@@ -109,7 +109,7 @@ type NavView =
 
 const FALLBACK_SETTINGS: AppSettings = {
   plan_tier: 'enterprise',
-  active_asr_model_id: 'whisper-large-v3-turbo-q5',
+  active_asr_model_id: '',
   active_asr_provider: 'local_whisper',
   language: 'ja',
   allow_cloud_asr: false,
@@ -532,6 +532,7 @@ export const App: React.FC = () => {
 const MainApp: React.FC = () => {
   const [view, setView] = useState<NavView>('home');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [recordingStartError, setRecordingStartError] = useState<string | null>(null);
   const [commandSearchOpen, setCommandSearchOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -1009,7 +1010,33 @@ const MainApp: React.FC = () => {
     return () => clearInterval(timer);
   }, [recStatus.state]);
 
+  const ensureRecordingAsrReady = () => {
+    if (!isTauriRuntime()) return true;
+
+    const modelId = snapshot.settings.active_asr_model_id.trim();
+    const model = models.find((item) => item.id === modelId);
+    let error: string | null = null;
+    if (!modelId) {
+      error = 'ASRモデルが選択されていません。設定画面でモデルを選択してください。';
+    } else if (!model) {
+      error = '選択中のASRモデルを確認できません。設定画面でモデルを選択してください。';
+    } else if (model.is_local && !model.is_compatible) {
+      error = model.compatibility_reason || 'ASRランタイムが利用できません。設定画面を確認してください。';
+    } else if (model.is_local && !model.installed) {
+      error = '選択中のASRモデルが未導入です。設定画面からモデルをダウンロードしてください。';
+    } else if (!model.is_local && !model.is_compatible) {
+      error = model.compatibility_reason || 'クラウドASRのAPIキーが未設定です。設定画面を確認してください。';
+    } else if (!model.is_local && !snapshot.settings.allow_cloud_asr) {
+      error = 'クラウドASRが許可されていません。設定画面で利用を許可してください。';
+    }
+
+    setRecordingStartError(error);
+    if (error) setSettingsOpen(true);
+    return !error;
+  };
+
   const handleStartRecording = async (voiceTyping = false) => {
+    if (!ensureRecordingAsrReady()) return;
     voiceTypingRef.current = voiceTyping;
     setTranscribeError(null);
     setLiveManualNotes('');
@@ -1042,6 +1069,7 @@ const MainApp: React.FC = () => {
   };
 
   const handleStartRecordingInNote = async () => {
+    if (!ensureRecordingAsrReady()) return;
     voiceTypingRef.current = false;
     setTranscribeError(null);
     setLiveSegments([]);
@@ -1350,6 +1378,11 @@ const MainApp: React.FC = () => {
       }}
     >
       <div className="settings-modal-panel">
+        {recordingStartError && (
+          <div role="alert" className="settings-error" style={{ margin: '16px 24px 0' }}>
+            {recordingStartError}
+          </div>
+        )}
         <button
           type="button"
           aria-label="設定を閉じる"
@@ -1544,7 +1577,15 @@ const MainApp: React.FC = () => {
                       type="button"
                       className={`tab-btn ${sourceMode === opt.id ? 'active' : ''}`}
                       style={{ flex: 1, height: '28px', padding: '0 8px', fontSize: '12px' }}
-                      onClick={() => setSourceMode(opt.id)}
+                      onClick={() => {
+                        if (
+                          sourceMode !== opt.id &&
+                          (sourceMode === 'system' || opt.id === 'system')
+                        ) {
+                          setSelectedDeviceId('');
+                        }
+                        setSourceMode(opt.id);
+                      }}
                     >
                       {opt.label}
                     </button>
@@ -1567,6 +1608,30 @@ const MainApp: React.FC = () => {
                     <option value="">既定のマイク (自動)</option>
                     {devices
                       .filter((d) => d.kind === 'input')
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              {sourceMode === 'system' && devices.some((d) => d.kind === 'loopback') && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                    システム音声
+                  </span>
+                  <select
+                    aria-label="使用するシステム音声入力"
+                    className="input"
+                    style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
+                    value={selectedDeviceId}
+                    onChange={(e) => setSelectedDeviceId(e.target.value)}
+                  >
+                    <option value="">既定のシステム音声入力 (自動)</option>
+                    {devices
+                      .filter((d) => d.kind === 'loopback')
                       .map((d) => (
                         <option key={d.id} value={d.id}>
                           {d.name}

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
-import { AppDataSnapshot, AppSettings, Note } from '../types';
+import { AppDataSnapshot, AppSettings, ChatAnswer, Note, PopupChatSession } from '../types';
 import { createEmptyNote } from '../lib/format';
 
 const { invokeMock, listenHandlers, callbackMap, registerCallback } = vi.hoisted(() => {
@@ -255,6 +255,164 @@ describe('Regression fixes for #25-#31', () => {
     expect(unhandled).toHaveLength(0);
   });
 
+  it('migrates legacy popup chat sessions once and removes the localStorage copy', async () => {
+    const note = makeNote();
+    const legacy: PopupChatSession = {
+      id: 'legacy-session',
+      scopeKey: 'note:note-1',
+      title: '旧チャット',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      messages: [{ role: 'user', text: '以前の質問', createdAt: '2026-01-01T00:00:00.000Z' }],
+    };
+    localStorage.setItem('notelet_chat_sessions_v1', JSON.stringify([legacy]));
+    const onSavePopupChatSessions = vi.fn().mockResolvedValue(undefined);
+    const props = {
+      note,
+      allNotes: [note],
+      settings: baseSettings,
+      recipes: [],
+      secretStatus: null,
+      transcribing: false,
+      transcribeError: null,
+      onUpdateNote: vi.fn(),
+      onCopyText: vi.fn(),
+      onPastePrepare: vi.fn(),
+      onSaveToNotion: vi.fn(),
+      onSummarize: vi.fn(),
+      onDraftFollowup: vi.fn(),
+      onRunRecipe: vi.fn(),
+      onSaveRecipe: vi.fn(),
+      onChatNote: vi.fn(),
+      onShareSlack: vi.fn(),
+      onSendWebhook: vi.fn(),
+      onAddDictionaryTerm: vi.fn(),
+      onGoSettings: vi.fn(),
+      popupChatSessions: [],
+      onSavePopupChatSessions,
+    };
+
+    const { unmount } = render(<NoteEditorView {...props} />);
+    await waitFor(() => {
+      expect(onSavePopupChatSessions).toHaveBeenCalledWith([legacy]);
+      expect(localStorage.getItem('notelet_chat_sessions_v1')).toBeNull();
+    });
+    unmount();
+
+    render(<NoteEditorView {...props} />);
+    expect(onSavePopupChatSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a popup chat user message before waiting for the assistant response', async () => {
+    const note = makeNote();
+    let resolveAnswer!: (answer: ChatAnswer) => void;
+    const onChatNote = vi.fn(
+      () =>
+        new Promise<ChatAnswer>((resolve) => {
+          resolveAnswer = resolve;
+        })
+    );
+    const onSavePopupChatSessions = vi.fn();
+    render(
+      <NoteEditorView
+        note={note}
+        allNotes={[note]}
+        settings={baseSettings}
+        recipes={[]}
+        secretStatus={null}
+        transcribing={false}
+        transcribeError={null}
+        onUpdateNote={vi.fn()}
+        onCopyText={vi.fn()}
+        onPastePrepare={vi.fn()}
+        onSaveToNotion={vi.fn()}
+        onSummarize={vi.fn()}
+        onDraftFollowup={vi.fn()}
+        onRunRecipe={vi.fn()}
+        onSaveRecipe={vi.fn()}
+        onChatNote={onChatNote}
+        onShareSlack={vi.fn()}
+        onSendWebhook={vi.fn()}
+        onAddDictionaryTerm={vi.fn()}
+        onGoSettings={vi.fn()}
+        popupChatSessions={[]}
+        onSavePopupChatSessions={onSavePopupChatSessions}
+      />
+    );
+
+    const chatInput = screen.getByRole('textbox', { name: 'ノートについて何でも質問' });
+    fireEvent.change(chatInput, { target: { value: '送信直後に保存' } });
+    await act(async () => {
+      fireEvent.keyDown(chatInput, { key: 'Enter' });
+    });
+
+    expect(onChatNote).toHaveBeenCalled();
+    expect(onSavePopupChatSessions).toHaveBeenCalled();
+    expect(onSavePopupChatSessions.mock.calls[0][0][0].messages).toEqual([
+      expect.objectContaining({ role: 'user', text: '送信直後に保存' }),
+    ]);
+
+    await act(async () => {
+      resolveAnswer({ answer: '回答', citations: [] });
+    });
+  });
+
+  it('blocks starting a new recording when no ASR model is selected', async () => {
+    const snapshot: AppDataSnapshot = {
+      settings: { ...baseSettings, active_asr_model_id: '' },
+      notes: [],
+      folders: [{ id: 'personal', name: '個人ノート', is_shared: false, permission: 'owner' }],
+      dictionary: [],
+      recipes: [],
+      audit_logs: [],
+      chat_history: [],
+    };
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_snapshot') return snapshot;
+      if (cmd === 'list_asr_models' || cmd === 'list_audio_devices' || cmd === 'list_integration_adapters') return [];
+      if (cmd === 'get_secret_status_cmd') return {};
+      if (cmd === 'get_mcp_config_preview') return '';
+      return null;
+    });
+
+    render(<App />);
+    await screen.findByRole('button', { name: '録音' });
+    fireEvent.click(screen.getByRole('button', { name: '録音' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('ASRモデルが選択されていません');
+    expect(screen.getByRole('dialog', { name: '設定' })).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith('start_recording', expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith('save_note', expect.anything());
+  });
+
+  it('blocks starting an additional recording when the selected ASR model is unavailable', async () => {
+    const note = makeNote();
+    const snapshot: AppDataSnapshot = {
+      settings: baseSettings,
+      notes: [note],
+      folders: [{ id: 'personal', name: '個人ノート', is_shared: false, permission: 'owner' }],
+      dictionary: [],
+      recipes: [],
+      audit_logs: [],
+      chat_history: [],
+    };
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_snapshot') return snapshot;
+      if (cmd === 'list_asr_models' || cmd === 'list_audio_devices' || cmd === 'list_integration_adapters') return [];
+      if (cmd === 'get_secret_status_cmd') return {};
+      if (cmd === 'get_mcp_config_preview') return '';
+      return null;
+    });
+
+    render(<App />);
+    await screen.findByText('元のタイトル');
+    fireEvent.click(screen.getByRole('button', { name: 'ノート' }));
+    fireEvent.click(await screen.findByRole('button', { name: '再録音' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('選択中のASRモデルを確認できません');
+    expect(screen.getByRole('dialog', { name: '設定' })).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith('start_recording', expect.anything());
+  });
+
   it('#28 & #29: empty additional recording keeps existing segments and overlay-stop preserves live segments', async () => {
     const initialNote = makeNote();
     let currentSnap: AppDataSnapshot = {
@@ -273,6 +431,17 @@ describe('Regression fixes for #25-#31', () => {
       switch (cmd) {
         case 'get_snapshot':
           return currentSnap;
+        case 'list_asr_models':
+          return [{
+            id: baseSettings.active_asr_model_id,
+            name: 'Whisper Small',
+            provider: 'local_whisper',
+            is_local: true,
+            is_compatible: true,
+            compatibility_reason: null,
+            installed: true,
+            supports_realtime: true,
+          }];
         case 'list_audio_devices':
         case 'list_integrations':
         case 'list_upcoming_calendar_events':

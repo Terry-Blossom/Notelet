@@ -37,6 +37,20 @@ fn parse_semver(v: &str) -> (u64, u64, u64) {
     )
 }
 
+fn matches_linux_asset(name: &str, target_arch: &str) -> bool {
+    match target_arch {
+        "x86_64" => {
+            name.ends_with("_linux_x86_64.AppImage")
+                || name.ends_with("_linux_x86_64.deb")
+                || name.ends_with("amd64.AppImage")
+                || name.ends_with("amd64.deb")
+        }
+        "x86" => name.ends_with("_linux_i386.AppImage"),
+        "aarch64" => name.ends_with("aarch64.AppImage") || name.ends_with("arm64.deb"),
+        _ => false,
+    }
+}
+
 pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
     let current = env!("CARGO_PKG_VERSION").to_string();
     let client = reqwest::Client::builder()
@@ -110,18 +124,10 @@ pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
                 } else {
                     name.ends_with("x64.dmg") || name.ends_with("x86_64.dmg")
                 }
-            } else if cfg!(target_arch = "x86_64") {
-                name.ends_with("amd64.AppImage")
-                    || name.ends_with("x86_64.AppImage")
-                    || name.ends_with("amd64.deb")
-            } else if cfg!(target_arch = "x86") {
-                name.ends_with("i386.AppImage")
-                    || name.ends_with("i686.AppImage")
-                    || name.ends_with("i386.deb")
-            } else if cfg!(target_arch = "aarch64") {
-                name.ends_with("aarch64.AppImage") || name.ends_with("arm64.deb")
+            } else if cfg!(target_os = "linux") {
+                matches_linux_asset(name, std::env::consts::ARCH)
             } else {
-                name.ends_with(".AppImage") || name.ends_with(".deb")
+                false
             };
             if matches_os && !url.is_empty() {
                 asset_name = Some(name.to_string());
@@ -146,6 +152,44 @@ pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
         asset_name,
         download_url,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matches_linux_asset;
+
+    #[test]
+    fn matches_linux_assets_for_x86_64() {
+        assert!(matches_linux_asset(
+            "Notelet_0.16.4_linux_x86_64.AppImage",
+            "x86_64"
+        ));
+        assert!(matches_linux_asset(
+            "Notelet_0.16.4_linux_x86_64.deb",
+            "x86_64"
+        ));
+        assert!(!matches_linux_asset(
+            "Notelet_0.16.4_linux_i386.AppImage",
+            "x86_64"
+        ));
+    }
+
+    #[test]
+    fn matches_only_i386_appimage_for_x86() {
+        assert!(matches_linux_asset(
+            "Notelet_0.16.4_linux_i386.AppImage",
+            "x86"
+        ));
+        assert!(!matches_linux_asset(
+            "Notelet_0.16.4_linux_x86_64.AppImage",
+            "x86"
+        ));
+        assert!(!matches_linux_asset(
+            "Notelet_0.16.4_linux_x86_64.deb",
+            "x86"
+        ));
+        assert!(!matches_linux_asset("Notelet_0.16.4_linux_i386.deb", "x86"));
+    }
 }
 
 pub async fn download_and_launch_update(
