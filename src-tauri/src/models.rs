@@ -351,7 +351,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             plan_tier: PlanTier::Basic,
-            active_asr_model_id: "whisper-large-v3-turbo-q5".to_string(),
+            active_asr_model_id: String::new(),
             active_asr_provider: AsrProviderKind::LocalWhisper,
             language: "ja".to_string(),
             allow_cloud_asr: false,
@@ -406,6 +406,16 @@ impl Default for AppSettings {
             auto_share_slack_folder_ids: Vec::new(),
             calendar_reminder_enabled: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppSettings;
+
+    #[test]
+    fn default_settings_have_no_selected_asr_model() {
+        assert!(AppSettings::default().active_asr_model_id.is_empty());
     }
 }
 

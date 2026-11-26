@@ -517,6 +517,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </p>
             </div>
 
+            {!settings.active_asr_model_id && (
+              <div role="status" className="surface-subtle" style={{ padding: '12px 16px' }}>
+                ASRモデルが未選択です。利用するモデルを選択してください。
+              </div>
+            )}
+
             <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '12px 16px' }}>
               <span className="text-muted" style={{ fontWeight: 500 }}>認識言語（全モデル共通）</span>
               <select

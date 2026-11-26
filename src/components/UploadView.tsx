@@ -45,7 +45,7 @@ export const UploadView: React.FC<UploadViewProps> = ({
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div style={{ fontSize: '14px' }}>
-            使用中のASRモデル: <strong>{activeModel ? activeModel.name : settings.active_asr_model_id}</strong>
+            使用中のASRモデル: <strong>{activeModel ? activeModel.name : settings.active_asr_model_id || 'モデル未選択'}</strong>
           </div>
           <button type="button" className="btn btn-secondary" onClick={onGoSettings}>
             モデルを変更
