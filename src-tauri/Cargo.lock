@@ -2190,29 +2190,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "notelet"
-version = "0.16.2"
-dependencies = [
- "aes-gcm",
- "base64 0.22.1",
- "chrono",
- "cpal",
- "dirs 6.0.0",
- "hound",
- "keyring",
- "rand 0.8.8",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-global-shortcut",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "libappindicator"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2525,6 +2502,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "notelet"
+version = "0.16.2"
+dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
+ "chrono",
+ "cpal",
+ "dirs 6.0.0",
+ "hound",
+ "keyring",
+ "rand 0.8.8",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-global-shortcut",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
