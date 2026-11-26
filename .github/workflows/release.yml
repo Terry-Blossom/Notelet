@@ -50,7 +50,8 @@ jobs:
           PKG_CONFIG_ALLOW_CROSS: 1
           PKG_CONFIG_PATH: /usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig
           PKG_CONFIG_LIBDIR: /usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig
-        run: npx tauri build --target i686-unknown-linux-gnu --bundles appimage
+          NO_STRIP: "true"
+        run: npx tauri build --target i686-unknown-linux-gnu --bundles appimage -v
 
       - name: Upload x86 AppImage to GitHub Release
         uses: softprops/action-gh-release@v3
