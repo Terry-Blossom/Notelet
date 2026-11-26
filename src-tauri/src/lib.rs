@@ -2054,6 +2054,9 @@ pub fn run() {
             }
 
             if let Some(main_win) = app.get_webview_window("main") {
+                #[cfg(target_os = "linux")]
+                let _ = main_win.set_icon(tauri::include_image!("icons/128x128.png"));
+                #[cfg(not(target_os = "linux"))]
                 let _ = main_win.set_icon(tauri::include_image!("icons/icon.png"));
                 if let (Some(w), Some(h)) = (mw_w, mw_h) {
                     if w >= 760.0 && h >= 480.0 && w <= 3840.0 && h <= 2160.0 {
