@@ -75,6 +75,21 @@ AI プロバイダーの設定前でもカスタムプロンプトを事前保�
 3. システム音声を録音する場合は「本体音声」を選び、表示されたモニター入力を選択して音声再生中の波形と録音結果を確認します。
 4. 入力が列挙されない場合は PipeWire / PulseAudio / ALSA の入力設定を確認します。録音ログにはホスト、デバイス設定、受信サンプル数が出力され、マイクテストでは未受信時に設定情報を含むエラーが表示されます。
 
+### Chromebook / Linux の AppImage ランチャー登録
+
+シェルフへ手動登録する場合は、`~/.local/share/applications/notelet.desktop` などに次のエントリーを作成し、`Exec` と `Icon` を実際のパスに置き換えてください。`StartupWMClass=notelet` がウィンドウとランチャーを紐付けます。
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Notelet
+Exec=/path/to/Notelet.AppImage
+Icon=/path/to/Notelet.png
+StartupWMClass=notelet
+Terminal=false
+Categories=Office;
+```
+
 ## 主な機能
 
 ### 1. 録音・会議検出・保護機能

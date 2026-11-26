@@ -83,6 +83,7 @@ jobs:
           Comment=録音・文字起こし・ノート
           Exec=notelet
           Icon=Notelet
+          StartupWMClass=notelet
           Categories=Office;AudioVideo;
           Terminal=false
           EOF
