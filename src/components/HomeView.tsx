@@ -482,7 +482,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <span className="text-muted" style={{ flexShrink: 0 }}>ASR</span>
                 <span
                   className="mono-num"
-                  title={settings.active_asr_model_id}
+                  title={settings.active_asr_model_id || 'モデル未選択'}
                   style={{
                     fontWeight: 500,
                     maxWidth: '160px',
@@ -492,7 +492,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     textAlign: 'right',
                   }}
                 >
-                  {settings.active_asr_model_id}
+                  {settings.active_asr_model_id || 'モデル未選択'}
                 </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>

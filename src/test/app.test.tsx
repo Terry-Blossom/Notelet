@@ -72,6 +72,7 @@ describe('format utilities', () => {
 describe('App & Views', () => {
   it('renders sidebar navigation items and bottom controls', () => {
     render(<App />);
+    expect(screen.getByText('モデル未選択')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'ホーム' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'チャット' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'ノート' })).toBeInTheDocument();
@@ -80,6 +81,10 @@ describe('App & Views', () => {
     expect(screen.getByRole('button', { name: '連携' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '設定' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '録音' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '設定' }));
+    expect(screen.getByRole('status')).toHaveTextContent('ASRモデルが未選択です');
+    fireEvent.click(screen.getByRole('button', { name: 'ホーム' }));
 
     fireEvent.click(screen.getByRole('button', { name: '新規ノート' }));
     expect(screen.getByLabelText('ノートタイトル')).toBeInTheDocument();

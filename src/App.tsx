@@ -109,7 +109,7 @@ type NavView =
 
 const FALLBACK_SETTINGS: AppSettings = {
   plan_tier: 'enterprise',
-  active_asr_model_id: 'whisper-large-v3-turbo-q5',
+  active_asr_model_id: '',
   active_asr_provider: 'local_whisper',
   language: 'ja',
   allow_cloud_asr: false,
