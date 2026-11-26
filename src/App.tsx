@@ -532,6 +532,7 @@ export const App: React.FC = () => {
 const MainApp: React.FC = () => {
   const [view, setView] = useState<NavView>('home');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [recordingStartError, setRecordingStartError] = useState<string | null>(null);
   const [commandSearchOpen, setCommandSearchOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -1009,7 +1010,33 @@ const MainApp: React.FC = () => {
     return () => clearInterval(timer);
   }, [recStatus.state]);
 
+  const ensureRecordingAsrReady = () => {
+    if (!isTauriRuntime()) return true;
+
+    const modelId = snapshot.settings.active_asr_model_id.trim();
+    const model = models.find((item) => item.id === modelId);
+    let error: string | null = null;
+    if (!modelId) {
+      error = 'ASRモデルが選択されていません。設定画面でモデルを選択してください。';
+    } else if (!model) {
+      error = '選択中のASRモデルを確認できません。設定画面でモデルを選択してください。';
+    } else if (model.is_local && !model.is_compatible) {
+      error = model.compatibility_reason || 'ASRランタイムが利用できません。設定画面を確認してください。';
+    } else if (model.is_local && !model.installed) {
+      error = '選択中のASRモデルが未導入です。設定画面からモデルをダウンロードしてください。';
+    } else if (!model.is_local && !model.is_compatible) {
+      error = model.compatibility_reason || 'クラウドASRのAPIキーが未設定です。設定画面を確認してください。';
+    } else if (!model.is_local && !snapshot.settings.allow_cloud_asr) {
+      error = 'クラウドASRが許可されていません。設定画面で利用を許可してください。';
+    }
+
+    setRecordingStartError(error);
+    if (error) setSettingsOpen(true);
+    return !error;
+  };
+
   const handleStartRecording = async (voiceTyping = false) => {
+    if (!ensureRecordingAsrReady()) return;
     voiceTypingRef.current = voiceTyping;
     setTranscribeError(null);
     setLiveManualNotes('');
@@ -1042,6 +1069,7 @@ const MainApp: React.FC = () => {
   };
 
   const handleStartRecordingInNote = async () => {
+    if (!ensureRecordingAsrReady()) return;
     voiceTypingRef.current = false;
     setTranscribeError(null);
     setLiveSegments([]);
@@ -1350,6 +1378,11 @@ const MainApp: React.FC = () => {
       }}
     >
       <div className="settings-modal-panel">
+        {recordingStartError && (
+          <div role="alert" className="settings-error" style={{ margin: '16px 24px 0' }}>
+            {recordingStartError}
+          </div>
+        )}
         <button
           type="button"
           aria-label="設定を閉じる"
