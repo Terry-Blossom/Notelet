@@ -8,10 +8,10 @@
 //! 実行例:
 //! cargo test --test local_ja_transcription -- --nocapture --test-threads=1
 
-use koenote_lib::asr::{
+use notelet_lib::asr::{
     resolve_installed_whisper_runtime, transcribe_wav, whisper_runtime_dest_dir,
 };
-use koenote_lib::models::{AppSettings, AsrProviderKind, TranscriptSegment};
+use notelet_lib::models::{AppSettings, AsrProviderKind, TranscriptSegment};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -230,7 +230,7 @@ async fn local_ja_transcription_three_paths() {
 
             std::env::set_var("NOTELET_DATA_DIR", &cli_root);
             assert!(
-                koenote_lib::whisper_server::resolve_whisper_server("").is_none(),
+                notelet_lib::whisper_server::resolve_whisper_server("").is_none(),
                 "CLI 単独経路の検証前に whisper-server が解決されています"
             );
             let settings = base_settings(model_id, Path::new(""));
@@ -248,7 +248,7 @@ async fn local_ja_transcription_three_paths() {
         eprintln!("skip (e): NOTELET_TEST_OPENWHISPR_SERVER が未設定です");
     }
 
-    koenote_lib::whisper_server::stop_server_async().await;
+    notelet_lib::whisper_server::stop_server_async().await;
     std::env::remove_var("NOTELET_DATA_DIR");
     let _ = fs::remove_dir_all(&root);
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * KoeNote / Notelet Read-Only MCP Server (stdio JSON-RPC 2.0)
+ * Notelet Read-Only MCP Server (stdio JSON-RPC 2.0)
  * Zero external dependencies — runs on Node.js 18+.
  *
  * Usage:
@@ -12,9 +12,18 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 
+function firstExisting(candidates) {
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
 function parseArgs(argv) {
-  let dataDir = process.env.KOENOTE_DATA_DIR || '';
-  let scope = process.env.KOENOTE_MCP_SCOPE || 'workspace';
+  let dataDir = process.env.NOTELET_DATA_DIR || process.env.KOENOTE_DATA_DIR || '';
+  let scope = process.env.NOTELET_MCP_SCOPE || process.env.KOENOTE_MCP_SCOPE || 'workspace';
   for (let i = 2; i < argv.length; i += 1) {
     if (argv[i] === '--data-dir' && argv[i + 1]) {
       dataDir = argv[i + 1];
@@ -28,23 +37,37 @@ function parseArgs(argv) {
 }
 
 function resolveDataFilePath(dataDir) {
-  if (process.env.KOENOTE_DATA_PATH) {
-    return process.env.KOENOTE_DATA_PATH;
+  const explicitPath = process.env.NOTELET_DATA_PATH || process.env.KOENOTE_DATA_PATH;
+  if (explicitPath) {
+    return explicitPath;
   }
   if (dataDir) {
-    return path.join(dataDir, 'koenote_data.json');
+    return firstExisting([
+      path.join(dataDir, 'notelet_data.json'),
+      path.join(dataDir, 'koenote_data.json'),
+    ]);
   }
   const home = os.homedir();
   const platform = process.platform;
   if (platform === 'darwin') {
-    return path.join(home, 'Library', 'Application Support', 'KoeNote', 'koenote_data.json');
+    const base = path.join(home, 'Library', 'Application Support');
+    return firstExisting([
+      path.join(base, 'Notelet', 'notelet_data.json'),
+      path.join(base, 'KoeNote', 'koenote_data.json'),
+    ]);
   }
   if (platform === 'win32') {
     const appData = process.env.LOCALAPPDATA || process.env.APPDATA || path.join(home, 'AppData', 'Local');
-    return path.join(appData, 'KoeNote', 'koenote_data.json');
+    return firstExisting([
+      path.join(appData, 'Notelet', 'notelet_data.json'),
+      path.join(appData, 'KoeNote', 'koenote_data.json'),
+    ]);
   }
   const xdgData = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
-  return path.join(xdgData, 'KoeNote', 'koenote_data.json');
+  return firstExisting([
+    path.join(xdgData, 'Notelet', 'notelet_data.json'),
+    path.join(xdgData, 'KoeNote', 'koenote_data.json'),
+  ]);
 }
 
 function loadSnapshot(dataFilePath, scope) {
@@ -110,7 +133,7 @@ const dataFilePath = resolveDataFilePath(dataDir);
 const TOOLS = [
   {
     name: 'list_recent_notes',
-    description: 'Notelet（KoeNote）の最新ノート一覧を取得します。',
+    description: 'Notelet の最新ノート一覧を取得します。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -163,7 +186,7 @@ function handleRequest(req) {
           resources: {},
         },
         serverInfo: {
-          name: 'koenote-mcp',
+          name: 'notelet-mcp',
           version: '0.13.0',
         },
       },
@@ -271,7 +294,7 @@ function handleRequest(req) {
   if (method === 'resources/list') {
     const snap = loadSnapshot(dataFilePath, scope);
     const resources = snap.notes.slice(0, 50).map((n) => ({
-      uri: `koenote://note/${n.id}`,
+      uri: `notelet://note/${n.id}`,
       name: n.title || '無題のノート',
       mimeType: 'text/markdown',
     }));
@@ -280,7 +303,7 @@ function handleRequest(req) {
 
   if (method === 'resources/read') {
     const uri = String(params?.uri || '');
-    const noteId = uri.replace(/^koenote:\/\/note\//, '');
+    const noteId = uri.replace(/^notelet:\/\/note\//, '');
     const snap = loadSnapshot(dataFilePath, scope);
     const note = snap.notes.find((n) => n.id === noteId);
     if (!note) {

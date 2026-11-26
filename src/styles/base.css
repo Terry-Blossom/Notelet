@@ -1,4 +1,4 @@
-/* hallmark: koenote base styles */
+/* hallmark: notelet base styles */
 *,
 *::before,
 *::after {
@@ -1055,10 +1055,10 @@ button:disabled {
 }
 
 .spin {
-  animation: koenote-spin 1s linear infinite;
+  animation: notelet-spin 1s linear infinite;
 }
 
-@keyframes koenote-spin {
+@keyframes notelet-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }

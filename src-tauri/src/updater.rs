@@ -40,7 +40,7 @@ fn parse_semver(v: &str) -> (u64, u64, u64) {
 pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
     let current = env!("CARGO_PKG_VERSION").to_string();
     let client = reqwest::Client::builder()
-        .user_agent("KoeNote-Updater/0.1")
+        .user_agent("Notelet-Updater/0.1")
         .build()
         .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
 
@@ -103,8 +103,7 @@ pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
             let matches_os = if cfg!(windows) {
                 name.ends_with("-setup.exe")
                     || name.ends_with(".msi")
-                    || name.eq_ignore_ascii_case("koenote.exe")
-                    || name.eq_ignore_ascii_case("Notelet.exe")
+                    || name.eq_ignore_ascii_case("notelet.exe")
             } else if cfg!(target_os = "macos") {
                 name.ends_with(".dmg")
             } else {
@@ -165,7 +164,7 @@ pub async fn download_and_launch_update(
     let tmp = update_dir.join(format!("{safe_asset_name}.part"));
 
     let client = reqwest::Client::builder()
-        .user_agent("KoeNote-Updater/0.1")
+        .user_agent("Notelet-Updater/0.1")
         .build()
         .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
     let mut req = client.get(parsed_url);

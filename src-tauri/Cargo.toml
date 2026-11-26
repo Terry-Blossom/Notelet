@@ -1,12 +1,12 @@
 [package]
-name = "koenote"
-version = "0.15.16"
+name = "notelet"
+version = "0.16.0"
 description = "軽量なローカルファースト録音・文字起こし・Notion連携ノートアプリ"
-authors = ["KoeNote Contributors"]
+authors = ["Notelet Contributors"]
 edition = "2021"
 
 [lib]
-name = "koenote_lib"
+name = "notelet_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

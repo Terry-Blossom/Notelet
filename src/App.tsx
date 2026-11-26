@@ -83,7 +83,7 @@ import {
   isTauriRuntime,
 } from './lib/tauri';
 import { createEmptyNote, findNoteSearchMatches, formatMs } from './lib/format';
-import { exportNotesAsObsidianZip, mergeKoeNoteBackupJson } from './lib/noteExportImport';
+import { exportNotesAsObsidianZip, mergeNoteletBackupJson } from './lib/noteExportImport';
 import { HomeView } from './components/HomeView';
 import { ConfirmDialogHost } from './components/ConfirmDialog';
 import { RecordingView } from './components/RecordingView';
@@ -1392,7 +1392,7 @@ const MainApp: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'koenote-export.json';
+            a.download = 'notelet-export.json';
             a.click();
             URL.revokeObjectURL(url);
           }}
@@ -1407,7 +1407,7 @@ const MainApp: React.FC = () => {
           notes={snapshot.notes}
           onImportNotes={handleImportNotes}
           onRestoreBackup={async (jsonText: string) => {
-            const merged = mergeKoeNoteBackupJson(jsonText, snapshot);
+            const merged = mergeNoteletBackupJson(jsonText, snapshot);
             if (isTauriRuntime()) {
               setSnapshot(await apiRestoreBackupSnapshot(merged.snapshot));
             } else {
@@ -1419,7 +1419,7 @@ const MainApp: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'koenote-obsidian-markdown.zip';
+            a.download = 'notelet-obsidian-markdown.zip';
             a.click();
             URL.revokeObjectURL(url);
           }}

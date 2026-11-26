@@ -798,7 +798,7 @@ pub async fn install_runtime_binary(
     let bin_root = storage::app_data_dir().join("bin");
     fs::create_dir_all(&bin_root).map_err(|e| format!("binディレクトリ作成失敗: {e}"))?;
     let client = reqwest::Client::builder()
-        .user_agent("KoeNote-Desktop/0.1")
+        .user_agent("Notelet-Desktop/0.1")
         .build()
         .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
 

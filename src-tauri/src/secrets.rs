@@ -8,13 +8,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-const SERVICE_NAME: &str = "app.koenote.desktop";
+const SERVICE_NAME: &str = "app.notelet.desktop";
+const KEYCHAIN_ACCOUNT: &str = "__notelet_master_key__";
+const LEGACY_SERVICE_NAME: &str = "app.koenote.desktop";
+const LEGACY_KEYCHAIN_ACCOUNT: &str = "__koenote_master_key__";
 const ENC_PREFIX: &str = "ENCv1:";
 const DPAPI_PREFIX: &str = "DPAPIv1:";
 
 fn vault_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn ensure_legacy_migration() {
+    static MIGRATION: OnceLock<()> = OnceLock::new();
+    MIGRATION.get_or_init(|| migrate_legacy_secrets());
 }
 
 fn restrict_dir_permissions(dir: &Path) {
@@ -79,10 +87,9 @@ mod win_dpapi {
     }
 
     const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x1;
-    const ENTROPY: &[u8] = b"app.koenote.desktop.vault.v1";
 
-    pub fn protect(plain: &[u8]) -> Option<Vec<u8>> {
-        let mut entropy_buf = ENTROPY.to_vec();
+    fn protect_with_entropy(plain: &[u8], entropy: &[u8]) -> Option<Vec<u8>> {
+        let mut entropy_buf = entropy.to_vec();
         let mut in_buf = plain.to_vec();
         let in_blob = DataBlob {
             cb_data: u32::try_from(in_buf.len()).ok()?,
@@ -118,8 +125,8 @@ mod win_dpapi {
         Some(result)
     }
 
-    pub fn unprotect(cipher: &[u8]) -> Option<Vec<u8>> {
-        let mut entropy_buf = ENTROPY.to_vec();
+    fn unprotect_with_entropy(cipher: &[u8], entropy: &[u8]) -> Option<Vec<u8>> {
+        let mut entropy_buf = entropy.to_vec();
         let mut in_buf = cipher.to_vec();
         let in_blob = DataBlob {
             cb_data: u32::try_from(in_buf.len()).ok()?,
@@ -154,6 +161,21 @@ mod win_dpapi {
         }
         Some(result)
     }
+
+    const ENTROPY: &[u8] = b"app.notelet.desktop.vault.v1";
+    const LEGACY_ENTROPY: &[u8] = b"app.koenote.desktop.vault.v1";
+
+    pub fn protect(plain: &[u8]) -> Option<Vec<u8>> {
+        protect_with_entropy(plain, ENTROPY)
+    }
+
+    pub fn unprotect(cipher: &[u8]) -> Option<Vec<u8>> {
+        unprotect_with_entropy(cipher, ENTROPY)
+    }
+
+    pub fn unprotect_legacy(cipher: &[u8]) -> Option<Vec<u8>> {
+        unprotect_with_entropy(cipher, LEGACY_ENTROPY)
+    }
 }
 
 fn write_protected_master_key_fallback(encoded_b64: &str) {
@@ -173,14 +195,17 @@ fn write_protected_master_key_fallback(encoded_b64: &str) {
     restrict_file_permissions(&path);
 }
 
-fn read_protected_master_key_fallback() -> Option<[u8; 32]> {
-    let path = master_key_fallback_path();
-    let raw = fs::read_to_string(&path).ok()?;
+fn read_master_key_file(path: &Path, legacy: bool) -> Option<[u8; 32]> {
+    let raw = fs::read_to_string(path).ok()?;
     let trimmed = raw.trim();
     #[cfg(windows)]
     if let Some(rest) = trimmed.strip_prefix(DPAPI_PREFIX) {
         let protected = B64.decode(rest.trim()).ok()?;
-        let plain = win_dpapi::unprotect(&protected)?;
+        let plain = if legacy {
+            win_dpapi::unprotect_legacy(&protected)?
+        } else {
+            win_dpapi::unprotect(&protected)?
+        };
         if plain.len() == 32 {
             let mut key = [0u8; 32];
             key.copy_from_slice(&plain);
@@ -188,28 +213,81 @@ fn read_protected_master_key_fallback() -> Option<[u8; 32]> {
         }
         return None;
     }
+    let _ = legacy;
     if let Ok(bytes) = B64.decode(trimmed) {
         if bytes.len() == 32 {
             let mut key = [0u8; 32];
             key.copy_from_slice(&bytes);
-            // Upgrade legacy plaintext fallback key to DPAPI-protected / 0600
-            write_protected_master_key_fallback(trimmed);
             return Some(key);
         }
     }
     None
 }
 
+fn read_protected_master_key_fallback() -> Option<[u8; 32]> {
+    let path = master_key_fallback_path();
+    let key = read_master_key_file(&path, false)?;
+    let raw = fs::read_to_string(&path).ok()?;
+    if !raw.trim().starts_with(DPAPI_PREFIX) {
+        // Upgrade legacy plaintext fallback key to DPAPI-protected / 0600
+        write_protected_master_key_fallback(&B64.encode(key));
+    }
+    Some(key)
+}
+
+/// 旧 KoeNote のキーチェーン・マスターキーを Notelet 側へ移行する。
+pub fn migrate_legacy_secrets() {
+    let new_key_path = master_key_fallback_path();
+    if !new_key_path.exists() {
+        let candidates = [
+            vault_dir().join(".koenote_master_key"),
+            legacy_vault_dir().join(".koenote_master_key"),
+        ];
+        for old_path in candidates {
+            if !old_path.is_file() {
+                continue;
+            }
+            if let Some(key) = read_master_key_file(&old_path, true) {
+                write_protected_master_key_fallback(&B64.encode(key));
+                let _ = fs::remove_file(&old_path);
+                break;
+            }
+        }
+    }
+
+    if let Ok(new_entry) = Entry::new(SERVICE_NAME, KEYCHAIN_ACCOUNT) {
+        if new_entry.get_password().is_err() {
+            if let Ok(old_entry) = Entry::new(LEGACY_SERVICE_NAME, LEGACY_KEYCHAIN_ACCOUNT) {
+                if let Ok(encoded) = old_entry.get_password() {
+                    let _ = new_entry.set_password(encoded.trim());
+                }
+            }
+        }
+    }
+
+    let new_vault = secrets_vault_path();
+    let old_vault = legacy_vault_dir().join("secrets_vault.json");
+    if !new_vault.exists() && old_vault.exists() {
+        let _ = fs::copy(&old_vault, &new_vault);
+        restrict_file_permissions(&new_vault);
+    }
+}
+
 fn vault_dir() -> PathBuf {
     let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join("KoeNote");
+    let dir = base.join("Notelet");
     let _ = fs::create_dir_all(&dir);
     restrict_dir_permissions(&dir);
     dir
 }
 
+fn legacy_vault_dir() -> PathBuf {
+    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    base.join("KoeNote")
+}
+
 fn master_key_fallback_path() -> PathBuf {
-    vault_dir().join(".koenote_master_key")
+    vault_dir().join(".notelet_master_key")
 }
 
 fn secrets_vault_path() -> PathBuf {
@@ -246,7 +324,8 @@ fn write_vault_map(map: &HashMap<String, String>) -> Result<(), String> {
 }
 
 fn get_or_create_secret_cipher_key() -> Result<[u8; 32], String> {
-    if let Ok(key_entry) = Entry::new(SERVICE_NAME, "__koenote_master_key__") {
+    ensure_legacy_migration();
+    if let Ok(key_entry) = Entry::new(SERVICE_NAME, KEYCHAIN_ACCOUNT) {
         if let Ok(encoded) = key_entry.get_password() {
             if let Ok(bytes) = B64.decode(encoded.trim()) {
                 if bytes.len() == 32 {
@@ -261,7 +340,7 @@ fn get_or_create_secret_cipher_key() -> Result<[u8; 32], String> {
 
     if let Some(key) = read_protected_master_key_fallback() {
         let encoded = B64.encode(key);
-        if let Ok(key_entry) = Entry::new(SERVICE_NAME, "__koenote_master_key__") {
+        if let Ok(key_entry) = Entry::new(SERVICE_NAME, KEYCHAIN_ACCOUNT) {
             let _ = key_entry.set_password(&encoded);
         }
         return Ok(key);
@@ -271,7 +350,7 @@ fn get_or_create_secret_cipher_key() -> Result<[u8; 32], String> {
     rand::thread_rng().fill_bytes(&mut key);
     let encoded = B64.encode(key);
     write_protected_master_key_fallback(&encoded);
-    if let Ok(key_entry) = Entry::new(SERVICE_NAME, "__koenote_master_key__") {
+    if let Ok(key_entry) = Entry::new(SERVICE_NAME, KEYCHAIN_ACCOUNT) {
         let _ = key_entry.set_password(&encoded);
     }
     Ok(key)

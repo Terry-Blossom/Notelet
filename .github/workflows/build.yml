@@ -1,4 +1,4 @@
-name: Build KoeNote
+name: Build Notelet
 
 on:
   push:
@@ -53,10 +53,10 @@ jobs:
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: koenote-${{ matrix.os }}
+          name: notelet-${{ matrix.os }}
           path: |
-            src-tauri/target/release/koenote.exe
-            src-tauri/target/release/koenote
+            src-tauri/target/release/notelet.exe
+            src-tauri/target/release/notelet
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/dmg/*.dmg

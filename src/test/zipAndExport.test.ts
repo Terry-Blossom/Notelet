@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyNote } from '../lib/format';
-import { exportNotesAsObsidianZip, mergeKoeNoteBackupJson, noteToObsidianMarkdown } from '../lib/noteExportImport';
+import { exportNotesAsObsidianZip, mergeNoteletBackupJson, noteToObsidianMarkdown } from '../lib/noteExportImport';
 import { createZipBytes, unzipTextFiles } from '../lib/zip';
 import { AppDataSnapshot } from '../types';
 
@@ -44,7 +44,7 @@ describe('ZIP, Obsidian Markdown export, and Backup restore', () => {
     expect(zipBlob.size).toBeGreaterThan(100);
   });
 
-  it('merges KoeNote backup JSON without duplicating existing IDs', () => {
+  it('merges Notelet backup JSON without duplicating existing IDs', () => {
     const existing = createEmptyNote();
     existing.id = 'note-1';
     existing.title = 'Existing';
@@ -70,7 +70,7 @@ describe('ZIP, Obsidian Markdown export, and Backup restore', () => {
       dictionary: [{ id: 'd1', term: 'Notelet', reading: 'ノートレット', note: '', scope: 'personal' }],
     });
 
-    const result = mergeKoeNoteBackupJson(backupJson, current);
+    const result = mergeNoteletBackupJson(backupJson, current);
     expect(result.addedNotes).toBe(1);
     expect(result.updatedNotes).toBe(1);
     expect(result.addedFolders).toBe(1);

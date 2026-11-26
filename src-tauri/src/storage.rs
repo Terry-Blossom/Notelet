@@ -13,18 +13,126 @@ use uuid::Uuid;
 
 pub fn app_data_dir() -> PathBuf {
     // テストや検証用に、アプリデータのルートを環境変数で差し替えられるようにする。
-    // 未設定時はこれまで通り OS 標準のアプリデータディレクトリ配下を使う。
-    if let Some(custom) = std::env::var_os("NOTELET_DATA_DIR") {
+    // 旧名の環境変数は既存利用者の移行用フォールバックとしてのみ受け付ける。
+    let custom = std::env::var_os("NOTELET_DATA_DIR")
+        .or_else(|| std::env::var_os("KOENOTE_DATA_DIR"));
+    if let Some(custom) = custom {
         let dir = PathBuf::from(custom);
         if !dir.as_os_str().is_empty() {
             let _ = fs::create_dir_all(&dir);
             return dir;
         }
     }
-    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join("KoeNote");
+    let dir = default_data_root().join("Notelet");
     let _ = fs::create_dir_all(&dir);
     dir
+}
+
+fn default_data_root() -> PathBuf {
+    dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn legacy_data_dir() -> PathBuf {
+    default_data_root().join("KoeNote")
+}
+
+/// 旧 KoeNote のデータディレクトリ・データファイルを Notelet 側へ移行する。
+/// 移行元は成功確認まで削除しない。
+pub fn migrate_legacy_app_data() {
+    let has_custom_dir = std::env::var_os("NOTELET_DATA_DIR")
+        .or_else(|| std::env::var_os("KOENOTE_DATA_DIR"))
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+
+    let old_dir = legacy_data_dir();
+    let new_dir = default_data_root().join("Notelet");
+
+    if !has_custom_dir && old_dir.is_dir() {
+        if !new_dir.exists() {
+            let _ = fs::rename(&old_dir, &new_dir);
+        }
+        if new_dir.exists() && old_dir.exists() {
+            copy_missing_dir_contents(&old_dir, &new_dir);
+        }
+    }
+
+    let active_dir = app_data_dir();
+    let new_file = active_dir.join("notelet_data.json");
+    let legacy_file = active_dir.join("koenote_data.json");
+    if !new_file.exists() && legacy_file.exists() {
+        let _ = fs::rename(&legacy_file, &new_file);
+    }
+    rewrite_legacy_paths(&new_file, &old_dir, &new_dir);
+}
+
+fn copy_missing_dir_contents(src: &Path, dst: &Path) {
+    let _ = fs::create_dir_all(dst);
+    let Ok(entries) = fs::read_dir(src) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let from = entry.path();
+        let Some(name) = from.file_name() else {
+            continue;
+        };
+        let to = dst.join(name);
+        if from.is_dir() {
+            if !to.exists() {
+                let _ = fs::rename(&from, &to);
+            } else {
+                copy_missing_dir_contents(&from, &to);
+            }
+        } else if !to.exists() {
+            let _ = fs::copy(&from, &to);
+        }
+    }
+}
+
+fn rewrite_legacy_paths(file: &Path, old_dir: &Path, new_dir: &Path) {
+    let Ok(raw) = fs::read_to_string(file) else {
+        return;
+    };
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return;
+    };
+    let old_prefix = old_dir.to_string_lossy().to_string();
+    let new_prefix = new_dir.to_string_lossy().to_string();
+    let mut changed = false;
+    if let Some(notes) = value.get_mut("notes").and_then(|v| v.as_array_mut()) {
+        for note in notes {
+            let Some(path) = note
+                .get("audio_path")
+                .and_then(|v| v.as_str()).map(|s| s.to_string())
+            else {
+                continue;
+            };
+            if !old_prefix.is_empty() && path.contains(&old_prefix) {
+                note["audio_path"] =
+                    serde_json::Value::String(path.replace(&old_prefix, &new_prefix));
+                changed = true;
+            }
+        }
+    }
+    if let Some(settings) = value.get_mut("settings") {
+        for key in ["whisper_cli_path", "parakeet_cli_path"] {
+            let Some(path) = settings
+                .get(key)
+                .and_then(|v| v.as_str()).map(|s| s.to_string())
+            else {
+                continue;
+            };
+            if !old_prefix.is_empty() && path.contains(&old_prefix) {
+                settings[key] =
+                    serde_json::Value::String(path.replace(&old_prefix, &new_prefix));
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        if let Ok(json) = serde_json::to_string_pretty(&value) {
+            let _ = fs::write(file, json);
+        }
+    }
 }
 
 pub fn models_dir() -> PathBuf {
@@ -40,7 +148,7 @@ pub fn audio_dir() -> PathBuf {
 }
 
 fn data_file_path() -> PathBuf {
-    app_data_dir().join("koenote_data.json")
+    app_data_dir().join("notelet_data.json")
 }
 
 fn default_folders() -> Vec<Folder> {
@@ -566,4 +674,39 @@ pub fn normalize_media_to_16k_wav(input_path: &Path) -> (PathBuf, u64) {
     }
 
     (input_path.to_path_buf(), 0)
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn rewrites_legacy_paths_in_snapshot() {
+        let root = std::env::temp_dir().join(format!("notelet-migration-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let old_dir = root.join("KoeNote");
+        let new_dir = root.join("Notelet");
+        fs::create_dir_all(old_dir.join("audio")).unwrap();
+        let old_audio = old_dir.join("audio").join("n1.wav");
+        let old_cli = old_dir.join("bin").join("whisper").join("whisper-server");
+        let file = root.join("notelet_data.json");
+        let payload = serde_json::json!({
+            "notes": [{ "id": "n1", "audio_path": old_audio.to_string_lossy() }],
+            "settings": { "whisper_cli_path": old_cli.to_string_lossy() }
+        });
+        fs::write(&file, serde_json::to_string(&payload).unwrap()).unwrap();
+
+        rewrite_legacy_paths(&file, &old_dir, &new_dir);
+
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        let audio = value["notes"][0]["audio_path"].as_str().unwrap();
+        let cli = value["settings"]["whisper_cli_path"].as_str().unwrap();
+        let new_prefix = new_dir.to_string_lossy().to_string();
+        assert!(audio.starts_with(&new_prefix));
+        assert!(cli.starts_with(&new_prefix));
+        assert!(!audio.contains("KoeNote"));
+        assert!(!cli.contains("KoeNote"));
+        let _ = fs::remove_dir_all(&root);
+    }
 }

@@ -408,7 +408,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
             <input
               className="input"
               style={{ flex: '1 1 180px' }}
-              placeholder="owner/repo (例: otetcham/koenote)"
+              placeholder="owner/repo (例: Terry-Blossom/Notelet)"
               value={settings.github_repo ?? ''}
               onChange={(e) => update({ github_repo: e.target.value })}
             />

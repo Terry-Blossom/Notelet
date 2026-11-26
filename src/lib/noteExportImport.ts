@@ -106,7 +106,7 @@ export interface BackupRestoreResult {
   addedDictionary: number;
 }
 
-export function mergeKoeNoteBackupJson(
+export function mergeNoteletBackupJson(
   jsonText: string,
   current: AppDataSnapshot
 ): BackupRestoreResult {

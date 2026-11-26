@@ -80,7 +80,7 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
           type="text"
           className="input"
           style={{ flex: '2 1 220px' }}
-          placeholder="表記（例: KoeNote / 製品名 / 人名）"
+          placeholder="表記（例: Notelet / 製品名 / 人名）"
           value={term}
           onChange={(e) => setTerm(e.target.value)}
         />

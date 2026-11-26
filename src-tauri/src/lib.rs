@@ -2103,6 +2103,7 @@ fn test_mic_level_cmd(device_id: Option<String>) -> Result<serde_json::Value, St
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    storage::migrate_legacy_app_data();
     let snapshot = storage::load_snapshot();
     let app_state = AppState {
         audio: Mutex::new(AudioManager::new()),

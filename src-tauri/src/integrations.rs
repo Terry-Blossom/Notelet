@@ -142,7 +142,7 @@ pub fn build_mcp_config_preview(settings: &AppSettings) -> String {
 
     serde_json::to_string_pretty(&json!({
         "mcpServers": {
-            "koenote": {
+            "notelet": {
                 "command": "node",
                 "args": [
                     server_path,

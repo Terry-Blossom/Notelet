@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "KoeNote default desktop capabilities",
+  "description": "Notelet default desktop capabilities",
   "windows": ["main", "recording-overlay", "meeting-notify"],
   "permissions": [
     "core:default",

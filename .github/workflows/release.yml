@@ -1,4 +1,4 @@
-name: Release KoeNote
+name: Release Notelet
 
 on:
   push:
@@ -43,8 +43,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            src-tauri/target/release/koenote.exe
-            src-tauri/target/release/koenote
+            src-tauri/target/release/notelet.exe
+            src-tauri/target/release/notelet
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/dmg/*.dmg

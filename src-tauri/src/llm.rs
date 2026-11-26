@@ -111,7 +111,7 @@ async fn call_openai_compatible_endpoint(
 
     let mut req = client
         .post(&url)
-        .header("HTTP-Referer", "https://github.com/otetcham/koenote")
+        .header("HTTP-Referer", "https://github.com/Terry-Blossom/Notelet")
         .header("X-Title", "Notelet")
         .json(&json!({
             "model": model,
@@ -679,7 +679,7 @@ pub struct ChatActionSpec {
 }
 
 fn extract_actions_and_clean_answer(raw: &str) -> (String, Vec<ChatActionSpec>) {
-    let marker = "```koenote-actions";
+    let marker = "```notelet-actions";
     if let Some(start_idx) = raw.find(marker) {
         let after_marker = &raw[start_idx + marker.len()..];
         if let Some(end_rel) = after_marker.find("```") {
@@ -933,12 +933,12 @@ fn filter_and_renumber_used_citations(
     // Replace via temporary placeholders to avoid collisions during renumbering
     for (new_idx, &old_idx) in used_indices.iter().enumerate() {
         let old_marker = format!("[{}]", old_idx + 1);
-        let temp_marker = format!("__KOENOTE_CITE_{}__", new_idx + 1);
+        let temp_marker = format!("__NOTELET_CITE_{}__", new_idx + 1);
         updated_answer = updated_answer.replace(&old_marker, &temp_marker);
         renumbered_citations.push(candidates[old_idx].clone());
     }
     for new_idx in 0..used_indices.len() {
-        let temp_marker = format!("__KOENOTE_CITE_{}__", new_idx + 1);
+        let temp_marker = format!("__NOTELET_CITE_{}__", new_idx + 1);
         let final_marker = format!("[{}]", new_idx + 1);
         updated_answer = updated_answer.replace(&temp_marker, &final_marker);
     }
@@ -1114,7 +1114,7 @@ pub async fn chat_with_notes_and_actions(
             .join("\n")
     };
 
-    let sys = r#"あなたは Notelet（KoeNote）の検索・編集エージェントアシスタントです。
+    let sys = r#"あなたは Notelet の検索・編集エージェントアシスタントです。
 以下のルールを厳密に守ってください：
 
 1. **思考プロセスの出力**:
@@ -1128,7 +1128,7 @@ pub async fn chat_with_notes_and_actions(
 
 4. **Notelet データ操作アクション**:
    ユーザーからノートのタイトル訂正・カテゴリ（フォルダ）の作成/変更/移動/削除・タグ追加/削除・要約/メモの書き換え・話者名変更・アクション項目追加・ノート作成/削除などの操作依頼があった場合は、回答の最後に次のコードブロック形式で JSON アクション配列を出力してください（操作依頼がない場合は出力不要です）：
-```koenote-actions
+```notelet-actions
 [
   {"type": "rename_note", "note_id": "対象ref", "title": "新しいタイトル"},
   {"type": "move_note_folder", "note_id": "対象ref", "folder_name": "カテゴリ名"},
