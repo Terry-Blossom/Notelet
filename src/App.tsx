@@ -1544,7 +1544,15 @@ const MainApp: React.FC = () => {
                       type="button"
                       className={`tab-btn ${sourceMode === opt.id ? 'active' : ''}`}
                       style={{ flex: 1, height: '28px', padding: '0 8px', fontSize: '12px' }}
-                      onClick={() => setSourceMode(opt.id)}
+                      onClick={() => {
+                        if (
+                          sourceMode !== opt.id &&
+                          (sourceMode === 'system' || opt.id === 'system')
+                        ) {
+                          setSelectedDeviceId('');
+                        }
+                        setSourceMode(opt.id);
+                      }}
                     >
                       {opt.label}
                     </button>
@@ -1567,6 +1575,30 @@ const MainApp: React.FC = () => {
                     <option value="">既定のマイク (自動)</option>
                     {devices
                       .filter((d) => d.kind === 'input')
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              {sourceMode === 'system' && devices.some((d) => d.kind === 'loopback') && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                    システム音声
+                  </span>
+                  <select
+                    aria-label="使用するシステム音声入力"
+                    className="input"
+                    style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
+                    value={selectedDeviceId}
+                    onChange={(e) => setSelectedDeviceId(e.target.value)}
+                  >
+                    <option value="">既定のシステム音声入力 (自動)</option>
+                    {devices
+                      .filter((d) => d.kind === 'loopback')
                       .map((d) => (
                         <option key={d.id} value={d.id}>
                           {d.name}
