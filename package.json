@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:ui": "node C:/Users/yotsu/.gemini/config/skills/unslop-ai-app/tools/check-ui.mjs src"
+    "check:ui": "tsc --noEmit"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",
