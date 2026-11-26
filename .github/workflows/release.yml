@@ -61,17 +61,16 @@ jobs:
             cp src-tauri/icons/icon.png /tmp/notelet-appdir/usr/share/icons/hicolor/512x512/apps/notelet.png
             cp src-tauri/icons/128x128@2x.png /tmp/notelet-appdir/notelet.png
             cp src-tauri/icons/128x128@2x.png /tmp/notelet-appdir/.DirIcon
-            cat > /tmp/notelet-appdir/notelet.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Notelet
-Comment=軽量なローカルファースト録音・文字起こし・Notion連携ノートアプリ
-Exec=notelet
-Icon=notelet
-StartupWMClass=notelet
-Categories=Office;AudioVideo;
-Terminal=false
-EOF
+            printf '%s\n' \
+              '[Desktop Entry]' \
+              'Type=Application' \
+              'Name=Notelet' \
+              'Comment=軽量なローカルファースト録音・文字起こし・Notion連携ノートアプリ' \
+              'Exec=notelet' \
+              'Icon=notelet' \
+              'StartupWMClass=notelet' \
+              'Categories=Office;AudioVideo;' \
+              'Terminal=false' > /tmp/notelet-appdir/notelet.desktop
             cp /tmp/notelet-appdir/notelet.desktop /tmp/notelet-appdir/usr/share/applications/notelet.desktop
             chmod -R a+rX /tmp/notelet-appdir
             chmod +x /tmp/notelet-appdir/AppRun
