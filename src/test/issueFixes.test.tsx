@@ -255,6 +255,63 @@ describe('Regression fixes for #25-#31', () => {
     expect(unhandled).toHaveLength(0);
   });
 
+  it('blocks starting a new recording when no ASR model is selected', async () => {
+    const snapshot: AppDataSnapshot = {
+      settings: { ...baseSettings, active_asr_model_id: '' },
+      notes: [],
+      folders: [{ id: 'personal', name: '個人ノート', is_shared: false, permission: 'owner' }],
+      dictionary: [],
+      recipes: [],
+      audit_logs: [],
+      chat_history: [],
+    };
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_snapshot') return snapshot;
+      if (cmd === 'list_asr_models' || cmd === 'list_audio_devices' || cmd === 'list_integration_adapters') return [];
+      if (cmd === 'get_secret_status_cmd') return {};
+      if (cmd === 'get_mcp_config_preview') return '';
+      return null;
+    });
+
+    render(<App />);
+    await screen.findByRole('button', { name: '録音' });
+    fireEvent.click(screen.getByRole('button', { name: '録音' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('ASRモデルが選択されていません');
+    expect(screen.getByRole('dialog', { name: '設定' })).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith('start_recording', expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith('save_note', expect.anything());
+  });
+
+  it('blocks starting an additional recording when the selected ASR model is unavailable', async () => {
+    const note = makeNote();
+    const snapshot: AppDataSnapshot = {
+      settings: baseSettings,
+      notes: [note],
+      folders: [{ id: 'personal', name: '個人ノート', is_shared: false, permission: 'owner' }],
+      dictionary: [],
+      recipes: [],
+      audit_logs: [],
+      chat_history: [],
+    };
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_snapshot') return snapshot;
+      if (cmd === 'list_asr_models' || cmd === 'list_audio_devices' || cmd === 'list_integration_adapters') return [];
+      if (cmd === 'get_secret_status_cmd') return {};
+      if (cmd === 'get_mcp_config_preview') return '';
+      return null;
+    });
+
+    render(<App />);
+    await screen.findByText('元のタイトル');
+    fireEvent.click(screen.getByRole('button', { name: 'ノート' }));
+    fireEvent.click(await screen.findByRole('button', { name: '再録音' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('選択中のASRモデルを確認できません');
+    expect(screen.getByRole('dialog', { name: '設定' })).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith('start_recording', expect.anything());
+  });
+
   it('#28 & #29: empty additional recording keeps existing segments and overlay-stop preserves live segments', async () => {
     const initialNote = makeNote();
     let currentSnap: AppDataSnapshot = {
@@ -273,6 +330,17 @@ describe('Regression fixes for #25-#31', () => {
       switch (cmd) {
         case 'get_snapshot':
           return currentSnap;
+        case 'list_asr_models':
+          return [{
+            id: baseSettings.active_asr_model_id,
+            name: 'Whisper Small',
+            provider: 'local_whisper',
+            is_local: true,
+            is_compatible: true,
+            compatibility_reason: null,
+            installed: true,
+            supports_realtime: true,
+          }];
         case 'list_audio_devices':
         case 'list_integrations':
         case 'list_upcoming_calendar_events':

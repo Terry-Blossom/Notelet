@@ -232,6 +232,118 @@ fn list_audio_devices() -> Vec<AudioDeviceInfo> {
     AudioManager::list_devices()
 }
 
+fn validate_recording_asr(settings: &AppSettings, models: &[AsrModelInfo]) -> Result<(), String> {
+    let model_id = settings.active_asr_model_id.trim();
+    if model_id.is_empty() {
+        return Err(
+            "ASRモデルが選択されていません。設定画面でモデルを選択してください。".to_string(),
+        );
+    }
+
+    let model = models
+        .iter()
+        .find(|model| model.id == model_id)
+        .ok_or_else(|| {
+            "選択中のASRモデルが見つかりません。設定画面でモデルを選択してください。".to_string()
+        })?;
+
+    if model.is_local {
+        if !model.is_compatible {
+            return Err(model.compatibility_reason.clone().unwrap_or_else(|| {
+                "ASRランタイムが利用できません。設定画面を確認してください。".to_string()
+            }));
+        }
+        if !model.installed {
+            return Err(
+                "選択中のローカルASRモデルが未導入です。設定画面からモデルをダウンロードしてください。"
+                    .to_string(),
+            );
+        }
+    } else {
+        if !model.is_compatible {
+            return Err(model.compatibility_reason.clone().unwrap_or_else(|| {
+                "クラウドASRのAPIキーが未設定です。設定画面を確認してください。".to_string()
+            }));
+        }
+        if !settings.allow_cloud_asr {
+            return Err(
+                "クラウドASRが許可されていません。設定画面で利用を許可してください。".to_string(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod recording_asr_tests {
+    use super::*;
+    use models::AsrProviderKind;
+
+    fn test_model(is_local: bool, is_compatible: bool, installed: bool) -> AsrModelInfo {
+        AsrModelInfo {
+            id: "test-model".to_string(),
+            name: "Test model".to_string(),
+            provider: if is_local {
+                AsrProviderKind::LocalWhisper
+            } else {
+                AsrProviderKind::CloudOpenAi
+            },
+            is_local,
+            languages: Vec::new(),
+            environment: String::new(),
+            memory_mb: 0,
+            license: String::new(),
+            size_mb: 0,
+            download_url: String::new(),
+            filename: String::new(),
+            supports_realtime: true,
+            supports_diarization: false,
+            is_compatible,
+            compatibility_reason: None,
+            installed,
+            data_handling: String::new(),
+        }
+    }
+
+    #[test]
+    fn recording_requires_a_selected_asr_model() {
+        let mut settings = AppSettings::default();
+        settings.active_asr_model_id.clear();
+
+        let error = validate_recording_asr(&settings, &[]).unwrap_err();
+
+        assert!(error.contains("ASRモデルが選択されていません"));
+    }
+
+    #[test]
+    fn recording_requires_an_installed_compatible_local_asr_model() {
+        let settings = AppSettings {
+            active_asr_model_id: "test-model".to_string(),
+            ..AppSettings::default()
+        };
+        let model = test_model(true, true, false);
+
+        let error = validate_recording_asr(&settings, &[model]).unwrap_err();
+
+        assert!(error.contains("未導入"));
+    }
+
+    #[test]
+    fn recording_requires_cloud_asr_permission_and_api_key() {
+        let mut settings = AppSettings {
+            active_asr_model_id: "test-model".to_string(),
+            ..AppSettings::default()
+        };
+        settings.allow_cloud_asr = true;
+        let model = test_model(false, false, true);
+
+        let error = validate_recording_asr(&settings, &[model]).unwrap_err();
+
+        assert!(error.contains("クラウドASRのAPIキーが未設定"));
+    }
+}
+
 #[tauri::command]
 async fn start_recording(
     app: tauri::AppHandle,
@@ -239,13 +351,19 @@ async fn start_recording(
     source_mode: AudioSourceMode,
     device_id: Option<String>,
 ) -> Result<RecordingStatus, String> {
-    let (mic_gain, system_gain) = {
+    let settings = {
         let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
-        (data.settings.mic_gain, data.settings.system_gain)
+        data.settings.clone()
     };
+    validate_recording_asr(&settings, &asr::list_models(&settings))?;
     let status = {
         let mut audio = state.audio.lock().unwrap_or_else(|e| e.into_inner());
-        audio.start(source_mode, device_id, mic_gain, system_gain)?
+        audio.start(
+            source_mode,
+            device_id,
+            settings.mic_gain,
+            settings.system_gain,
+        )?
     };
 
     if let Some(notify_win) = app.get_webview_window("meeting-notify") {
