@@ -14,7 +14,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { AppSettings, AsrModelInfo, DEFAULT_SUMMARY_PRESETS, Folder, GpuCapabilities, Note, SecretStatus, StorageStats, SummaryPreset, UpdateCheckResult } from '../types';
+import { AppSettings, AsrModelInfo, AudioDeviceInfo, DEFAULT_SUMMARY_PRESETS, Folder, GpuCapabilities, Note, SecretStatus, StorageStats, SummaryPreset, UpdateCheckResult } from '../types';
 import { GranolaImportCard } from './GranolaImportCard';
 import { confirmActionDialog } from './ConfirmDialog';
 import { UpdateSettingsPanel } from './settings/UpdateSettingsPanel';
@@ -22,6 +22,7 @@ import {
   apiCompressRetainedAudio,
   apiDetectGpuCapabilities,
   apiGetStorageStats,
+  apiListAudioDevices,
   apiOpenStorageFolder,
   apiPurgeSyncedLocalNotes,
   apiTestCloudAsrConnection,
@@ -117,6 +118,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [testFeedback, setTestFeedback] = useState<Record<string, { ok: boolean; msg: string }>>({});
   const [micTestResult, setMicTestResult] = useState<{ rms: number; device_name: string } | null>(null);
   const [testingMic, setTestingMic] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<AudioDeviceInfo[]>([]);
+  const [refreshingAudioDevices, setRefreshingAudioDevices] = useState(false);
   const [appVersion, setAppVersion] = useState<string>(
     typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : ''
   );
@@ -125,6 +128,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (tab === 'asr' && isTauriRuntime()) {
       void apiDetectGpuCapabilities()
         .then((caps) => setGpuCaps(caps))
+        .catch(() => {
+          // ignore
+        });
+      void apiListAudioDevices()
+        .then(setAudioDevices)
         .catch(() => {
           // ignore
         });
@@ -164,6 +172,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const flash = (msg: string) => {
     setStatusMessage(msg);
     setTimeout(() => setStatusMessage(null), 3200);
+  };
+
+  const refreshAudioDevices = async () => {
+    setRefreshingAudioDevices(true);
+    try {
+      setAudioDevices(await apiListAudioDevices());
+    } catch (e) {
+      flash(`マイク入力元の更新に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRefreshingAudioDevices(false);
+    }
   };
 
   const update = (patch: Partial<AppSettings>) => {
@@ -567,7 +586,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onClick={async () => {
                       setTestingMic(true);
                       try {
-                        const res = await apiTestMicLevel();
+                        const res = await apiTestMicLevel(settings.preferred_mic_device_id ?? null);
                         setMicTestResult(res);
                       } catch (e) {
                         flash(`マイクテスト失敗: ${e instanceof Error ? e.message : String(e)}`);
@@ -580,6 +599,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </button>
                 )}
               </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
+                <span>マイク入力元</span>
+                <select
+                  aria-label="マイク入力元"
+                  className="select"
+                  style={{ flex: 1, minWidth: '180px', height: '32px', padding: '0 8px' }}
+                  value={settings.preferred_mic_device_id ?? ''}
+                  onChange={(e) => update({ preferred_mic_device_id: e.target.value || null })}
+                >
+                  <option value="">既定のマイク (自動)</option>
+                  {audioDevices
+                    .filter((device) => device.kind === 'input')
+                    .map((device) => (
+                      <option key={device.id} value={device.id}>
+                        {device.name}
+                      </option>
+                    ))}
+                </select>
+                {isTauriRuntime() && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    aria-label="マイク入力元を再読み込み"
+                    title="マイク入力元を再読み込み"
+                    style={{ height: '28px', padding: '0 8px' }}
+                    disabled={refreshingAudioDevices}
+                    onClick={() => void refreshAudioDevices()}
+                  >
+                    <RefreshCw size={13} className={refreshingAudioDevices ? 'spin' : undefined} />
+                  </button>
+                )}
+              </label>
               {micTestResult && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
                   <span className="text-muted" style={{ flexShrink: 0 }}>{micTestResult.device_name}</span>

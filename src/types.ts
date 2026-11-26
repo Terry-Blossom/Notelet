@@ -195,6 +195,7 @@ export interface AppSettings {
   system_gain?: number;
   auto_share_slack_folder_ids?: string[];
   calendar_reminder_enabled?: boolean;
+  preferred_mic_device_id?: string | null;
 }
 
 export interface GpuCapabilities {
