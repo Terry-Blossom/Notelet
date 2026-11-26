@@ -323,11 +323,11 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
           </button>
         </div>
         {folders.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <span className="text-muted" style={{ fontSize: '12px' }}>
               要約完了時に Slack へ自動共有するスペース（選択したスペースのノートのみ自動送信）
             </span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {folders.map((folder) => {
                 const selected = (settings.auto_share_slack_folder_ids ?? []).includes(folder.id);
                 return (
@@ -336,7 +336,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '6px',
+                      gap: '8px',
                       fontSize: '12px',
                       cursor: 'pointer',
                     }}
@@ -394,7 +394,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
       </section>
 
       {/* Issue Tracker: GitHub / Linear / Jira */}
-      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <div>
           <h2 className="section-title">Issue / タスク起票連携 (GitHub / Linear / Jira)</h2>
           <p className="text-muted" style={{ margin: '4px 0 0' }}>
@@ -490,7 +490,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
       </section>
 
       {/* Granola API */}
-      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <h2 className="section-title">Granola API キー（インポート用）</h2>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <input

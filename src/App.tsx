@@ -630,9 +630,14 @@ const MainApp: React.FC = () => {
   const [liveManualNotes, setLiveManualNotes] = useState('');
   const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [openNoteSeq, setOpenNoteSeq] = useState(0);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string>('');
   const [recordingNoteId, setRecordingNoteId] = useState<string | null>(null);
   const voiceTypingRef = useRef(false);
+  const recStateRef = useRef(recStatus.state);
+  recStateRef.current = recStatus.state;
+  const startRecordingRef = useRef<(voiceTyping?: boolean) => Promise<void>>(async () => {});
+  const stopAndFinishRef = useRef<() => Promise<void>>(async () => {});
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeProgress, setTranscribeProgress] = useState<{
     note_id: string;
@@ -957,18 +962,18 @@ const MainApp: React.FC = () => {
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       const f1 = await listen<{ role?: string }>('global-shortcut-triggered', (event) => {
         const role = event.payload?.role === 'voice_typing' ? 'voice_typing' : 'record';
-        if (recStatus.state === 'recording' || recStatus.state === 'paused') {
+        if (recStateRef.current === 'recording' || recStateRef.current === 'paused') {
           if (role === 'voice_typing' && !voiceTypingRef.current) return;
-          void handleStopAndFinish();
+          void stopAndFinishRef.current();
         } else {
-          void handleStartRecording(role === 'voice_typing');
+          void startRecordingRef.current(role === 'voice_typing');
         }
       });
       const f2 = await listen('overlay-stop-recording', () => {
-        void handleStopAndFinish();
+        void stopAndFinishRef.current();
       });
       const f3 = await listen('overlay-start-recording', () => {
-        void handleStartRecording();
+        void startRecordingRef.current();
       });
       if (cancelled) {
         f1();
@@ -986,7 +991,7 @@ const MainApp: React.FC = () => {
       unlistenOverlayStop?.();
       unlistenOverlayStart?.();
     };
-  }, [recStatus.state]);
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -1038,7 +1043,7 @@ const MainApp: React.FC = () => {
     voiceTypingRef.current = false;
     setTranscribeError(null);
     setLiveSegments([]);
-    setRecordingNoteId(activeNoteId);
+    setRecordingNoteId(activeNote?.id || activeNoteId);
     if (!isTauriRuntime()) return;
     try {
       const st = await apiStartRecording(sourceMode, selectedDeviceId || null);
@@ -1052,7 +1057,7 @@ const MainApp: React.FC = () => {
     const isVoiceTyping = voiceTypingRef.current;
     const finalStatus = isTauriRuntime() ? await apiStopRecording() : recStatus;
     setRecStatus(INITIAL_RECORDING_STATUS);
-    const targetId = recordingNoteId || activeNoteId;
+    const targetId = recordingNoteId || activeNote?.id || activeNoteId;
     setRecordingNoteId(null);
     const existing = snapshot.notes.find((n) => n.id === targetId);
     const nowStr = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
@@ -1103,8 +1108,10 @@ const MainApp: React.FC = () => {
           const nextSegs =
             updatedNote.segments.length > 0 ? updatedNote.segments : capturedLiveSegments;
           const mergedSegments =
-            existing && existing.segments.length > 0 && nextSegs.length > 0
-              ? [...existing.segments, ...nextSegs]
+            existing && existing.segments.length > 0
+              ? nextSegs.length > 0
+                ? [...existing.segments, ...nextSegs]
+                : existing.segments
               : nextSegs;
           const finalNote = { ...updatedNote, segments: mergedSegments };
           const savedSnap = await apiSaveNote(finalNote);
@@ -1150,6 +1157,9 @@ const MainApp: React.FC = () => {
       voiceTypingRef.current = false;
     }
   };
+
+  startRecordingRef.current = handleStartRecording;
+  stopAndFinishRef.current = handleStopAndFinish;
 
   const handleRetranscribeNote = async (noteId: string) => {
     if (!isTauriRuntime()) return;
@@ -1710,7 +1720,7 @@ const MainApp: React.FC = () => {
           <div
             role="status"
             style={{
-              padding: '10px 24px',
+              padding: '12px 24px',
               backgroundColor: 'var(--accent-tint)',
               borderBottom: '1px solid var(--accent-border)',
               display: 'flex',
@@ -1728,7 +1738,7 @@ const MainApp: React.FC = () => {
         {meetingReminder && (
           <div
             style={{
-              padding: '10px 24px',
+              padding: '12px 24px',
               backgroundColor: 'var(--warning-bg)',
               borderBottom: '1px solid var(--border-subtle)',
               display: 'flex',
@@ -1794,6 +1804,7 @@ const MainApp: React.FC = () => {
             onOpenNote={(id, query) => {
               setPendingSearchQuery(query || '');
               setActiveNoteId(id);
+              setOpenNoteSeq((v) => v + 1);
               setView('editor');
             }}
             onDeleteNote={async (id) => {
@@ -1888,6 +1899,7 @@ const MainApp: React.FC = () => {
               setPendingSeekMs(ms);
               setPendingSearchQuery(excerpt ? excerpt.slice(0, 24) : '');
               setActiveNoteId(id);
+              setOpenNoteSeq((v) => v + 1);
               setView('editor');
             }}
             onGoSettings={() => setSettingsOpen(true)}
@@ -2028,6 +2040,7 @@ const MainApp: React.FC = () => {
             secretStatus={secretStatus}
             chatHistory={snapshot.chat_history || []}
             initialSearchQuery={pendingSearchQuery || undefined}
+            openNoteSeq={openNoteSeq}
             pendingSeekMs={pendingSeekMs}
             transcribing={transcribing && (!recordingNoteId || activeNote.id === recordingNoteId)}
             transcribeProgress={transcribeProgress}
@@ -2204,7 +2217,9 @@ const MainApp: React.FC = () => {
                       className="flat-row"
                       style={{ borderBottom: 'none', padding: '8px 12px', alignItems: 'flex-start' }}
                       onClick={() => {
+                        setPendingSearchQuery(commandQuery.trim());
                         setActiveNoteId(n.id);
+                        setOpenNoteSeq((v) => v + 1);
                         setView('notes');
                         setCommandSearchOpen(false);
                       }}
@@ -2278,7 +2293,7 @@ const MainApp: React.FC = () => {
                 閉じる
               </button>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', fontSize: '13px', gap: '8px' }}>
               {[
                 ['グローバル録音 開始/停止', snapshot.settings.record_shortcut || 'Ctrl+Shift+R'],
                 ['音声入力（Voice Typing）', snapshot.settings.voice_typing_shortcut || 'Ctrl+Shift+V'],
@@ -2294,12 +2309,12 @@ const MainApp: React.FC = () => {
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    padding: '6px 0',
+                    padding: '8px 0',
                     borderBottom: '1px solid var(--border-subtle)',
                   }}
                 >
                   <span>{label}</span>
-                  <kbd className="status-chip mono-num">{key}</kbd>
+                  <span className="status-chip mono-num">{key}</span>
                 </div>
               ))}
             </div>

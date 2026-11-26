@@ -661,7 +661,6 @@ async fn transcribe_recording(
         }
     }
     note.segments = segments;
-    note.diarization_supported = false;
     note.asr_model_id = settings.active_asr_model_id.clone();
     note.asr_provider_label = model_name;
     note.updated_at = chrono::Utc::now().to_rfc3339();
@@ -2152,19 +2151,23 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            let (shortcut_str, mw_x, mw_y, mw_w, mw_h) = {
+            let (shortcut_str, voice_typing_str, mw_x, mw_y, mw_w, mw_h) = {
                 let state = app.state::<AppState>();
                 let data = state.data.lock().unwrap();
                 (
                     data.settings.record_shortcut.clone(),
+                    data.settings.voice_typing_shortcut.clone(),
                     data.settings.main_window_x,
                     data.settings.main_window_y,
                     data.settings.main_window_width,
                     data.settings.main_window_height,
                 )
             };
-            if !shortcut_str.is_empty() {
-                let _ = app.global_shortcut().register(shortcut_str.as_str());
+            if !shortcut_str.trim().is_empty() {
+                let _ = app.global_shortcut().register(shortcut_str.trim());
+            }
+            if !voice_typing_str.trim().is_empty() && voice_typing_str.trim() != shortcut_str.trim() {
+                let _ = app.global_shortcut().register(voice_typing_str.trim());
             }
 
             if let Some(main_win) = app.get_webview_window("main") {

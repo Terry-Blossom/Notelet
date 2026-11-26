@@ -417,7 +417,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {cloudKeyMeta && testFeedback[m.id] && (
           <div
             className={`status-chip ${testFeedback[m.id].ok ? 'ok' : 'danger'}`}
-            style={{ alignSelf: 'flex-start', height: 'auto', padding: '4px 10px', whiteSpace: 'normal' }}
+            style={{ alignSelf: 'flex-start', height: 'auto', padding: '4px 12px', whiteSpace: 'normal' }}
           >
             {testFeedback[m.id].msg}
           </div>
@@ -477,7 +477,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Left Sidebar Navigation */}
       <aside className="settings-sidebar" aria-label="設定メニュー">
         {navGroups.map((group) => (
-          <div key={group.heading} style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '10px' }}>
+          <div key={group.heading} style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '12px' }}>
             <div className="settings-sidebar-title">{group.heading}</div>
             {group.items.map((item) => {
               const Icon = item.icon;
@@ -517,7 +517,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </p>
             </div>
 
-            <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '10px 14px' }}>
+            <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '12px 16px' }}>
               <span className="text-muted" style={{ fontWeight: 500 }}>認識言語（全モデル共通）</span>
               <select
                 className="select"
@@ -531,7 +531,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </select>
             </div>
 
-            <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px' }}>
+            <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 16px' }}>
               <input
                 id="enable-local-diarization"
                 type="checkbox"
@@ -543,7 +543,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </label>
             </div>
 
-            <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px 14px' }}>
+            <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
                   <strong style={{ fontSize: '12.5px' }}>マイク入力テスト & 音量バランス</strong>
@@ -574,7 +574,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 )}
               </div>
               {micTestResult && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
                   <span className="text-muted" style={{ flexShrink: 0 }}>{micTestResult.device_name}</span>
                   <div style={{ flex: 1, height: '6px', borderRadius: '999px', backgroundColor: 'var(--border-subtle)', overflow: 'hidden' }}>
                     <div
@@ -684,8 +684,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 </div>
 
-                <div className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '10px 14px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px' }}>
+                <div className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '12px 16px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', fontSize: '12.5px', gap: '8px', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
                       checked={settings.enable_gpu_asr ?? true}
@@ -784,10 +784,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     type="button"
                     className="btn btn-secondary"
                     style={{ height: '28px', fontSize: '12px' }}
-                    disabled={downloadProgress['runtime:parakeet'] !== undefined}
+                    disabled={Boolean(settings.parakeet_cli_path) || downloadProgress['runtime:parakeet'] !== undefined}
                     onClick={() => onInstallRuntime('parakeet')}
                   >
-                    {downloadProgress['runtime:parakeet'] !== undefined ? (
+                    {settings.parakeet_cli_path ? (
+                      <Check size={13} strokeWidth={1.5} />
+                    ) : downloadProgress['runtime:parakeet'] !== undefined ? (
                       <Loader2 size={13} strokeWidth={1.5} className="spin" />
                     ) : (
                       <Download size={13} strokeWidth={1.5} />
@@ -826,7 +828,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <div
                     className="surface-subtle"
                     style={{
-                      padding: '10px 14px',
+                      padding: '12px 16px',
                       borderLeft: '3px solid var(--accent)',
                       fontSize: '12px',
                       lineHeight: 1.5,
@@ -1076,7 +1078,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     {testFeedback['llm'] && (
                       <div
                         className={`status-chip ${testFeedback['llm'].ok ? 'ok' : 'danger'}`}
-                        style={{ alignSelf: 'flex-start', height: 'auto', padding: '4px 10px', whiteSpace: 'normal' }}
+                        style={{ alignSelf: 'flex-start', height: 'auto', padding: '4px 12px', whiteSpace: 'normal' }}
                       >
                         {testFeedback['llm'].msg}
                       </div>
@@ -1152,7 +1154,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {presets.map((preset) => {
                       const isDefault = (settings.active_template_id || 'standard') === preset.id;
                       return (
@@ -1367,7 +1369,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
 
-            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
                   <strong style={{ fontSize: '13px' }}>Notion オンラインビュワーモード</strong>
@@ -1397,7 +1399,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   同期済みノートのローカルデータを整理
                 </button>
               </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', fontSize: '13px', gap: '8px', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
                   checked={Boolean(settings.notion_viewer_mode)}

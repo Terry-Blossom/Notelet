@@ -32,7 +32,7 @@ function normalizeIsoDate(raw: unknown, fallbackIso: string): string {
   if (typeof raw === 'string') {
     const trimmed = raw.trim();
     if (!trimmed) return fallbackIso;
-    if (/^\d+$/.test(trimmed)) {
+    if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
       const num = Number(trimmed);
       const ms = num > 1e12 ? num : num * 1000;
       const d = new Date(ms);

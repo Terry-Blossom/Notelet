@@ -181,4 +181,18 @@ describe('Granola import parser', () => {
     });
     expect(out).toBe('> Note this');
   });
+
+  it('parses float epoch timestamp strings instead of falling back to now (#32)', () => {
+    const payload = JSON.stringify([
+      {
+        id: 'g-float',
+        title: 'Float Epoch Meeting',
+        created_at: '1700000000.123',
+        notes_markdown: 'Body',
+      },
+    ]);
+    const res = parseGranolaImportFiles([{ name: 'granola.json', content: payload }]);
+    expect(res.notes).toHaveLength(1);
+    expect(res.notes[0].created_at).toBe('2023-11-14T22:13:20.123Z');
+  });
 });

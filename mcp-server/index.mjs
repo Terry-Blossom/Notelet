@@ -11,6 +11,40 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
+
+function readAppVersion() {
+  try {
+    const pkgPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    if (pkg && typeof pkg.version === 'string' && pkg.version.trim()) {
+      return pkg.version.trim();
+    }
+  } catch {
+    // fallback below
+  }
+  return '0.16.3';
+}
+
+const APP_VERSION = readAppVersion();
+
+function stripHtmlToPlainText(raw) {
+  if (typeof raw !== 'string' || !raw) return '';
+  if (!/<[a-z][\s\S]*>/i.test(raw)) return raw;
+  return raw
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/\s*(p|div|li|h[1-6]|blockquote|tr)\s*>/gi, '\n')
+    .replace(/<\s*li\b[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 function firstExisting(candidates) {
   for (const candidate of candidates) {
@@ -114,8 +148,9 @@ function formatNoteFull(note) {
       ...note.action_items.map((a) => `- [${a.done ? 'x' : ' '}] ${a.text}${a.assignee ? ` (@${a.assignee})` : ''}`)
     );
   }
-  if (note.manual_notes) {
-    parts.push('', '## 手入力メモ', note.manual_notes);
+  const manualNotes = stripHtmlToPlainText(note.manual_notes);
+  if (manualNotes) {
+    parts.push('', '## 手入力メモ', manualNotes);
   }
   if (Array.isArray(note.segments) && note.segments.length > 0) {
     parts.push(
@@ -144,7 +179,7 @@ const TOOLS = [
   },
   {
     name: 'search_notes',
-    description: 'タイトル・要約・メモ・文字起こしからキーワードでノートを検索します。',
+    description: 'タイトル・要約・メモ・タグ・決定事項・アクション項目・文字起こしからキーワードでノートを検索します。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -187,7 +222,7 @@ function handleRequest(req) {
         },
         serverInfo: {
           name: 'notelet-mcp',
-          version: '0.13.0',
+          version: APP_VERSION,
         },
       },
     };
@@ -238,7 +273,10 @@ function handleRequest(req) {
           const haystack = [
             n.title || '',
             n.summary || '',
-            n.manual_notes || '',
+            stripHtmlToPlainText(n.manual_notes || ''),
+            ...(n.tags || []),
+            ...(n.decisions || []),
+            ...(n.action_items || []).map((a) => `${a.text || ''} ${a.assignee || ''}`),
             ...(n.participants || []),
             ...(n.segments || []).map((s) => s.text || ''),
           ]

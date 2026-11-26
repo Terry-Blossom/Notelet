@@ -1187,7 +1187,7 @@ button:disabled {
   justify-content: center;
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
+  padding: 0 4px;
   margin-left: 4px;
   vertical-align: super;
   font-size: 11px;
@@ -1211,15 +1211,15 @@ button:disabled {
 .chat-actions-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   margin-top: 8px;
 }
 
 .chat-action-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
+  gap: 4px;
+  padding: 4px 12px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 500;

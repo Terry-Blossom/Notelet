@@ -260,7 +260,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       }}
                     >
                       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           {note.pinned && (
                             <Pin size={12} strokeWidth={2} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                           )}
@@ -271,7 +271,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                             <span
                               key={tag}
                               className="status-chip"
-                              style={{ fontSize: '10px', padding: '1px 6px' }}
+                              style={{ fontSize: '10px', padding: '2px 8px' }}
                             >
                               #{tag}
                             </span>
@@ -328,14 +328,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </section>
 
           {openActionItems.length > 0 && (
-            <section className="surface-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <section className="surface-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <CheckSquare size={15} strokeWidth={1.75} style={{ color: 'var(--accent)' }} />
                   未完了アクションアイテム ({openActionItems.length})
                 </h2>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {openActionItems.map(({ note, index, text, assignee }) => (
                   <div
                     key={`${note.id}-${index}`}
@@ -343,8 +343,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      gap: '10px',
-                      padding: '6px 8px',
+                      gap: '8px',
+                      padding: '8px',
                       borderRadius: '8px',
                       backgroundColor: 'var(--bg-subtle)',
                       fontSize: '13px',

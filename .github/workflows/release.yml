@@ -126,6 +126,12 @@ jobs:
       - run: npm ci
       - run: npx tauri build
 
+      - name: Verify Linux x86_64 AppImage and deb bundles
+        if: runner.os == 'Linux'
+        run: |
+          ls -la src-tauri/target/release/bundle/appimage/*.AppImage
+          ls -la src-tauri/target/release/bundle/deb/*.deb
+
       - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@v3
         with:

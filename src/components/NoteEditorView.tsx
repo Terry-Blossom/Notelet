@@ -118,6 +118,7 @@ interface NoteEditorViewProps {
   folders?: Folder[];
   chatHistory?: ChatHistoryItem[];
   initialSearchQuery?: string | null;
+  openNoteSeq?: number;
   pendingSeekMs?: number | null;
   recordingNoteId?: string | null;
   settings: AppSettings;
@@ -159,6 +160,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   folders = [{ id: 'personal', name: '一般', is_shared: false, permission: 'owner' }],
   chatHistory = [],
   initialSearchQuery = null,
+  openNoteSeq = 0,
   pendingSeekMs = null,
   recordingNoteId = null,
   settings,
@@ -201,6 +203,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [spaceNameDraft, setSpaceNameDraft] = useState('');
   const [spaceChatQuestion, setSpaceChatQuestion] = useState('');
   const [spaceChatBusy, setSpaceChatBusy] = useState(false);
+  const [spaceChatError, setSpaceChatError] = useState<string | null>(null);
   const [spaceSearchQuery, setSpaceSearchQuery] = useState('');
   const [spaceSortOrder, setSpaceSortOrder] = useState<'newest' | 'oldest' | 'title'>('newest');
   const [spaceSelectMode, setSpaceSelectMode] = useState(false);
@@ -240,12 +243,14 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const [titleDraft, setTitleDraft] = useState(note.title);
   const titleSnapshotRef = useRef(note.title);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const skipTitleBlurSaveRef = useRef(false);
 
   useEffect(() => {
     setViewingFolderId(null);
+    skipTitleBlurSaveRef.current = false;
     setTitleDraft(note.title);
     titleSnapshotRef.current = note.title;
-  }, [note.id]);
+  }, [note.id, openNoteSeq]);
 
   useEffect(() => {
     if (titleInputRef.current && document.activeElement === titleInputRef.current) {
@@ -344,7 +349,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       setInNoteSearchOpen(true);
       setInNoteSearchQuery(initialSearchQuery.trim());
     }
-  }, [initialSearchQuery, note.id]);
+  }, [initialSearchQuery, note.id, openNoteSeq]);
 
   useEffect(() => {
     if (pendingSeekMs !== null && pendingSeekMs !== undefined) {
@@ -1003,6 +1008,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       titleInputRef.current?.blur();
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      skipTitleBlurSaveRef.current = true;
       setTitleDraft(titleSnapshotRef.current);
       onUpdateNote({ ...note, title: titleSnapshotRef.current });
       titleInputRef.current?.blur();
@@ -1140,7 +1146,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 <button
                   type="button"
                   className={`tab-btn ${chatScope === 'note' ? 'active' : ''}`}
-                  style={{ height: '28px', padding: '0 10px', fontSize: '12px' }}
+                  style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
                   onClick={() => setChatScope('note')}
                 >
                   このノート
@@ -1148,7 +1154,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 <button
                   type="button"
                   className={`tab-btn ${chatScope === 'space' ? 'active' : ''}`}
-                  style={{ height: '28px', padding: '0 10px', fontSize: '12px' }}
+                  style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
                   onClick={() => setChatScope('space')}
                 >
                   スペース全体
@@ -1156,7 +1162,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 <button
                   type="button"
                   className={`tab-btn ${chatScope === 'all' ? 'active' : ''}`}
-                  style={{ height: '28px', padding: '0 10px', fontSize: '12px' }}
+                  style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
                   onClick={() => setChatScope('all')}
                 >
                   アプリ全体
@@ -1197,7 +1203,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 height: '28px',
                 padding: 0,
                 backgroundColor: chatHistoryOpen ? 'var(--ns-text-primary)' : undefined,
-                color: chatHistoryOpen ? '#ffffff' : undefined,
+                color: chatHistoryOpen ? 'var(--ns-text-on-primary)' : undefined,
               }}
               onClick={() => setChatHistoryOpen((v) => !v)}
             >
@@ -1317,7 +1323,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                                 gap: '4px',
                                 padding: '8px',
                                 borderRadius: '8px',
-                                backgroundColor: '#fafafa',
+                                backgroundColor: 'var(--ns-bg-sidebar)',
                                 border: '1px solid var(--ns-border-sidebar)',
                                 textAlign: 'left',
                               }}
@@ -1354,6 +1360,20 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   animateOnChange={false}
                 />
               )}
+              {(isSpacePage ? spaceChatError : aiError) && (
+                <div
+                  role="alert"
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    backgroundColor: 'var(--danger-bg)',
+                    color: 'var(--danger)',
+                    fontSize: '12px',
+                  }}
+                >
+                  {isSpacePage ? spaceChatError : aiError}
+                </div>
+              )}
               <button
                 type="button"
                 className="note-jump-latest"
@@ -1382,17 +1402,25 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   };
 
   const handleCopyMarkdown = async () => {
-    const text = formatNoteForCopy(note, settings.copy_format || 'markdown');
-    await onCopyText(text, 'ノート');
-    notify('Markdown形式でコピーしました');
-    setShareOpen(false);
+    try {
+      const text = formatNoteForCopy(note, settings.copy_format || 'markdown');
+      await onCopyText(text, 'ノート');
+      notify('Markdown形式でコピーしました');
+      setShareOpen(false);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const handleCopyFormat = async (fmt: 'markdown' | 'slack' | 'line', label: string) => {
-    const text = formatNoteForCopy(note, fmt);
-    await onCopyText(text, label);
-    notify(`${label}をコピーしました`);
-    setShareOpen(false);
+    try {
+      const text = formatNoteForCopy(note, fmt);
+      await onCopyText(text, label);
+      notify(`${label}をコピーしました`);
+      setShareOpen(false);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const handleConfirmNotionSave = async () => {
@@ -1402,6 +1430,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       setNotionPreviewOpen(false);
       setShareOpen(false);
       notify('Notion に保存しました');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err));
     } finally {
       setNotionBusy(false);
     }
@@ -1765,6 +1795,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               const sid = appendToSession(scopeKey, prompt);
               setSpaceChatQuestion('');
               setSpaceChatBusy(true);
+              setSpaceChatError(null);
               try {
                 const targetIds = folderNotesRaw.map((n) => n.id);
                 const res = await (
@@ -1789,6 +1820,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       : s
                   )
                 );
+              } catch (err) {
+                setSpaceChatError(err instanceof Error ? err.message : String(err));
               } finally {
                 setSpaceChatBusy(false);
               }
@@ -2300,6 +2333,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               });
             }}
             onBlur={() => {
+              if (skipTitleBlurSaveRef.current) {
+                skipTitleBlurSaveRef.current = false;
+                return;
+              }
               const trimmed = titleDraft.trim();
               titleSnapshotRef.current = trimmed;
               if (trimmed !== note.title) {
@@ -2388,7 +2425,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       style={{
                         display: 'flex',
                         gap: '4px',
-                        padding: '6px 6px 2px',
+                        padding: '8px 8px 4px',
                         marginTop: '4px',
                         borderTop: '1px solid var(--ns-border-sidebar)',
                       }}
@@ -2480,7 +2517,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               <span
                 key={tag}
                 className="note-meta-pill"
-                style={{ gap: '4px', paddingRight: '6px' }}
+                style={{ gap: '4px', paddingRight: '8px' }}
               >
                 <Tag size={12} strokeWidth={1.75} aria-hidden="true" />
                 <span>#{tag}</span>
@@ -2653,7 +2690,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                padding: '6px 10px',
+                padding: '8px 12px',
                 borderRadius: '10px',
                 backgroundColor: 'var(--bg-subtle)',
                 border: '1px solid var(--border-subtle)',
@@ -2834,7 +2871,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   className="chip-filter mono-num"
                   aria-label="5秒戻る"
                   title="5秒戻る (←)"
-                  style={{ height: '22px', padding: '0 6px', fontSize: '11px' }}
+                  style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
                   onClick={() => skipAudioBy(-5000)}
                 >
                   -5s
@@ -2844,7 +2881,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   className="chip-filter mono-num"
                   aria-label="5秒進む"
                   title="5秒進む (→)"
-                  style={{ height: '22px', padding: '0 6px', fontSize: '11px' }}
+                  style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
                   onClick={() => skipAudioBy(5000)}
                 >
                   +5s
@@ -2942,8 +2979,12 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     type="button"
                     className="note-sidebar-item"
                     onClick={async () => {
-                      await onPastePrepare(formatNoteForCopy(note, settings.copy_format || 'markdown'));
-                      setShareOpen(false);
+                      try {
+                        await onPastePrepare(formatNoteForCopy(note, settings.copy_format || 'markdown'));
+                        setShareOpen(false);
+                      } catch (err) {
+                        notify(err instanceof Error ? err.message : String(err));
+                      }
                     }}
                   >
                     <ClipboardPaste size={15} strokeWidth={1.75} />
@@ -2978,18 +3019,22 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         toNotionOnly ? 'Notionのみにする' : 'ローカルに保存'
                       );
                       if (!ok) return;
-                      if (isTauriRuntime()) {
-                        const updated = await apiSetNoteStorageMode(note.id, toNotionOnly);
-                        onUpdateNote(updated);
-                      } else {
-                        onUpdateNote({ ...note, storage_mode: toNotionOnly ? 'notion_only' : 'local' });
+                      try {
+                        if (isTauriRuntime()) {
+                          const updated = await apiSetNoteStorageMode(note.id, toNotionOnly);
+                          onUpdateNote(updated);
+                        } else {
+                          onUpdateNote({ ...note, storage_mode: toNotionOnly ? 'notion_only' : 'local' });
+                        }
+                        notify(
+                          toNotionOnly
+                            ? 'Notionのみ（オンラインビュワー）に切り替えました'
+                            : 'ローカルに保存しました'
+                        );
+                        setShareOpen(false);
+                      } catch (err) {
+                        notify(err instanceof Error ? err.message : String(err));
                       }
-                      notify(
-                        toNotionOnly
-                          ? 'Notionのみ（オンラインビュワー）に切り替えました'
-                          : 'ローカルに保存しました'
-                      );
-                      setShareOpen(false);
                     }}
                   >
                     <Cloud size={15} strokeWidth={1.75} />
@@ -3003,9 +3048,13 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     type="button"
                     className="note-sidebar-item"
                     onClick={async () => {
-                      await onShareSlack(note.id);
-                      notify('Slack に送信しました');
-                      setShareOpen(false);
+                      try {
+                        await onShareSlack(note.id);
+                        notify('Slack に送信しました');
+                        setShareOpen(false);
+                      } catch (err) {
+                        notify(err instanceof Error ? err.message : String(err));
+                      }
                     }}
                   >
                     <Send size={15} strokeWidth={1.75} />
@@ -3015,9 +3064,13 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     type="button"
                     className="note-sidebar-item"
                     onClick={async () => {
-                      await onSendWebhook(note.id);
-                      notify('Webhook を送信しました');
-                      setShareOpen(false);
+                      try {
+                        await onSendWebhook(note.id);
+                        notify('Webhook を送信しました');
+                        setShareOpen(false);
+                      } catch (err) {
+                        notify(err instanceof Error ? err.message : String(err));
+                      }
                     }}
                   >
                     <Link2 size={15} strokeWidth={1.75} />
@@ -3072,7 +3125,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             <button
               type="button"
               className="note-meta-pill"
-              style={{ padding: '0 10px', fontSize: '12px', color: 'var(--ns-text-secondary)' }}
+              style={{ padding: '0 12px', fontSize: '12px', color: 'var(--ns-text-secondary)' }}
               title="使用中の音声認識 (ASR) モデル（クリックで設定を開く）"
               onClick={onGoSettings}
             >
@@ -3104,8 +3157,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               gap: '8px',
               padding: '4px 12px',
               borderRadius: '999px',
-              backgroundColor: '#FEF3C7',
-              color: '#92400E',
+              backgroundColor: 'var(--warning-bg)',
+              color: 'var(--warning)',
               fontSize: '12px',
               fontWeight: 500,
               alignSelf: 'flex-start',
@@ -3134,31 +3187,31 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         {note.storage_mode === 'notion_only' && (
           <div
             style={{
-              marginTop: '10px',
+              marginTop: '12px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '10px',
+              gap: '8px',
               flexWrap: 'wrap',
               padding: '8px 12px',
               borderRadius: '10px',
-              backgroundColor: '#F3F4F6',
-              border: '1px solid #E5E7EB',
+              backgroundColor: 'var(--ns-surface-pill)',
+              border: '1px solid var(--ns-border-pill)',
               fontSize: '12.5px',
               color: 'var(--ns-text-secondary)',
             }}
           >
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
               <Cloud size={14} strokeWidth={1.75} />
               <strong>オンライン閲覧中（Notionのみ）</strong>
               {viewerLoading && <span>— Notion から読み込み中...</span>}
-              {viewerError && <span style={{ color: '#B91C1C' }}>— 読み込み失敗: {viewerError}</span>}
+              {viewerError && <span style={{ color: 'var(--danger)' }}>— 読み込み失敗: {viewerError}</span>}
             </span>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
               <button
                 type="button"
                 className="btn btn-secondary"
-                style={{ height: '26px', fontSize: '12px', padding: '0 10px' }}
+                style={{ height: '26px', fontSize: '12px', padding: '0 12px' }}
                 disabled={viewerLoading}
                 onClick={() => void reloadNotionViewer()}
               >
@@ -3167,7 +3220,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               <button
                 type="button"
                 className="btn btn-ghost"
-                style={{ height: '26px', fontSize: '12px', padding: '0 10px' }}
+                style={{ height: '26px', fontSize: '12px', padding: '0 12px' }}
                 onClick={async () => {
                   if (isTauriRuntime()) {
                     const updated = await apiSetNoteStorageMode(note.id, false);
@@ -3188,18 +3241,18 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           <div
             role="status"
             style={{
-              marginTop: '10px',
-              padding: '10px 14px',
+              marginTop: '12px',
+              padding: '12px 16px',
               borderRadius: '10px',
               backgroundColor: 'var(--bg-subtle, #F8FAFC)',
               border: '1px solid var(--border-subtle)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '6px',
+              gap: '8px',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12.5px' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 500 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 500 }}>
                 <Loader2 size={14} strokeWidth={2} className="spin" />
                 {transcribeProgress && transcribeProgress.note_id === note.id
                   ? transcribeProgress.label
@@ -3295,7 +3348,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                               key={term}
                               type="button"
                               className="chip-filter"
-                              style={{ height: '22px', padding: '0 8px', fontSize: '11px' }}
+                              style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
                               title={`「${term}」を辞書に追加`}
                               onClick={async () => {
                                 await onAddDictionaryTerm(term);
@@ -3317,7 +3370,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             key={fmt}
                             type="button"
                             className="chip-filter mono-num"
-                            style={{ height: '22px', padding: '0 7px', fontSize: '11px' }}
+                            style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
                             onClick={() => exportTranscriptAs(fmt)}
                           >
                             .{fmt}
@@ -3381,7 +3434,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                               {formatNoteTimer(seg.start_ms)}
                             </button>
                             {isInterimSeg && (
-                              <span className="status-chip" style={{ fontSize: '10px', padding: '0 5px', opacity: 0.8 }}>
+                              <span className="status-chip" style={{ fontSize: '10px', padding: '0 4px', opacity: 0.8 }}>
                                 暫定
                               </span>
                             )}
@@ -3390,7 +3443,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                                 <button
                                   type="button"
                                   className="btn btn-ghost"
-                                  style={{ height: '22px', padding: '0 6px', fontSize: '11px' }}
+                                  style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
                                   title="この発言を編集"
                                   onClick={() => {
                                     setEditingSegId(seg.id);
@@ -3402,7 +3455,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                                 <button
                                   type="button"
                                   className="btn btn-ghost"
-                                  style={{ height: '22px', padding: '0 6px', fontSize: '11px' }}
+                                  style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
                                   title="選択テキストまたは単語を辞書に追加"
                                   onClick={async () => {
                                     const sel = window.getSelection()?.toString().trim();
@@ -3418,7 +3471,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             )}
                           </div>
                           {isEditingSeg ? (
-                            <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                               <input
                                 type="text"
                                 className="input"
@@ -3445,7 +3498,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                               <button
                                 type="button"
                                 className="btn btn-primary"
-                                style={{ height: '30px', padding: '0 10px', fontSize: '12px' }}
+                                style={{ height: '30px', padding: '0 12px', fontSize: '12px' }}
                                 onClick={() => {
                                   const nextSegs = note.segments.map((s) =>
                                     s.id === seg.id ? { ...s, text: editingSegText } : s
@@ -3540,8 +3593,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   {historyOpen && (note.summary_history?.length ?? 0) > 0 && (
                     <div
                       style={{
-                        marginTop: '10px',
-                        padding: '10px',
+                        marginTop: '12px',
+                        padding: '12px',
                         borderRadius: '8px',
                         backgroundColor: 'var(--bg-subtle)',
                         border: '1px solid var(--border-subtle)',
@@ -3556,7 +3609,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           閉じる
                         </button>
                       </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                         {note.summary_history!.map((rev) => (
                           <button
                             key={rev.id}
@@ -3602,6 +3655,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
                   <div aria-label="要約内容" style={{ padding: '4px 0' }}>
                     <StreamingMarkdownArticle
+                      key={note.id}
                       content={isSummarizingThisNote ? '' : effectiveNote.summary}
                       isGenerating={isSummarizingThisNote}
                       animateOnChange

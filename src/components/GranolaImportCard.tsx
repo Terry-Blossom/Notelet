@@ -107,7 +107,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
   };
 
   return (
-    <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+    <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
         <div>
           <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -164,7 +164,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
           alignItems: 'center',
           justifyContent: 'center',
           gap: '8px',
-          padding: '22px 16px',
+          padding: '20px 16px',
           borderRadius: 'var(--radius-md)',
           border: `1px dashed ${dragging ? 'var(--accent)' : 'var(--border-strong)'}`,
           backgroundColor: dragging ? 'var(--bg-hover)' : 'var(--bg-subtle)',
@@ -231,7 +231,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
       )}
 
       {parseResult && (
-        <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             <div style={{ fontSize: '13px', fontWeight: 600 }}>
               取り込みプレビュー: 新規 {parseResult.notes.length} 件
@@ -268,7 +268,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
           {parseResult.warnings.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', color: 'var(--warning, #b45309)', fontSize: '12px' }}>
               {parseResult.warnings.map((w, idx) => (
-                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <AlertTriangle size={13} strokeWidth={1.5} />
                   <span>{w}</span>
                 </div>
@@ -277,7 +277,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
           )}
 
           {parseResult.notes.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '220px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto' }}>
               {parseResult.notes.slice(0, 30).map((note) => (
                 <div
                   key={note.id}
@@ -286,7 +286,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
                     justifyContent: 'space-between',
                     alignItems: 'center',
                     gap: '8px',
-                    padding: '6px 10px',
+                    padding: '8px 12px',
                     borderRadius: 'var(--radius-sm)',
                     backgroundColor: 'var(--bg-surface)',
                     border: '1px solid var(--border-subtle)',

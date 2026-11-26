@@ -302,8 +302,8 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
         <div
           className="ai-thinking-block"
           style={{
-            marginBottom: '10px',
-            padding: '8px 10px',
+            marginBottom: '12px',
+            padding: '8px 12px',
             borderRadius: '8px',
             backgroundColor: 'var(--bg-canvas)',
             border: '1px solid var(--border-subtle)',

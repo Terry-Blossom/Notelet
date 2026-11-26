@@ -513,7 +513,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 style={{
                   alignSelf: 'flex-end',
                   maxWidth: '82%',
-                  padding: '10px 14px',
+                  padding: '12px 16px',
                   borderRadius: '14px 14px 4px 14px',
                   backgroundColor: '#111111',
                   color: '#ffffff',
@@ -527,13 +527,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 style={{
                   alignSelf: 'flex-start',
                   maxWidth: '92%',
-                  padding: '14px 16px',
+                  padding: '12px 16px',
                   borderRadius: '14px 14px 14px 4px',
                   border: '1px solid var(--border-subtle)',
                   backgroundColor: 'var(--bg-subtle)',
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '10px',
+                  gap: '8px',
                 }}
               >
                 <StreamingMarkdownArticle
@@ -551,12 +551,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
           ) : turns.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {turns.map((t) => (
-                <div key={t.id} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div key={t.id} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div
                     style={{
                       alignSelf: 'flex-end',
                       maxWidth: '82%',
-                      padding: '10px 14px',
+                      padding: '12px 16px',
                       borderRadius: '14px 14px 4px 14px',
                       backgroundColor: '#111111',
                       color: '#ffffff',
@@ -570,13 +570,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     style={{
                       alignSelf: 'flex-start',
                       maxWidth: '92%',
-                      padding: '14px 16px',
+                      padding: '12px 16px',
                       borderRadius: '14px 14px 14px 4px',
                       border: '1px solid var(--border-subtle)',
                       backgroundColor: 'var(--bg-subtle)',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '10px',
+                      gap: '8px',
                     }}
                   >
                     {t.pending ? (
