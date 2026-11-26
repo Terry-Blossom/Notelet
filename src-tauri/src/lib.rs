@@ -1955,14 +1955,23 @@ fn restore_backup_snapshot(
     snapshot: AppDataSnapshot,
 ) -> Result<AppDataSnapshot, String> {
     let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
+    apply_backup_snapshot(&mut data, snapshot);
+    let notes_count = data.notes.len();
+    storage::append_audit(
+        &mut data,
+        "backup_restored",
+        &format!("notes={notes_count}"),
+    );
+    storage::save_snapshot(&data)?;
+    Ok(data.clone())
+}
+
+fn apply_backup_snapshot(data: &mut AppDataSnapshot, snapshot: AppDataSnapshot) {
     data.notes = snapshot.notes;
     data.folders = snapshot.folders;
     data.dictionary = snapshot.dictionary;
     data.recipes = snapshot.recipes;
-    let notes_count = data.notes.len();
-    storage::append_audit(&mut data, "backup_restored", &format!("notes={notes_count}"));
-    storage::save_snapshot(&data)?;
-    Ok(data.clone())
+    data.popup_chat_sessions = snapshot.popup_chat_sessions;
 }
 
 fn detect_active_meeting() -> Option<String> {
@@ -2291,4 +2300,41 @@ pub fn run() {
                 whisper_server::stop_server_sync();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_snapshot() -> AppDataSnapshot {
+        AppDataSnapshot {
+            notes: Vec::new(),
+            folders: Vec::new(),
+            dictionary: Vec::new(),
+            recipes: Vec::new(),
+            settings: AppSettings::default(),
+            audit_logs: Vec::new(),
+            chat_history: Vec::new(),
+            popup_chat_sessions: Vec::new(),
+            deleted_notes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn restores_popup_chat_sessions_from_backup() {
+        let mut current = empty_snapshot();
+        let mut backup = empty_snapshot();
+        backup.popup_chat_sessions.push(models::PopupChatSession {
+            id: "backup-session".to_string(),
+            scope_key: "note:note-1".to_string(),
+            title: "Backup chat".to_string(),
+            updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+            messages: Vec::new(),
+        });
+
+        apply_backup_snapshot(&mut current, backup);
+
+        assert_eq!(current.popup_chat_sessions.len(), 1);
+        assert_eq!(current.popup_chat_sessions[0].id, "backup-session");
+    }
 }
