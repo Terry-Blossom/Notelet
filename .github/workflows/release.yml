@@ -22,9 +22,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev:i386 \
             libgtk-3-dev:i386 \
-            libglib2.0-dev:i386 \
-            libgirepository1.0-dev:i386 \
-            libgdk-pixbuf2.0-dev:i386 \
             librsvg2-dev:i386 \
             libasound2-dev:i386 \
             libssl-dev:i386 \
@@ -48,14 +45,52 @@ jobs:
 
       - run: npm ci
 
-      - name: Build x86 AppImage
+      - name: Build x86 binary
         env:
           PKG_CONFIG_ALLOW_CROSS: 1
           PKG_CONFIG_PATH: /usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig
           PKG_CONFIG_LIBDIR: /usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig
-          LD_GTK_LIBRARY_PATH: /usr/lib/i386-linux-gnu
-          NO_STRIP: "true"
-        run: npx tauri build --target i686-unknown-linux-gnu --bundles appimage -v
+        run: npx tauri build --target i686-unknown-linux-gnu --no-bundle
+
+      - name: Package x86 AppImage
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          TARGET_DIR="src-tauri/target/i686-unknown-linux-gnu/release"
+          APPDIR="$PWD/$TARGET_DIR/Notelet.AppDir"
+          OUT_DIR="$PWD/$TARGET_DIR/bundle/appimage"
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
+            "$APPDIR/usr/share/icons/hicolor/128x128/apps" "$OUT_DIR"
+          cp "$TARGET_DIR/notelet" "$APPDIR/usr/bin/notelet"
+          cp src-tauri/icons/128x128.png "$APPDIR/Notelet.png"
+          cp src-tauri/icons/128x128.png "$APPDIR/usr/share/icons/hicolor/128x128/apps/Notelet.png"
+          cp "$APPDIR/Notelet.png" "$APPDIR/.DirIcon"
+          cat > "$APPDIR/Notelet.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Notelet
+          Comment=録音・文字起こし・ノート
+          Exec=notelet
+          Icon=Notelet
+          Categories=Office;AudioVideo;
+          Terminal=false
+          EOF
+          cp "$APPDIR/Notelet.desktop" "$APPDIR/usr/share/applications/Notelet.desktop"
+          cat > "$APPDIR/AppRun" <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/notelet" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun" "$APPDIR/usr/bin/notelet"
+          curl -fsSL -o /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          curl -fsSL -o /tmp/runtime-i686 \
+            https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-i686
+          chmod +x /tmp/appimagetool /tmp/runtime-i686
+          ARCH=i686 APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool \
+            --runtime-file /tmp/runtime-i686 --no-appstream \
+            "$APPDIR" "$OUT_DIR/Notelet_${VERSION}_i386.AppImage"
 
       - name: Upload x86 AppImage to GitHub Release
         uses: softprops/action-gh-release@v3
