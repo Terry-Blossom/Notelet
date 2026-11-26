@@ -10,94 +10,6 @@ permissions:
   contents: write
 
 jobs:
-  publish-linux-x86:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Linux x86 dependencies
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev:i386 \
-            libgtk-3-dev:i386 \
-            librsvg2-dev:i386 \
-            libasound2-dev:i386 \
-            libssl-dev:i386 \
-            libsecret-1-dev:i386 \
-            gcc-multilib \
-            g++-multilib \
-            patchelf
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: i686-unknown-linux-gnu
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - run: npm ci
-
-      - name: Build x86 binary
-        env:
-          PKG_CONFIG_ALLOW_CROSS: 1
-          PKG_CONFIG_PATH: /usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig
-          PKG_CONFIG_LIBDIR: /usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig
-        run: npx tauri build --target i686-unknown-linux-gnu --no-bundle
-
-      - name: Package x86 AppImage
-        run: |
-          set -euo pipefail
-          VERSION=$(node -p "require('./package.json').version")
-          TARGET_DIR="src-tauri/target/i686-unknown-linux-gnu/release"
-          APPDIR="$PWD/$TARGET_DIR/Notelet.AppDir"
-          OUT_DIR="$PWD/$TARGET_DIR/bundle/appimage"
-          rm -rf "$APPDIR"
-          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
-            "$APPDIR/usr/share/icons/hicolor/128x128/apps" "$OUT_DIR"
-          cp "$TARGET_DIR/notelet" "$APPDIR/usr/bin/notelet"
-          cp src-tauri/icons/128x128.png "$APPDIR/Notelet.png"
-          cp src-tauri/icons/128x128.png "$APPDIR/usr/share/icons/hicolor/128x128/apps/Notelet.png"
-          cp "$APPDIR/Notelet.png" "$APPDIR/.DirIcon"
-          cat > "$APPDIR/Notelet.desktop" <<'EOF'
-          [Desktop Entry]
-          Type=Application
-          Name=Notelet
-          Comment=録音・文字起こし・ノート
-          Exec=notelet
-          Icon=Notelet
-          StartupWMClass=notelet
-          Categories=Office;AudioVideo;
-          Terminal=false
-          EOF
-          cp "$APPDIR/Notelet.desktop" "$APPDIR/usr/share/applications/Notelet.desktop"
-          cat > "$APPDIR/AppRun" <<'EOF'
-          #!/bin/sh
-          HERE="$(dirname "$(readlink -f "$0")")"
-          exec "$HERE/usr/bin/notelet" "$@"
-          EOF
-          chmod +x "$APPDIR/AppRun" "$APPDIR/usr/bin/notelet"
-          curl -fsSL -o /tmp/appimagetool \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          curl -fsSL -o /tmp/runtime-i686 \
-            https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-i686
-          chmod +x /tmp/appimagetool /tmp/runtime-i686
-          ARCH=i686 APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool \
-            --runtime-file /tmp/runtime-i686 --no-appstream \
-            "$APPDIR" "$OUT_DIR/Notelet_${VERSION}_linux_i386.AppImage"
-
-      - name: Upload x86 AppImage to GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: src-tauri/target/i686-unknown-linux-gnu/release/bundle/appimage/Notelet_*_linux_i386.AppImage
-
   publish-release:
     strategy:
       fail-fast: false
@@ -135,39 +47,48 @@ jobs:
           rm -rf release_assets
           mkdir -p release_assets
           if [ "${{ runner.os }}" = "Linux" ]; then
-            cp "src-tauri/target/release/bundle/appimage/Notelet_${VERSION}_amd64.AppImage" \
-               "release_assets/Notelet_${VERSION}_linux_x86_64.AppImage"
+            RAW_APPIMAGE="src-tauri/target/release/bundle/appimage/Notelet_${VERSION}_amd64.AppImage"
+            OUT_APPIMAGE="release_assets/Notelet_${VERSION}_linux_x86_64.AppImage"
+            chmod +x "$RAW_APPIMAGE"
+            rm -rf /tmp/notelet-appdir
+            (cd /tmp && "$OLDPWD/$RAW_APPIMAGE" --appimage-extract >/dev/null && mv squashfs-root notelet-appdir)
+            mkdir -p /tmp/notelet-appdir/usr/share/applications \
+              /tmp/notelet-appdir/usr/share/icons/hicolor/128x128/apps \
+              /tmp/notelet-appdir/usr/share/icons/hicolor/256x256/apps \
+              /tmp/notelet-appdir/usr/share/icons/hicolor/512x512/apps
+            cp src-tauri/icons/128x128.png /tmp/notelet-appdir/usr/share/icons/hicolor/128x128/apps/notelet.png
+            cp src-tauri/icons/128x128@2x.png /tmp/notelet-appdir/usr/share/icons/hicolor/256x256/apps/notelet.png
+            cp src-tauri/icons/icon.png /tmp/notelet-appdir/usr/share/icons/hicolor/512x512/apps/notelet.png
+            cp src-tauri/icons/128x128@2x.png /tmp/notelet-appdir/notelet.png
+            cp src-tauri/icons/128x128@2x.png /tmp/notelet-appdir/.DirIcon
+            cat > /tmp/notelet-appdir/notelet.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Notelet
+          Comment=軽量なローカルファースト録音・文字起こし・Notion連携ノートアプリ
+          Exec=notelet
+          Icon=notelet
+          StartupWMClass=notelet
+          Categories=Office;AudioVideo;
+          Terminal=false
+          EOF
+            cp /tmp/notelet-appdir/notelet.desktop /tmp/notelet-appdir/usr/share/applications/notelet.desktop
+            curl -fsSL -o /tmp/appimagetool \
+              https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+            chmod +x /tmp/appimagetool
+            ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool --no-appstream \
+              /tmp/notelet-appdir "$OUT_APPIMAGE"
             cp "src-tauri/target/release/bundle/deb/Notelet_${VERSION}_amd64.deb" \
                "release_assets/Notelet_${VERSION}_linux_x86_64.deb"
           elif [ "${{ runner.os }}" = "Windows" ]; then
             cp "src-tauri/target/release/bundle/nsis/Notelet_${VERSION}_x64-setup.exe" \
                "release_assets/Notelet_${VERSION}_windows_x64-setup.exe"
-          elif [ "${{ runner.os }}" = "macOS" ]; then
-            shopt -s nullglob
-            dmg_candidates=(src-tauri/target/release/bundle/dmg/Notelet_"${VERSION}"_*.dmg)
-            if [ "${#dmg_candidates[@]}" -ne 1 ]; then
-              echo "Expected exactly one macOS DMG, found ${#dmg_candidates[@]}" >&2
-              exit 1
-            fi
-            dmg_name=$(basename "${dmg_candidates[0]}")
-            case "$dmg_name" in
-              "Notelet_${VERSION}_aarch64.dmg")
-                asset_arch=aarch64
-                ;;
-              "Notelet_${VERSION}_x64.dmg")
-                asset_arch=x64
-                ;;
-              *)
-                echo "Unsupported macOS DMG architecture: $dmg_name" >&2
-                exit 1
-                ;;
-            esac
-            cp "${dmg_candidates[0]}" \
-               "release_assets/Notelet_${VERSION}_macos_${asset_arch}.dmg"
-          fi
-          if [ -z "$(find release_assets -maxdepth 1 -type f -print -quit)" ]; then
-            echo "No normalized release assets were produced" >&2
-            exit 1
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cp "src-tauri/target/release/bundle/dmg/Notelet_${VERSION}_aarch64.dmg" \
+               "release_assets/Notelet_${VERSION}_macos_aarch64.dmg"
+          elif [ "${{ matrix.os }}" = "macos-26-intel" ]; then
+            cp "src-tauri/target/release/bundle/dmg/Notelet_${VERSION}_x64.dmg" \
+               "release_assets/Notelet_${VERSION}_macos_x64.dmg"
           fi
           ls -la release_assets
 

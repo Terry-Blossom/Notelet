@@ -2,6 +2,7 @@ pub mod asr;
 pub mod asr_diarization;
 mod audio;
 mod chat_actions;
+mod desktop_integration;
 mod integrations;
 mod llm;
 pub mod models;
@@ -431,10 +432,20 @@ async fn start_recording(
             if is_cloud_provider && !settings.allow_cloud_asr {
                 continue;
             }
-            // Cloud APIs use 3.0s chunks (48,000 samples @ 16kHz) for better phrase accuracy and rate-limit safety;
-            // local models use 2.0s chunks (32,000 samples).
-            let min_samples = if is_cloud_provider { 48_000 } else { 32_000 };
-            let chunk_span_ms = if is_cloud_provider { 3000 } else { 2000 };
+            // StepFun (stepaudio-3-asr-max) is an LLM-fused ASR model that relies on longer
+            // acoustic/semantic context to avoid misclassifying short Japanese fragments as Chinese.
+            // Other cloud APIs use 3.0s chunks; local models use 2.0s chunks.
+            let is_stepfun = matches!(
+                settings.active_asr_provider,
+                models::AsrProviderKind::CloudStepFun
+            );
+            let (min_samples, chunk_span_ms) = if is_stepfun {
+                (80_000, 5000)
+            } else if is_cloud_provider {
+                (48_000, 3000)
+            } else {
+                (32_000, 2000)
+            };
             let chunk_opt = {
                 let audio = st_ref.audio.lock().unwrap_or_else(|e| e.into_inner());
                 audio.take_live_chunk(min_samples)
@@ -2034,6 +2045,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            desktop_integration::ensure_appimage_desktop_integration_async();
             let (shortcut_str, voice_typing_str, mw_x, mw_y, mw_w, mw_h) = {
                 let state = app.state::<AppState>();
                 let data = state.data.lock().unwrap_or_else(|e| e.into_inner());

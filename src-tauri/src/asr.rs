@@ -1688,6 +1688,14 @@ pub async fn transcribe_wav_with_progress(
 
             let mut segs = parse_stepfun_sse_response(&body)?;
             let force_jp_kanji = settings.language.is_empty() || settings.language == "ja";
+            if force_jp_kanji {
+                segs.retain(|seg| {
+                    let t = seg.text.trim();
+                    !t.is_empty()
+                        && !is_silence_hallucination(t)
+                        && !is_likely_chinese_misrecognition(t)
+                });
+            }
             for seg in &mut segs {
                 if force_jp_kanji
                     || (settings.language == "auto" && contains_japanese_kana(&seg.text))
@@ -2003,6 +2011,38 @@ fn parse_stepfun_sse_response(body: &str) -> Result<Vec<TranscriptSegment>, Stri
 fn contains_japanese_kana(text: &str) -> bool {
     text.chars()
         .any(|c| ('\u{3040}'..='\u{309F}').contains(&c) || ('\u{30A0}'..='\u{30FF}').contains(&c))
+}
+
+/// 日本語認識モード時に、StepFun などが無音や短い発話を中国語文として誤認識した出力を検出する。
+/// ひらがな・カタカナを1文字も含まないテキストのうち、簡体字・中国語特有の頻出文字を含むもの、
+/// または CJK 漢字が6文字以上連続して仮名がゼロのものを誤認識とみなす。
+fn is_likely_chinese_misrecognition(text: &str) -> bool {
+    if contains_japanese_kana(text) {
+        return false;
+    }
+    const ZH_MARKERS: &[char] = &[
+        '这', '那', '们', '什', '么', '吗', '呢', '吧', '啊', '呀', '哦', '嗯', '对', '说', '话',
+        '请', '谢', '没', '还', '就', '个', '为', '与', '的', '了', '过', '听', '我', '你', '他',
+        '她', '它', '里', '哪', '怎', '样', '几', '很', '都', '只', '但', '并', '让', '给', '从',
+        '您', '咱', '啥', '咋', '嘛', '呗', '啦', '咯', '嘞', '语', '读', '记', '计', '设', '议',
+        '证', '评', '识', '认', '调', '谈', '论', '讲', '许', '译', '试', '误', '课', '谁', '词',
+        '诉', '详', '访', '订', '讨', '训', '讯', '诚', '该', '诸', '诺', '谱', '谨', '时', '间',
+        '门', '开', '闭', '问', '闻', '阅', '阁', '关', '发', '电', '录', '进', '远', '连', '运',
+        '达', '违', '选', '适', '迟', '遗', '边', '邻', '经', '结', '线', '级', '组', '织', '维',
+        '续', '约', '统', '总', '绝', '终', '细', '绘', '纪', '纯', '纳', '纸', '练', '编', '缩',
+        '综', '绿', '缓', '缘', '继', '绩', '红', '网', '罗', '实', '际', '动', '机', '构', '题',
+        '页', '顺', '须', '领', '额', '颜', '愿', '类', '预', '频', '顶', '项', '顾',
+    ];
+    let mut cjk_count = 0usize;
+    for c in text.chars() {
+        if ZH_MARKERS.contains(&c) {
+            return true;
+        }
+        if ('\u{4E00}'..='\u{9FFF}').contains(&c) {
+            cjk_count += 1;
+        }
+    }
+    cjk_count >= 6
 }
 
 fn normalize_simplified_to_jp_shinjitai(text: &str) -> String {
@@ -2467,6 +2507,13 @@ fn is_silence_hallucination(text: &str) -> bool {
             | "Thanks for watching"
             | "Subscribe"
             | "MBC 뉴스"
+            | "谢谢"
+            | "谢谢大家"
+            | "谢谢观看"
+            | "感谢观看"
+            | "请订阅"
+            | "请不吝点赞"
+            | "字幕由"
     )
 }
 

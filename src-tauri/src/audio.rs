@@ -90,7 +90,7 @@ impl AudioManager {
             sum_sq += f * f;
         }
         let rms = (sum_sq / samples.len().max(1) as f64).sqrt();
-        if rms < 0.001 {
+        if rms < 0.003 {
             return None;
         }
         let (elapsed_ms, source_mode) = self

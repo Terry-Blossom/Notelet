@@ -36,8 +36,8 @@
   --border-strong: rgba(17, 17, 17, 0.26);
 
   /* Typography */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+  --font-sans: "Noto Sans JP", "Noto Sans CJK JP", "Hiragino Sans", "Yu Gothic", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "Noto Sans Mono CJK JP", "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 
   /* Spacing — 4px Grid */
   --sp-1: 4px;
