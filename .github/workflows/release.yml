@@ -62,22 +62,30 @@ jobs:
             cp src-tauri/icons/128x128@2x.png /tmp/notelet-appdir/notelet.png
             cp src-tauri/icons/128x128@2x.png /tmp/notelet-appdir/.DirIcon
             cat > /tmp/notelet-appdir/notelet.desktop <<'EOF'
-          [Desktop Entry]
-          Type=Application
-          Name=Notelet
-          Comment=軽量なローカルファースト録音・文字起こし・Notion連携ノートアプリ
-          Exec=notelet
-          Icon=notelet
-          StartupWMClass=notelet
-          Categories=Office;AudioVideo;
-          Terminal=false
-          EOF
+[Desktop Entry]
+Type=Application
+Name=Notelet
+Comment=軽量なローカルファースト録音・文字起こし・Notion連携ノートアプリ
+Exec=notelet
+Icon=notelet
+StartupWMClass=notelet
+Categories=Office;AudioVideo;
+Terminal=false
+EOF
             cp /tmp/notelet-appdir/notelet.desktop /tmp/notelet-appdir/usr/share/applications/notelet.desktop
+            chmod -R a+rX /tmp/notelet-appdir
+            chmod +x /tmp/notelet-appdir/AppRun
             curl -fsSL -o /tmp/appimagetool \
               https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
             chmod +x /tmp/appimagetool
             ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool --no-appstream \
               /tmp/notelet-appdir "$OUT_APPIMAGE"
+            chmod +x "$OUT_APPIMAGE"
+            rm -rf /tmp/verify-appdir
+            (cd /tmp && "$OLDPWD/$OUT_APPIMAGE" --appimage-extract >/dev/null && mv squashfs-root verify-appdir)
+            test -f /tmp/verify-appdir/.DirIcon
+            grep -q "^StartupWMClass=notelet$" /tmp/verify-appdir/notelet.desktop
+            grep -q "^Icon=notelet$" /tmp/verify-appdir/notelet.desktop
             cp "src-tauri/target/release/bundle/deb/Notelet_${VERSION}_amd64.deb" \
                "release_assets/Notelet_${VERSION}_linux_x86_64.deb"
           elif [ "${{ runner.os }}" = "Windows" ]; then
