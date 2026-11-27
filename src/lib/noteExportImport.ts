@@ -2,16 +2,36 @@ import { AppDataSnapshot, DictionaryEntry, Folder, Note, Recipe } from '../types
 import { formatMs } from './format';
 import { createZipBlob, ZipTextEntry } from './zip';
 
-function escapeYaml(val: string): string {
-  return `"${val.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+const WINDOWS_RESERVED_NAME = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
+
+export function escapeYaml(val: string): string {
+  const escaped = val
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, (ch) => {
+      return `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`;
+    });
+  return `"${escaped}"`;
 }
 
-function sanitizeFileName(name: string): string {
-  return name
+export function sanitizeFileName(name: string): string {
+  const cleaned = name
     .replace(/[\\/:*?"<>|]/g, '_')
     .replace(/\s+/g, '_')
     .slice(0, 80)
-    .replace(/^_+|_+$/g, '') || 'note';
+    .replace(/[. ]+$/g, '')
+    .replace(/^_+|_+$/g, '');
+  if (!cleaned || cleaned === '.' || cleaned === '..') {
+    return 'note';
+  }
+  // Windows の予約デバイス名は拡張子の有無にかかわらず使えないため前置きする。
+  if (WINDOWS_RESERVED_NAME.test(cleaned)) {
+    return `_${cleaned}`;
+  }
+  return cleaned;
 }
 
 export function noteToObsidianMarkdown(note: Note, folderName?: string): string {

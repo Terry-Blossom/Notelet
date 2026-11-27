@@ -2,6 +2,106 @@ use crate::llm;
 use crate::models::{self, AppDataSnapshot, Folder, Note};
 use crate::storage;
 
+fn note_title(data: &AppDataSnapshot, id: Option<&str>) -> String {
+    id.and_then(|nid| data.notes.iter().find(|n| n.id == nid))
+        .map(|n| n.title.clone())
+        .or_else(|| id.map(str::to_string))
+        .unwrap_or_else(|| "対象ノート".to_string())
+}
+
+fn describe_action(
+    data: &AppDataSnapshot,
+    spec: &llm::ChatActionSpec,
+    target_note_id: Option<&str>,
+) -> Option<String> {
+    let folder_label = spec
+        .folder_name
+        .as_deref()
+        .or(spec.name.as_deref())
+        .unwrap_or("カテゴリ");
+    Some(match spec.kind.as_str() {
+        "rename_note" => format!(
+            "ノート「{}」のタイトルを「{}」に変更",
+            note_title(data, target_note_id),
+            spec.title.as_deref().unwrap_or("").trim()
+        ),
+        "move_note_folder" => format!(
+            "ノート「{}」をカテゴリ「{}」へ移動",
+            note_title(data, target_note_id),
+            folder_label
+        ),
+        "create_folder" => format!("カテゴリ「{folder_label}」を作成"),
+        "rename_folder" => format!("カテゴリ「{folder_label}」に名前を変更"),
+        "delete_folder" => format!("カテゴリ「{folder_label}」を削除"),
+        "add_tags" => format!(
+            "ノート「{}」にタグ [{}] を追加",
+            note_title(data, target_note_id),
+            spec.tags.as_deref().unwrap_or(&[]).join(", ")
+        ),
+        "remove_tags" => format!(
+            "ノート「{}」からタグ [{}] を削除",
+            note_title(data, target_note_id),
+            spec.tags.as_deref().unwrap_or(&[]).join(", ")
+        ),
+        "update_summary" => format!(
+            "ノート「{}」の要約を上書き",
+            note_title(data, target_note_id)
+        ),
+        "update_manual_notes" => format!(
+            "ノート「{}」のメモを上書き",
+            note_title(data, target_note_id)
+        ),
+        "rename_speaker" => format!(
+            "ノート「{}」の話者「{}」を「{}」に変更",
+            note_title(data, target_note_id),
+            spec.from_speaker.as_deref().unwrap_or(""),
+            spec.to_speaker.as_deref().unwrap_or("")
+        ),
+        "add_action_item" => format!(
+            "ノート「{}」にアクション項目「{}」を追加",
+            note_title(data, target_note_id),
+            spec.text.as_deref().unwrap_or("").trim()
+        ),
+        "create_note" => format!(
+            "新規ノート「{}」を作成",
+            spec.title.as_deref().unwrap_or("新規ノート").trim()
+        ),
+        "delete_note" => format!(
+            "ノート「{}」を削除",
+            note_title(data, target_note_id)
+        ),
+        _ => return None,
+    })
+}
+
+/// 破壊的・上書き操作を含むアクションは実行せず、ユーザー承認用の提案として返す。
+pub(super) fn propose_chat_actions(
+    data: &AppDataSnapshot,
+    specs: &[llm::ChatActionSpec],
+    default_note_id: Option<&str>,
+) -> Vec<models::ChatActionProposal> {
+    specs
+        .iter()
+        .filter_map(|spec| {
+            let target_note_id = spec
+                .note_id
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .or(default_note_id)
+                .map(|s| s.to_string());
+            let description = describe_action(data, spec, target_note_id.as_deref())?;
+            let spec_value = serde_json::to_value(spec).ok()?;
+            Some(models::ChatActionProposal {
+                id: format!("proposal-{}", uuid::Uuid::new_v4()),
+                action: spec.kind.clone(),
+                target_id: target_note_id,
+                description,
+                spec: spec_value,
+            })
+        })
+        .collect()
+}
+
 pub(super) fn apply_chat_actions(
     data: &mut AppDataSnapshot,
     specs: &[llm::ChatActionSpec],

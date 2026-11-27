@@ -7,9 +7,40 @@ use std::time::Duration;
 
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(20))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+fn is_valid_github_repo(repo: &str) -> bool {
+    let parts: Vec<&str> = repo.split('/').collect();
+    parts.len() == 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && *part != "."
+                && *part != ".."
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        })
+}
+
+fn validate_slack_webhook(url: &str) -> Result<reqwest::Url, String> {
+    let parsed = reqwest::Url::parse(url.trim())
+        .map_err(|_| "Slack Webhook URL が不正です。".to_string())?;
+    if parsed.scheme() != "https"
+        || parsed.host_str() != Some("hooks.slack.com")
+        || !parsed.path().starts_with("/services/")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err(
+            "Slack Webhook URL は https://hooks.slack.com/services/... のみ利用できます。"
+                .to_string(),
+        );
+    }
+    Ok(parsed)
 }
 
 pub fn list_adapters(settings: &AppSettings) -> Vec<IntegrationAdapterInfo> {
@@ -91,6 +122,8 @@ pub fn list_adapters(settings: &AppSettings) -> Vec<IntegrationAdapterInfo> {
 pub async fn send_slack_share(note: &Note) -> Result<(), String> {
     let url = secrets::get_secret("slack_webhook_url")?
         .ok_or_else(|| "Slack Webhook URL が未設定です。設定＞連携から登録してください。".to_string())?;
+    validate_slack_webhook(&url)?;
+    let (client, parsed_url) = net_security::pinned_client(&url, Duration::from_secs(20)).await?;
     let mut text = format!("*{}*\n日時: {}", note.title, note.created_at);
     if !note.summary.is_empty() {
         text.push_str(&format!("\n\n*要約*\n{}", note.summary));
@@ -101,9 +134,8 @@ pub async fn send_slack_share(note: &Note) -> Result<(), String> {
             text.push_str(&format!("\n• {}", a.text));
         }
     }
-    let client = http_client();
     let resp = client
-        .post(url)
+        .post(parsed_url)
         .json(&json!({ "text": text }))
         .send()
         .await
@@ -205,7 +237,7 @@ pub async fn fetch_granola_notes_api(api_key_override: Option<String>) -> Result
             .ok_or_else(|| "Granola API キーが設定されていません。".to_string())?,
     };
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let resp = client
         .post("https://api.granola.ai/v2/get-documents")
         .bearer_auth(&token)
@@ -231,8 +263,7 @@ pub async fn fetch_granola_notes_api(api_key_override: Option<String>) -> Result
         .map_err(|e| format!("Granola API 接続エラー: {e}"))?;
     if !resp_v1.status().is_success() {
         let status = resp_v1.status();
-        let body = resp_v1.text().await.unwrap_or_default();
-        return Err(format!("Granola API エラー (HTTP {status}): {body}"));
+        return Err(format!("Granola API エラー (HTTP {status})"));
     }
     resp_v1
         .text()
@@ -345,14 +376,18 @@ pub async fn create_issue_from_action(
     title: &str,
     body: &str,
 ) -> Result<IssueCreateResult, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
     match provider {
         "github" => {
             let token = secrets::get_secret("github_issue_token")?
                 .ok_or_else(|| "GitHub Issue トークンが設定されていません。設定＞連携から登録してください。".to_string())?;
             let repo = settings.github_repo.trim();
-            if repo.is_empty() || !repo.contains('/') {
-                return Err("GitHub リポジトリ (owner/repo) が設定されていません。".to_string());
+            if !is_valid_github_repo(repo) {
+                return Err("GitHub リポジトリは owner/repo 形式で設定してください。".to_string());
             }
             let resp = client
                 .post(format!("https://api.github.com/repos/{repo}/issues"))
@@ -363,9 +398,7 @@ pub async fn create_issue_from_action(
                 .await
                 .map_err(|e| format!("GitHub Issue 作成エラー: {e}"))?;
             if !resp.status().is_success() {
-                let status = resp.status();
-                let txt = resp.text().await.unwrap_or_default();
-                return Err(format!("GitHub API エラー (HTTP {status}): {txt}"));
+                return Err(format!("GitHub API エラー (HTTP {})", resp.status()));
             }
             let v: serde_json::Value = resp.json().await.map_err(|e| format!("GitHub 応答解析エラー: {e}"))?;
             Ok(IssueCreateResult {
@@ -393,9 +426,7 @@ pub async fn create_issue_from_action(
                 .await
                 .map_err(|e| format!("Linear Issue 作成エラー: {e}"))?;
             if !resp.status().is_success() {
-                let status = resp.status();
-                let txt = resp.text().await.unwrap_or_default();
-                return Err(format!("Linear API エラー (HTTP {status}): {txt}"));
+                return Err(format!("Linear API エラー (HTTP {})", resp.status()));
             }
             let v: serde_json::Value = resp.json().await.map_err(|e| format!("Linear 応答解析エラー: {e}"))?;
             let issue = &v["data"]["issueCreate"]["issue"];
@@ -414,9 +445,31 @@ pub async fn create_issue_from_action(
             if base.is_empty() || email.is_empty() || project.is_empty() {
                 return Err("Jira の Base URL / Email / Project Key をすべて設定してください。".to_string());
             }
+            if !project.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err("Jira の Project Key が不正です。".to_string());
+            }
+            let parsed_base = reqwest::Url::parse(base)
+                .map_err(|_| "Jira の Base URL が不正です。".to_string())?;
+            if parsed_base.scheme() != "https"
+                || parsed_base.host_str().is_none()
+                || !parsed_base.username().is_empty()
+                || parsed_base.password().is_some()
+            {
+                return Err(
+                    "Jira の Base URL は認証情報を含まない https:// の URL を指定してください。"
+                        .to_string(),
+                );
+            }
+            let (jira_client, _) =
+                net_security::pinned_client(base, Duration::from_secs(20)).await?;
+            let base_path = parsed_base.path().trim_end_matches('/').to_string();
+            let mut endpoint = parsed_base.clone();
+            endpoint.set_path(&format!("{base_path}/rest/api/3/issue"));
+            endpoint.set_query(None);
+            endpoint.set_fragment(None);
             let auth = B64.encode(format!("{email}:{token}"));
-            let resp = client
-                .post(format!("{base}/rest/api/3/issue"))
+            let resp = jira_client
+                .post(endpoint)
                 .header("Authorization", format!("Basic {auth}"))
                 .json(&json!({
                     "fields": {
@@ -437,19 +490,53 @@ pub async fn create_issue_from_action(
                 .await
                 .map_err(|e| format!("Jira Issue 作成エラー: {e}"))?;
             if !resp.status().is_success() {
-                let status = resp.status();
-                let txt = resp.text().await.unwrap_or_default();
-                return Err(format!("Jira API エラー (HTTP {status}): {txt}"));
+                return Err(format!("Jira API エラー (HTTP {})", resp.status()));
             }
             let v: serde_json::Value = resp.json().await.map_err(|e| format!("Jira 応答解析エラー: {e}"))?;
-            let key = v["key"].as_str().unwrap_or("JIRA").to_string();
+            let key: String = v["key"]
+                .as_str()
+                .unwrap_or("JIRA")
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            let key = if key.is_empty() { "JIRA".to_string() } else { key };
+            let mut browse = parsed_base.clone();
+            browse.set_path(&format!("{base_path}/browse/{key}"));
+            browse.set_query(None);
+            browse.set_fragment(None);
             Ok(IssueCreateResult {
                 provider: "jira".to_string(),
-                url: format!("{base}/browse/{key}"),
+                url: browse.to_string(),
                 key,
             })
         }
         _ => Err(format!("未対応の Issue プロバイダーです: {provider}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_github_repo_format() {
+        assert!(is_valid_github_repo("owner/repo"));
+        assert!(is_valid_github_repo("a-b_c.d/e_f"));
+        assert!(!is_valid_github_repo("owner"));
+        assert!(!is_valid_github_repo("owner/repo/extra"));
+        assert!(!is_valid_github_repo("owner/.."));
+        assert!(!is_valid_github_repo("owner/repo?x=1"));
+        assert!(!is_valid_github_repo("../repo"));
+        assert!(!is_valid_github_repo("owner//repo"));
+    }
+
+    #[test]
+    fn validates_slack_webhook_host_and_path() {
+        assert!(validate_slack_webhook("https://hooks.slack.com/services/T/B/X").is_ok());
+        assert!(validate_slack_webhook("http://hooks.slack.com/services/T/B/X").is_err());
+        assert!(validate_slack_webhook("https://evil.example/services/T/B/X").is_err());
+        assert!(validate_slack_webhook("https://hooks.slack.com/other/T/B/X").is_err());
+        assert!(validate_slack_webhook("https://user@hooks.slack.com/services/T/B/X").is_err());
     }
 }
 

@@ -660,7 +660,7 @@ fn extract_sentence_excerpt(text: &str, query_lower: &str) -> String {
     clean.chars().take(200).collect()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct ChatActionSpec {
     #[serde(rename = "type")]
     pub kind: String,
@@ -1066,10 +1066,11 @@ pub async fn chat_with_notes_and_actions(
         if !specs.is_empty() {
             return Ok((
                 ChatAnswer {
-                    answer: "ご指示の内容に基づき、Notelet のデータを更新しました。".to_string(),
+                    answer: "ご指示の内容を変更案として提示します。内容を確認して「承認」してください。".to_string(),
                     citations: Vec::new(),
                     actions: Vec::new(),
-                    thinking: Some("ユーザーの編集指示を解析し、対象ノート・カテゴリへの変更を適用しました。".to_string()),
+                    proposed_actions: Vec::new(),
+                    thinking: Some("ユーザーの編集指示を解析し、承認待ちの変更案を作成しました。".to_string()),
                 },
                 specs,
             ));
@@ -1080,6 +1081,7 @@ pub async fn chat_with_notes_and_actions(
                     answer: "こんにちは！ノートの内容に関する質問や、タイトル・カテゴリ・タグの編集などをお気軽にご指示ください。".to_string(),
                     citations: Vec::new(),
                     actions: Vec::new(),
+                    proposed_actions: Vec::new(),
                     thinking: Some("挨拶・短文のため引用検索はスキップしました。".to_string()),
                 },
                 Vec::new(),
@@ -1092,6 +1094,7 @@ pub async fn chat_with_notes_and_actions(
                 answer: final_answer,
                 citations: used_citations,
                 actions: Vec::new(),
+                proposed_actions: Vec::new(),
                 thinking: Some(format!("ローカル検索を実行し、{}件の関連箇所を確認しました。", citations.len())),
             },
             specs,
@@ -1164,6 +1167,7 @@ pub async fn chat_with_notes_and_actions(
                     answer: final_answer,
                     citations: used_citations,
                     actions: Vec::new(),
+                    proposed_actions: Vec::new(),
                     thinking,
                 },
                 specs,
@@ -1178,6 +1182,7 @@ pub async fn chat_with_notes_and_actions(
                     answer: final_answer,
                     citations: used_citations,
                     actions: Vec::new(),
+                    proposed_actions: Vec::new(),
                     thinking: Some("クラウドLLM接続に失敗したため、ローカル検索結果で回答を構成しました。".to_string()),
                 },
                 specs,

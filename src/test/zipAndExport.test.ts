@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyNote } from '../lib/format';
-import { exportNotesAsObsidianZip, mergeNoteletBackupJson, noteToObsidianMarkdown } from '../lib/noteExportImport';
+import {
+  escapeYaml,
+  exportNotesAsObsidianZip,
+  mergeNoteletBackupJson,
+  noteToObsidianMarkdown,
+  sanitizeFileName,
+} from '../lib/noteExportImport';
 import { createZipBytes, unzipTextFiles } from '../lib/zip';
 import { AppDataSnapshot, PopupChatSession } from '../types';
+
+const toArrayBuffer = (bytes: Uint8Array) =>
+  bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 
 describe('ZIP, Obsidian Markdown export, and Backup restore', () => {
   it('creates and extracts UTF-8 ZIP archives round-trip', async () => {
@@ -42,6 +51,36 @@ describe('ZIP, Obsidian Markdown export, and Backup restore', () => {
     ]);
     expect(zipBlob.type).toBe('application/zip');
     expect(zipBlob.size).toBeGreaterThan(100);
+  });
+
+  it('escapes YAML control characters and Windows reserved file names', () => {
+    expect(escapeYaml('line1\nline2\r\t')).toBe('"line1\\nline2\\r\\t"');
+    expect(escapeYaml('a"b\\c')).toBe('"a\\"b\\\\c"');
+    expect(sanitizeFileName('CON')).toBe('_CON');
+    expect(sanitizeFileName('lpt1.txt')).toBe('_lpt1.txt');
+    expect(sanitizeFileName('..')).toBe('note');
+    expect(sanitizeFileName('...')).toBe('note');
+
+    const note = createEmptyNote();
+    note.title = 'safe\ninjected: true';
+    const md = noteToObsidianMarkdown(note);
+    const frontmatter = md.split('---')[1];
+    expect(frontmatter).toContain('title: "safe\\ninjected: true"');
+    expect(frontmatter).not.toMatch(/^injected:/m);
+  });
+
+  it('rejects ZIP bombs and archives above the entry limit', async () => {
+    const eocd = new Uint8Array(22);
+    const view = new DataView(eocd.buffer);
+    view.setUint32(0, 0x06054b50, true);
+    view.setUint16(10, 3000, true);
+    await expect(unzipTextFiles(toArrayBuffer(eocd))).rejects.toThrow(/エントリ数が上限/);
+
+    const bytes = createZipBytes([{ name: 'a.txt', content: 'hello' }]);
+    // 内容を改ざんして CRC 不一致を検出できることを確認する。
+    const tampered = bytes.slice();
+    tampered[35] = 0x7a;
+    await expect(unzipTextFiles(toArrayBuffer(tampered))).rejects.toThrow(/CRC/);
   });
 
   it('merges Notelet backup JSON without duplicating existing IDs', () => {

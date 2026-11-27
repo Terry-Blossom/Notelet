@@ -14,6 +14,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:theme="@style/Theme.notelet"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
         android:networkSecurityConfig="@xml/network_security"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity

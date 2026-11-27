@@ -206,6 +206,22 @@ pub async fn post_json_validated<T: serde::Serialize + ?Sized>(
     raw_url: &str,
     body: &T,
 ) -> Result<reqwest::Response, String> {
+    let (client, parsed) = pinned_client(raw_url, Duration::from_secs(20)).await?;
+
+    client
+        .post(parsed)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("Webhook 送信エラー: {e}"))
+}
+
+/// SSRF 検証済みの URL と、名前解決結果を固定したクライアントを返す。
+/// リダイレクトは追従せず、タイムアウトを必ず設定する。
+pub async fn pinned_client(
+    raw_url: &str,
+    timeout: Duration,
+) -> Result<(reqwest::Client, reqwest::Url), String> {
     let (parsed, addrs) = resolve_and_validate_url(raw_url).await?;
     let host = parsed
         .host_str()
@@ -215,17 +231,12 @@ pub async fn post_json_validated<T: serde::Serialize + ?Sized>(
 
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20))
+        .timeout(timeout)
         .resolve_to_addrs(&host, &addrs)
         .build()
         .map_err(|e| format!("HTTPクライアント構築に失敗: {e}"))?;
 
-    client
-        .post(parsed)
-        .json(body)
-        .send()
-        .await
-        .map_err(|e| format!("Webhook 送信エラー: {e}"))
+    Ok((client, parsed))
 }
 
 #[cfg(test)]

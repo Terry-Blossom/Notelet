@@ -95,4 +95,57 @@ describe('Inline citation badges and AI chat actions', () => {
     });
     confirmSpy.mockRestore();
   });
+
+  it('requires explicit approval before applying AI-proposed destructive actions', async () => {
+    const note = createEmptyNote();
+    note.id = 'note-danger';
+    note.title = '重要ノート';
+    const proposal = {
+      id: 'proposal-1',
+      action: 'delete_note',
+      target_id: 'note-danger',
+      description: 'ノート「重要ノート」を削除',
+      spec: { type: 'delete_note', note_id: 'note-danger' },
+    };
+    const onChatAcrossNotes = vi.fn().mockResolvedValue({
+      answer: 'このノートを削除しますか？',
+      citations: [],
+      proposed_actions: [proposal],
+    });
+    const onApplyChatActions = vi.fn().mockResolvedValue([
+      {
+        action: 'delete_note',
+        target_id: 'note-danger',
+        description: 'ノート「重要ノート」を削除しました',
+        success: true,
+      },
+    ]);
+
+    render(
+      <ChatView
+        notes={[note]}
+        folders={[]}
+        chatHistory={[]}
+        settings={{} as AppSettings}
+        onChatAcrossNotes={onChatAcrossNotes}
+        onApplyChatActions={onApplyChatActions}
+        onOpenNote={vi.fn()}
+        onClearHistory={vi.fn()}
+        onGoSettings={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/何でも質問/), {
+      target: { value: '古いノートを削除して' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '質問を送信' }));
+
+    expect(await screen.findByText(/AI が提案した変更/)).toBeInTheDocument();
+    // 承認前には何も実行されない
+    expect(onApplyChatActions).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '承認' }));
+    await vi.waitFor(() => expect(onApplyChatActions).toHaveBeenCalledWith([proposal]));
+    expect(await screen.findByText('ノート「重要ノート」を削除しました')).toBeInTheDocument();
+  });
 });

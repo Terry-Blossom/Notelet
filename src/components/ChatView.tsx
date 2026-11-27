@@ -10,7 +10,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { AppSettings, ChatActionResult, ChatAnswer, ChatCitation, ChatHistoryItem, Folder, Note } from '../types';
+import { AppSettings, ChatActionProposal, ChatActionResult, ChatAnswer, ChatCitation, ChatHistoryItem, Folder, Note } from '../types';
 import { formatDateTime } from '../lib/format';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 import { confirmActionDialog, confirmDeleteDialog } from './ConfirmDialog';
@@ -22,6 +22,7 @@ interface ChatViewProps {
   chatHistory: ChatHistoryItem[];
   settings: AppSettings;
   onChatAcrossNotes: (noteIds: string[], question: string, spaceId?: string | null) => Promise<ChatAnswer>;
+  onApplyChatActions?: (proposals: ChatActionProposal[]) => Promise<ChatActionResult[]>;
   onClearHistory: () => Promise<void>;
   onDeleteHistoryItems?: (itemIds: string[]) => Promise<void>;
   onOpenNote: (noteId: string, timestamp?: string, excerpt?: string) => void;
@@ -41,6 +42,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   chatHistory,
   settings,
   onChatAcrossNotes,
+  onApplyChatActions,
   onClearHistory,
   onDeleteHistoryItems,
   onOpenNote,
@@ -56,6 +58,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState('');
+  const [proposalResults, setProposalResults] = useState<Record<string, ChatActionResult[]>>({});
+  const [dismissedProposals, setDismissedProposals] = useState<string[]>([]);
+  const [applyingProposal, setApplyingProposal] = useState<string | null>(null);
 
   useTauriEvent<string>('chat-stream-chunk', (payload) => {
     if (typeof payload === 'string') {
@@ -155,6 +160,76 @@ export const ChatView: React.FC<ChatViewProps> = ({
             <Check size={12} strokeWidth={2} color="var(--accent)" />
             <span>{a.description}</span>
           </span>
+        ))}
+      </div>
+    );
+  };
+
+  const handleApplyProposal = async (proposal: ChatActionProposal) => {
+    if (!onApplyChatActions || applyingProposal) return;
+    setApplyingProposal(proposal.id);
+    setError(null);
+    try {
+      const results = await onApplyChatActions([proposal]);
+      setProposalResults((prev) => ({ ...prev, [proposal.id]: results }));
+      setDismissedProposals((prev) => [...prev, proposal.id]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApplyingProposal(null);
+    }
+  };
+
+  const renderProposals = (proposals?: ChatActionProposal[]) => {
+    if (!proposals || proposals.length === 0) return null;
+    const pending = proposals.filter((p) => !dismissedProposals.includes(p.id));
+    const applied = proposals.filter(
+      (p) => dismissedProposals.includes(p.id) && proposalResults[p.id]
+    );
+    if (pending.length === 0 && applied.length === 0) return null;
+    return (
+      <div className="chat-proposals">
+        {pending.length > 0 && (
+          <>
+            <div className="chat-proposals-title">
+              <AlertCircle size={13} strokeWidth={2} />
+              AI が提案した変更（内容を確認して承認してください）
+            </div>
+            {pending.map((proposal) => (
+              <div key={proposal.id} className="chat-proposal-row">
+                <span>{proposal.description}</span>
+                <div className="chat-proposal-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ height: '26px', padding: '0 10px', fontSize: '12px' }}
+                    disabled={applyingProposal === proposal.id}
+                    onClick={() => void handleApplyProposal(proposal)}
+                  >
+                    {applyingProposal === proposal.id ? (
+                      <Loader2 size={12} className="spin" />
+                    ) : (
+                      <Check size={12} strokeWidth={2} />
+                    )}
+                    承認
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ height: '26px', padding: '0 8px', fontSize: '12px' }}
+                    onClick={() =>
+                      setDismissedProposals((prev) => [...prev, proposal.id])
+                    }
+                  >
+                    却下
+                  </button>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+        {applied.map((proposal) => (
+          <div key={proposal.id}>{renderActions(proposalResults[proposal.id])}</div>
         ))}
       </div>
     );
@@ -587,6 +662,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                           onCitationClick={(c) => void handleCitationNavigate(c)}
                         />
                         {renderActions(t.answer.actions)}
+                        {renderProposals(t.answer.proposed_actions)}
                         {renderCitations(t.answer.citations)}
                       </>
                     ) : null}

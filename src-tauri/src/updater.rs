@@ -12,6 +12,19 @@ use tauri::Emitter;
 
 const GITHUB_REPO: &str = "Terry-Blossom/Notelet";
 const MANUAL_UPDATE_ERR: &str = "この形式（deb など）ではアプリ内で自動更新できません。リリースページから新しいパッケージを入れてください。";
+const MAX_UPDATE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// 自リポジトリのリリース資産のみ許可する。
+fn is_trusted_update_url(parsed: &reqwest::Url) -> bool {
+    if parsed.scheme() != "https" {
+        return false;
+    }
+    let host = parsed.host_str().unwrap_or_default();
+    let path = parsed.path();
+    (host == "github.com" && path.starts_with("/Terry-Blossom/Notelet/releases/download/"))
+        || (host == "api.github.com"
+            && path.starts_with("/repos/Terry-Blossom/Notelet/releases/assets/"))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCheckResult {
@@ -426,6 +439,11 @@ pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
             has_token,
         )
     });
+    // 検証用ダイジェストが無い資産は自動更新に使わない（フェイルクローズ）。
+    let has_digest = selected
+        .as_ref()
+        .and_then(|asset| asset.sha256.as_deref())
+        .is_some();
 
     Ok(UpdateCheckResult {
         current_version: current,
@@ -441,8 +459,29 @@ pub async fn check_latest_release() -> Result<UpdateCheckResult, String> {
         download_url: selected.as_ref().map(|a| a.download_url.clone()),
         asset_sha256: selected.and_then(|a| a.sha256),
         install_kind: install_kind.to_string(),
-        can_auto_install,
+        can_auto_install: can_auto_install && has_digest,
     })
+}
+
+/// フロントエンドから URL やハッシュを受け取らず、バックエンドで最新リリースを再取得して更新する。
+pub async fn install_latest_update(app: &tauri::AppHandle) -> Result<String, String> {
+    let info = check_latest_release().await?;
+    if !info.has_update {
+        return Err("最新バージョンです。".to_string());
+    }
+    if !info.can_auto_install {
+        return Err(MANUAL_UPDATE_ERR.to_string());
+    }
+    let download_url = info
+        .download_url
+        .ok_or_else(|| "更新ファイルの URL を取得できませんでした。".to_string())?;
+    let asset_name = info
+        .asset_name
+        .ok_or_else(|| "更新ファイル名を取得できませんでした。".to_string())?;
+    let sha256 = info
+        .asset_sha256
+        .ok_or_else(|| "更新ファイルの検証情報 (SHA-256) を取得できませんでした。".to_string())?;
+    download_and_launch_update(app, &download_url, &asset_name, Some(&sha256)).await
 }
 
 pub async fn download_and_launch_update(
@@ -457,19 +496,16 @@ pub async fn download_and_launch_update(
 
     let parsed_url = reqwest::Url::parse(download_url.trim())
         .map_err(|_| "無効な更新ダウンロードURLです。".to_string())?;
-    let host = parsed_url
-        .host_str()
-        .map(|h| h.to_ascii_lowercase())
-        .unwrap_or_default();
-    let is_github_host = parsed_url.scheme() == "https"
-        && (host == "github.com"
-            || host == "api.github.com"
-            || host.ends_with(".githubusercontent.com"));
-    if !is_github_host {
+    if !is_trusted_update_url(&parsed_url) {
         return Err(
-            "セキュリティ上、GitHub公式ドメイン以外の更新URLは許可されていません。".to_string(),
+            "セキュリティ上、Notelet 公式リポジトリの更新URLのみ許可されています。".to_string(),
         );
     }
+    let host = parsed_url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let expected_sha256 = expected_sha256
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "更新ファイルの検証情報 (SHA-256) がありません。".to_string())?;
     let safe_asset_name = Path::new(asset_name)
         .file_name()
         .and_then(|n| n.to_str())
@@ -483,17 +519,23 @@ pub async fn download_and_launch_update(
 
     let client = reqwest::Client::builder()
         .user_agent("Notelet-Updater/0.1")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(600))
         .build()
         .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
     let mut req = client.get(parsed_url);
     if host == "api.github.com" {
         req = req.header("Accept", "application/octet-stream");
     }
-    if let Ok(Some(token)) = secrets::get_secret("github_update_token") {
-        if !token.trim().is_empty() {
-            req = req
-                .bearer_auth(token.trim())
-                .header("Accept", "application/octet-stream");
+    // トークンは API ホストにのみ送る（リダイレクト先には送らない）。
+    if host == "api.github.com" {
+        if let Ok(Some(token)) = secrets::get_secret("github_update_token") {
+            if !token.trim().is_empty() {
+                req = req
+                    .bearer_auth(token.trim())
+                    .header("Accept", "application/octet-stream");
+            }
         }
     }
     let mut resp = req
@@ -502,6 +544,12 @@ pub async fn download_and_launch_update(
         .map_err(|e| format!("インストーラのダウンロードに失敗: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("ダウンロードエラー: HTTP {}", resp.status()));
+    }
+    if resp
+        .content_length()
+        .is_some_and(|length| length > MAX_UPDATE_BYTES)
+    {
+        return Err("更新ファイルがサイズ上限を超えています。".to_string());
     }
 
     let total = resp.content_length().unwrap_or(0);
@@ -512,9 +560,13 @@ pub async fn download_and_launch_update(
         .await
         .map_err(|e| format!("受信エラー: {e}"))?
     {
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        if downloaded > MAX_UPDATE_BYTES {
+            let _ = fs::remove_file(&tmp);
+            return Err("更新ファイルがサイズ上限を超えています。".to_string());
+        }
         file.write_all(&chunk)
             .map_err(|e| format!("書き込み失敗: {e}"))?;
-        downloaded += chunk.len() as u64;
         let pct = if total > 0 {
             ((downloaded as f64 / total as f64) * 100.0).min(99.0) as u8
         } else {
@@ -527,6 +579,12 @@ pub async fn download_and_launch_update(
     }
     drop(file);
     fs::rename(&tmp, &dest).map_err(|e| format!("ファイル配置失敗: {e}"))?;
+
+    // 全プラットフォームで起動前に SHA-256 を検証する。
+    if let Err(err) = verify_file_sha256(&dest, expected_sha256) {
+        let _ = fs::remove_file(&dest);
+        return Err(err);
+    }
     let _ = app.emit("app-update-progress", serde_json::json!({ "progress": 100 }));
 
     if cfg!(windows) {
@@ -571,7 +629,9 @@ pub async fn download_and_launch_update(
     } else if cfg!(target_os = "linux") {
         let target_appimage = current_appimage_path
             .ok_or_else(|| MANUAL_UPDATE_ERR.to_string())?;
-        if let Err(err) = replace_appimage_file(&dest, &target_appimage, expected_sha256) {
+        if let Err(err) =
+            replace_appimage_file(&dest, &target_appimage, Some(expected_sha256))
+        {
             let _ = fs::remove_file(&dest);
             return Err(err);
         }
@@ -593,12 +653,6 @@ pub async fn download_and_launch_update(
         });
         Ok("更新しました。再起動します。".to_string())
     } else if cfg!(target_os = "android") {
-        if let Some(expected) = expected_sha256.filter(|s| !s.trim().is_empty()) {
-            if let Err(err) = verify_file_sha256(&dest, expected) {
-                let _ = fs::remove_file(&dest);
-                return Err(err);
-            }
-        }
         #[cfg(target_os = "android")]
         {
             return install_android_apk(&dest);
@@ -684,6 +738,46 @@ fn install_android_apk(apk_path: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn trusts_only_own_release_asset_urls() {
+        assert!(is_trusted_update_url(
+            &reqwest::Url::parse(
+                "https://github.com/Terry-Blossom/Notelet/releases/download/v1/Notelet.exe"
+            )
+            .unwrap()
+        ));
+        assert!(is_trusted_update_url(
+            &reqwest::Url::parse(
+                "https://api.github.com/repos/Terry-Blossom/Notelet/releases/assets/123"
+            )
+            .unwrap()
+        ));
+        assert!(!is_trusted_update_url(
+            &reqwest::Url::parse(
+                "https://github.com/attacker/Notelet/releases/download/v1/Notelet.exe"
+            )
+            .unwrap()
+        ));
+        assert!(!is_trusted_update_url(
+            &reqwest::Url::parse(
+                "https://github.com/Terry-Blossom/Notelet-attacker/releases/download/v1/x.exe"
+            )
+            .unwrap()
+        ));
+        assert!(!is_trusted_update_url(
+            &reqwest::Url::parse(
+                "http://github.com/Terry-Blossom/Notelet/releases/download/v1/x.exe"
+            )
+            .unwrap()
+        ));
+        assert!(!is_trusted_update_url(
+            &reqwest::Url::parse(
+                "https://objects.githubusercontent.com/Terry-Blossom/Notelet/x.exe"
+            )
+            .unwrap()
+        ));
+    }
 
     fn make_temp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

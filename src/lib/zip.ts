@@ -18,7 +18,12 @@ function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-async function inflateRaw(compressed: Uint8Array): Promise<Uint8Array> {
+// ZIP Bomb 対策の上限。展開後サイズとエントリ数を制限する。
+export const ZIP_MAX_ENTRIES = 2_000;
+export const ZIP_MAX_ENTRY_BYTES = 10 * 1024 * 1024;
+export const ZIP_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+
+async function inflateRaw(compressed: Uint8Array, maxBytes: number): Promise<Uint8Array> {
   if (typeof DecompressionStream === 'undefined') {
     throw new Error('この環境は DEFLATE ZIP 展開 (DecompressionStream) に対応していません。');
   }
@@ -36,8 +41,12 @@ async function inflateRaw(compressed: Uint8Array): Promise<Uint8Array> {
     const { value, done } = await reader.read();
     if (done) break;
     if (value) {
-      chunks.push(value);
       total += value.length;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error(`ZIP エントリの展開サイズが上限 (${maxBytes} bytes) を超えました。`);
+      }
+      chunks.push(value);
     }
   }
   const out = new Uint8Array(total);
@@ -76,21 +85,39 @@ export async function unzipTextFiles(buffer: ArrayBuffer): Promise<ZipTextEntry[
 
   const totalEntries = view.getUint16(eocdOffset + 10, true);
   const cdOffset = view.getUint32(eocdOffset + 16, true);
+  if (totalEntries > ZIP_MAX_ENTRIES) {
+    throw new Error(`ZIP のエントリ数が上限 (${ZIP_MAX_ENTRIES}) を超えています。`);
+  }
 
   const decoder = new TextDecoder('utf-8');
   const results: ZipTextEntry[] = [];
   let ptr = cdOffset;
+  let totalUnpacked = 0;
 
   for (let i = 0; i < totalEntries; i += 1) {
     if (ptr + 46 > bytes.length || view.getUint32(ptr, true) !== 0x02014b50) {
       break;
     }
     const compressionMethod = view.getUint16(ptr + 10, true);
+    const expectedCrc = view.getUint32(ptr + 16, true);
     const compressedSize = view.getUint32(ptr + 20, true);
+    const uncompressedSize = view.getUint32(ptr + 24, true);
     const nameLen = view.getUint16(ptr + 28, true);
     const extraLen = view.getUint16(ptr + 30, true);
     const commentLen = view.getUint16(ptr + 32, true);
     const localHeaderOffset = view.getUint32(ptr + 42, true);
+
+    if (ptr + 46 + nameLen > bytes.length) {
+      throw new Error('ZIP の中央ディレクトリが破損しています。');
+    }
+    if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff) {
+      throw new Error('ZIP64 形式には対応していません。');
+    }
+    if (uncompressedSize > ZIP_MAX_ENTRY_BYTES) {
+      throw new Error(
+        `ZIP エントリの展開サイズが上限 (${ZIP_MAX_ENTRY_BYTES} bytes) を超えています。`
+      );
+    }
 
     const name = decoder.decode(bytes.subarray(ptr + 46, ptr + 46 + nameLen));
     ptr += 46 + nameLen + extraLen + commentLen;
@@ -103,15 +130,29 @@ export async function unzipTextFiles(buffer: ArrayBuffer): Promise<ZipTextEntry[
     const localNameLen = view.getUint16(localHeaderOffset + 26, true);
     const localExtraLen = view.getUint16(localHeaderOffset + 28, true);
     const dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen;
+    if (dataStart > bytes.length || dataStart + compressedSize > bytes.length) {
+      throw new Error(`ZIP エントリのデータ範囲が不正です: ${name}`);
+    }
     const rawData = bytes.subarray(dataStart, dataStart + compressedSize);
 
     let unpacked: Uint8Array;
     if (compressionMethod === 0) {
       unpacked = rawData;
     } else if (compressionMethod === 8) {
-      unpacked = await inflateRaw(rawData);
+      unpacked = await inflateRaw(rawData, Math.min(ZIP_MAX_ENTRY_BYTES, ZIP_MAX_TOTAL_BYTES - totalUnpacked));
     } else {
       continue;
+    }
+
+    if (unpacked.byteLength > ZIP_MAX_ENTRY_BYTES) {
+      throw new Error(`ZIP エントリの展開サイズが上限を超えています: ${name}`);
+    }
+    totalUnpacked += unpacked.byteLength;
+    if (totalUnpacked > ZIP_MAX_TOTAL_BYTES) {
+      throw new Error(`ZIP 全体の展開サイズが上限 (${ZIP_MAX_TOTAL_BYTES} bytes) を超えました。`);
+    }
+    if (crc32(unpacked) !== expectedCrc) {
+      throw new Error(`ZIP エントリの CRC が一致しません: ${name}`);
     }
 
     results.push({

@@ -279,6 +279,11 @@ html.android-runtime .main-area {
   padding: var(--sp-3);
 }
 
+.app-shell.mobile .chat-proposal-row {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 /* Note Editor & Space view — 縦画面向けに余白・ツールバー・ポップオーバー・チャットを調整 */
 .app-shell.mobile .note-main {
   padding: var(--sp-3) var(--sp-3) calc(var(--sp-8) + 64px);
