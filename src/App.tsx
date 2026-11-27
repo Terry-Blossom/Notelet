@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   Home,
@@ -71,6 +71,7 @@ import {
   apiDeleteChatHistoryItems,
   apiSaveDictionaryEntry,
   apiSaveNote,
+  apiSaveNoteFast,
   apiSaveSettings,
   apiSendWebhook,
   apiSetSecret,
@@ -87,6 +88,7 @@ import {
 } from './lib/tauri';
 import { createEmptyNote, findNoteSearchMatches, formatMs } from './lib/format';
 import { isAndroidRuntime, useMobileLayout } from './lib/platform';
+import { useTauriEvent } from './lib/tauriEvents';
 import { exportNotesAsObsidianZip, mergeNoteletBackupJson } from './lib/noteExportImport';
 import { HomeView } from './components/HomeView';
 import { ConfirmDialogHost } from './components/ConfirmDialog';
@@ -537,6 +539,48 @@ export const App: React.FC = () => {
   return <MainApp />;
 };
 
+function mergePulledNotionSnapshot(
+  prev: AppDataSnapshot,
+  incoming: AppDataSnapshot
+): AppDataSnapshot {
+  const incomingById = new Map(incoming.notes.map((n) => [n.id, n]));
+  let changed = false;
+  const notes = prev.notes.map((note) => {
+    const next = incomingById.get(note.id);
+    if (!next) return note;
+    // ローカルの方が新しい場合は上書きしない。
+    if (note.updated_at > next.updated_at) return note;
+    const syncChanged =
+      next.notion_sync.status !== note.notion_sync.status ||
+      next.notion_sync.page_id !== note.notion_sync.page_id ||
+      next.notion_sync.last_synced_at !== note.notion_sync.last_synced_at;
+    if (
+      next.updated_at !== note.updated_at ||
+      next.title !== note.title ||
+      next.summary !== note.summary ||
+      next.manual_notes !== note.manual_notes ||
+      syncChanged
+    ) {
+      changed = true;
+      return next;
+    }
+    return note;
+  });
+  const existingIds = new Set(prev.notes.map((n) => n.id));
+  for (const note of incoming.notes) {
+    if (!existingIds.has(note.id)) {
+      notes.unshift(note);
+      changed = true;
+    }
+  }
+  let folders = prev.folders;
+  if (JSON.stringify(prev.folders) !== JSON.stringify(incoming.folders)) {
+    folders = incoming.folders;
+    changed = true;
+  }
+  return changed ? { ...prev, notes, folders } : prev;
+}
+
 const MainApp: React.FC = () => {
   const mobile = useMobileLayout();
   const android = isAndroidRuntime();
@@ -545,6 +589,7 @@ const MainApp: React.FC = () => {
   const [recordingStartError, setRecordingStartError] = useState<string | null>(null);
   const [commandSearchOpen, setCommandSearchOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
+  const deferredCommandQuery = useDeferredValue(commandQuery);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const [recordingSpaceId, setRecordingSpaceId] = useState('personal');
@@ -683,6 +728,8 @@ const MainApp: React.FC = () => {
   snapshotNotesRef.current = snapshot.notes;
 
   const noteSaveSeqRef = React.useRef<Record<string, number>>({});
+  const noteSaveTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const notePendingRef = React.useRef<Record<string, Note>>({});
 
   const syncNoteToNotion = useCallback(
     async (noteId: string, silent = false) => {
@@ -786,7 +833,7 @@ const MainApp: React.FC = () => {
       lastNotionPullAtRef.current = now;
       try {
         const snap = await apiNotionPullNotes();
-        setSnapshot(snap);
+        setSnapshot((prev) => mergePulledNotionSnapshot(prev, snap));
       } catch {
         // transient pull errors will be retried on next tick/focus
       } finally {
@@ -855,12 +902,13 @@ const MainApp: React.FC = () => {
 
     let tickCount = 0;
     const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       tickCount += 1;
       void retryPendingNotionSyncs(false);
       if (tickCount % 2 === 0) {
         void pullFromNotionIfConfigured(false);
       }
-    }, 10000);
+    }, 30000);
 
     const handleWakeSync = () => {
       notionRetryBackoffRef.current = {};
@@ -888,12 +936,6 @@ const MainApp: React.FC = () => {
     pullFromNotionIfConfigured,
     retryPendingNotionSyncs,
   ]);
-
-  // Reflect remote Notion edits promptly when switching active note
-  useEffect(() => {
-    if (!activeNoteId) return;
-    void pullFromNotionIfConfigured(false);
-  }, [activeNoteId, pullFromNotionIfConfigured]);
 
   const refreshAll = useCallback(async () => {
     if (!isTauriRuntime()) return;
@@ -1018,19 +1060,9 @@ const MainApp: React.FC = () => {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (recStatus.state !== 'recording' && recStatus.state !== 'paused') return;
-    const timer = setInterval(async () => {
-      try {
-        const st = await apiGetRecordingStatus();
-        setRecStatus(st);
-      } catch {
-        // ignore transient polling error
-      }
-    }, 150);
-    return () => clearInterval(timer);
-  }, [recStatus.state]);
+  useTauriEvent<RecordingStatus>('recording-status', (status) => {
+    if (status && status.state) setRecStatus(status);
+  }, []);
 
   const ensureRecordingAsrReady = () => {
     if (!isTauriRuntime()) return true;
@@ -1313,9 +1345,57 @@ const MainApp: React.FC = () => {
     }
   };
 
+  const cancelPendingNoteSave = useCallback((noteId: string) => {
+    delete notePendingRef.current[noteId];
+    const timer = noteSaveTimersRef.current[noteId];
+    if (timer) {
+      clearTimeout(timer);
+      delete noteSaveTimersRef.current[noteId];
+    }
+  }, []);
+
+  const flushPendingNote = useCallback(
+    async (noteId?: string) => {
+      if (!isTauriRuntime()) return;
+      const ids = noteId ? [noteId] : Object.keys(notePendingRef.current);
+      for (const id of ids) {
+        const pending = notePendingRef.current[id];
+        if (!pending) continue;
+        delete notePendingRef.current[id];
+        const timer = noteSaveTimersRef.current[id];
+        if (timer) {
+          clearTimeout(timer);
+          delete noteSaveTimersRef.current[id];
+        }
+        const seq = noteSaveSeqRef.current[id] ?? 0;
+        try {
+          const saved = await apiSaveNoteFast(pending);
+          if ((noteSaveSeqRef.current[id] ?? 0) === seq) {
+            setSnapshot((prev) => ({
+              ...prev,
+              notes: prev.notes.map((n) => (n.id === saved.id ? saved : n)),
+            }));
+          }
+          scheduleAutoNotionSync(id, false);
+        } catch (e) {
+          setBannerMessage(String(e));
+        }
+      }
+    },
+    [scheduleAutoNotionSync]
+  );
+
+  useEffect(() => {
+    const flush = () => void flushPendingNote();
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      void flushPendingNote();
+    };
+  }, [flushPendingNote]);
+
   const handleUpdateNote = async (updated: Note) => {
-    const seq = (noteSaveSeqRef.current[updated.id] ?? 0) + 1;
-    noteSaveSeqRef.current[updated.id] = seq;
+    noteSaveSeqRef.current[updated.id] = (noteSaveSeqRef.current[updated.id] ?? 0) + 1;
     const normalized: Note =
       updated.notion_sync.status === 'synced'
         ? { ...updated, notion_sync: { ...updated.notion_sync, status: 'not_synced' } }
@@ -1328,11 +1408,13 @@ const MainApp: React.FC = () => {
     }));
     setActiveNoteId((prevId) => prevId || normalized.id);
     if (isTauriRuntime()) {
-      const nextSnap = await apiSaveNote(normalized);
-      if (noteSaveSeqRef.current[normalized.id] === seq) {
-        setSnapshot(nextSnap);
-      }
-      scheduleAutoNotionSync(normalized.id, false);
+      // キーストローク毎の IPC・全スナップショット返却を避け、短時間デバウンスして保存する。
+      notePendingRef.current[normalized.id] = normalized;
+      const existing = noteSaveTimersRef.current[normalized.id];
+      if (existing) clearTimeout(existing);
+      noteSaveTimersRef.current[normalized.id] = setTimeout(() => {
+        void flushPendingNote(normalized.id);
+      }, 500);
     }
   };
 
@@ -1920,6 +2002,7 @@ const MainApp: React.FC = () => {
               setView('editor');
             }}
             onDeleteNote={async (id) => {
+              cancelPendingNoteSave(id);
               if (isTauriRuntime()) {
                 setSnapshot(await apiDeleteNote(id));
               } else {
@@ -2188,6 +2271,7 @@ const MainApp: React.FC = () => {
             onRetranscribeNote={handleRetranscribeNote}
             onUpdateNote={handleUpdateNote}
             onSelectNote={(id) => {
+              void flushPendingNote(activeNoteId ?? undefined);
               setPendingSearchQuery('');
               setActiveNoteId(id);
             }}
@@ -2195,6 +2279,7 @@ const MainApp: React.FC = () => {
             onSaveFolder={handleSaveFolder}
             onDeleteFolder={handleDeleteFolder}
             onDeleteNote={async (id) => {
+              cancelPendingNoteSave(id);
               if (isTauriRuntime()) {
                 setSnapshot(await apiDeleteNote(id));
               } else {
@@ -2471,7 +2556,7 @@ const MainApp: React.FC = () => {
             <div style={{ overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '360px' }}>
               {snapshot.notes
                 .filter((n) => {
-                  const q = commandQuery.trim().toLowerCase();
+                  const q = deferredCommandQuery.trim().toLowerCase();
                   if (!q) return true;
                   return [n.title, n.summary, n.manual_notes, ...n.segments.map((s) => s.text)]
                     .join(' ')
@@ -2481,7 +2566,7 @@ const MainApp: React.FC = () => {
                 .slice(0, 12)
                 .map((n) => {
                   const sp = snapshot.folders.find((f) => f.id === n.folder_id)?.name ?? '個人';
-                  const matches = commandQuery.trim() ? findNoteSearchMatches(n, commandQuery) : [];
+                  const matches = deferredCommandQuery.trim() ? findNoteSearchMatches(n, deferredCommandQuery) : [];
                   return (
                     <button
                       key={n.id}

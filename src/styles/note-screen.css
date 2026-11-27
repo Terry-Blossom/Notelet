@@ -500,6 +500,9 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* 画面外の長い文字起こしをレイアウト/描画スキップしてスクロールを軽くする */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
 }
 
 .note-turn-meta {

@@ -31,6 +31,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 struct AppState {
     audio: Mutex<AudioManager>,
     data: Mutex<AppDataSnapshot>,
+    recording_epoch: std::sync::atomic::AtomicU64,
 }
 
 #[tauri::command]
@@ -74,8 +75,7 @@ fn save_settings(
     Ok(state.data.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
-#[tauri::command]
-fn save_note(state: State<AppState>, mut note: Note) -> Result<AppDataSnapshot, String> {
+fn persist_note(state: &State<AppState>, mut note: Note) -> Result<Note, String> {
     let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     let id = note.id.clone();
     let encrypt = data.settings.encrypt_retained_audio;
@@ -123,7 +123,23 @@ fn save_note(state: State<AppState>, mut note: Note) -> Result<AppDataSnapshot, 
     storage::upsert_note(&mut data, note);
     storage::append_audit(&mut data, "note_saved", &format!("note_id={id}"));
     storage::save_snapshot(&data)?;
-    Ok(data.clone())
+    data.notes
+        .iter()
+        .find(|n| n.id == id)
+        .cloned()
+        .ok_or_else(|| "保存したノートが見つかりません".to_string())
+}
+
+#[tauri::command]
+fn save_note(state: State<AppState>, note: Note) -> Result<AppDataSnapshot, String> {
+    persist_note(&state, note)?;
+    Ok(state.data.lock().unwrap_or_else(|e| e.into_inner()).clone())
+}
+
+/// タイトル・メモ等の高頻度保存用。全スナップショットを返さず更新ノートのみ返す。
+#[tauri::command]
+fn save_note_fast(state: State<AppState>, note: Note) -> Result<Note, String> {
+    persist_note(&state, note)
 }
 
 #[tauri::command]
@@ -381,6 +397,30 @@ async fn start_recording(
             settings.system_gain,
         )?
     };
+
+    let epoch = state
+        .recording_epoch
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
+    let status_emitter = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            let st = status_emitter.state::<AppState>();
+            if st.recording_epoch.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                break;
+            }
+            let status = {
+                let audio = st.audio.lock().unwrap_or_else(|e| e.into_inner());
+                audio.status()
+            };
+            let state_name = status.state.clone();
+            let _ = status_emitter.emit("recording-status", status);
+            if state_name == "idle" || state_name == "error" {
+                break;
+            }
+        }
+    });
 
     if let Some(notify_win) = app.get_webview_window("meeting-notify") {
         let _ = notify_win.hide();
@@ -2180,6 +2220,7 @@ pub fn run() {
     let app_state = AppState {
         audio: Mutex::new(AudioManager::new()),
         data: Mutex::new(snapshot),
+        recording_epoch: std::sync::atomic::AtomicU64::new(0),
     };
 
     let builder = tauri::Builder::default()
@@ -2369,6 +2410,7 @@ pub fn run() {
             get_snapshot,
             save_settings,
             save_note,
+            save_note_fast,
             delete_note,
             save_dictionary_entry,
             delete_dictionary_entry,

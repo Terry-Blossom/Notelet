@@ -873,7 +873,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     }
   }, [isPlaying, playbackMs, activeTab]);
 
-  const highlightSearchText = (text: string) => {
+  const highlightSearchText = React.useCallback((text: string) => {
     const q = inNoteSearchQuery.trim();
     if (!q) return text;
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -897,7 +897,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         part
       )
     );
-  };
+  }, [inNoteSearchQuery]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -1275,7 +1275,16 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       }
     }
     return null;
-  }, [note, folders, dismissedSuggestByNote]);
+  }, [
+    note.id,
+    note.folder_id,
+    note.title,
+    note.summary,
+    note.manual_notes,
+    note.segments,
+    folders,
+    dismissedSuggestByNote,
+  ]);
 
   const handleApplySuggestedCategory = async () => {
     if (!suggestedCategory) return;

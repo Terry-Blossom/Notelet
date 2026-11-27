@@ -105,9 +105,16 @@ function resolveDataFilePath(dataDir) {
   ]);
 }
 
+let snapshotCache = { key: null, snapshot: null };
+
 function loadSnapshot(dataFilePath, scope) {
   if (!fs.existsSync(dataFilePath)) {
     return { notes: [], folders: [], dictionary: [] };
+  }
+  const stat = fs.statSync(dataFilePath);
+  const cacheKey = `${dataFilePath}:${stat.mtimeMs}:${stat.size}:${scope}`;
+  if (snapshotCache.key === cacheKey) {
+    return snapshotCache.snapshot;
   }
   const raw = fs.readFileSync(dataFilePath, 'utf8');
   const snap = JSON.parse(raw);
@@ -122,11 +129,13 @@ function loadSnapshot(dataFilePath, scope) {
     });
   }
 
-  return {
+  const snapshot = {
     notes,
     folders: Array.isArray(snap.folders) ? snap.folders : [],
     dictionary: Array.isArray(snap.dictionary) ? snap.dictionary : [],
   };
+  snapshotCache = { key: cacheKey, snapshot };
+  return snapshot;
 }
 
 function formatNoteFull(note) {

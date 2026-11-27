@@ -603,37 +603,29 @@ pub fn compress_all_retained_audio(snapshot: &mut AppDataSnapshot) -> Result<(us
             continue;
         }
         let before_len = fs::metadata(path_obj).map(|m| m.len()).unwrap_or(0);
-        let Ok(raw_wav) = read_retained_audio_bytes(path_str, note.audio_encrypted) else {
-            continue;
-        };
-        let cursor = std::io::Cursor::new(&raw_wav);
-        let Ok(mut reader) = hound::WavReader::new(cursor) else {
-            continue;
-        };
-        let spec = reader.spec();
-        if spec.sample_rate <= 8000 && spec.channels == 1 {
-            continue;
-        }
-        let mono = wav_reader_mono_f32(&mut reader);
-        if mono.is_empty() {
-            continue;
-        }
-        let downsampled = resample_mono(&mono, spec.sample_rate.max(1), 8000);
         let temp_dir = app_data_dir().join("temp_recordings");
         let _ = fs::create_dir_all(&temp_dir);
         let tmp_wav = temp_dir.join(format!("comp_{}.wav", note.id));
-        let out_spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: 8000,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
-        if let Ok(mut writer) = hound::WavWriter::create(&tmp_wav, out_spec) {
-            for s in downsampled {
-                let sample = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                let _ = writer.write_sample(sample);
+
+        let encoded = if note.audio_encrypted {
+            match read_retained_audio_bytes(path_str, true) {
+                Ok(raw) => {
+                    let reader = hound::WavReader::new(std::io::Cursor::new(raw));
+                    match reader {
+                        Ok(mut reader) => compress_wav_reader_to_8k(&mut reader, &tmp_wav).unwrap_or(false),
+                        Err(_) => false,
+                    }
+                }
+                Err(_) => false,
             }
-            let _ = writer.finalize();
+        } else {
+            match hound::WavReader::open(path_obj) {
+                Ok(mut reader) => compress_wav_reader_to_8k(&mut reader, &tmp_wav).unwrap_or(false),
+                Err(_) => false,
+            }
+        };
+
+        if encoded {
             if let Ok((new_path, new_enc)) = retain_audio_file(&tmp_wav, &note.id, encrypt) {
                 let _ = fs::remove_file(&tmp_wav);
                 let after_len = fs::metadata(&new_path).map(|m| m.len()).unwrap_or(before_len);
@@ -644,41 +636,35 @@ pub fn compress_all_retained_audio(snapshot: &mut AppDataSnapshot) -> Result<(us
                 note.audio_encrypted = new_enc;
                 compressed_count += 1;
             }
+        } else {
+            let _ = fs::remove_file(&tmp_wav);
         }
     }
     Ok((compressed_count, saved_bytes))
 }
 
-fn wav_reader_mono_f32<R: std::io::Read>(reader: &mut hound::WavReader<R>) -> Vec<f32> {
+/// WAV をチャンク単位で 8kHz モノラルに変換する。変換不要なら Ok(false)。
+fn compress_wav_reader_to_8k<R: std::io::Read>(
+    reader: &mut hound::WavReader<R>,
+    tmp_wav: &Path,
+) -> Result<bool, String> {
     let spec = reader.spec();
-    let ch = spec.channels.max(1) as usize;
-    let samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Int => match spec.bits_per_sample {
-            8 => reader
-                .samples::<i8>()
-                .filter_map(|s| s.ok())
-                .map(|v| (v as u8 as f32 - 128.0) / 128.0)
-                .collect(),
-            16 => reader
-                .samples::<i16>()
-                .filter_map(|s| s.ok())
-                .map(|v| v as f32 / 32_768.0)
-                .collect(),
-            bits => {
-                let scale = (1i64 << (bits.min(32).saturating_sub(1))) as f32;
-                reader
-                    .samples::<i32>()
-                    .filter_map(|s| s.ok())
-                    .map(|v| v as f32 / scale.max(1.0))
-                    .collect()
-            }
-        },
-        hound::SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
+    if spec.sample_rate <= 8000 && spec.channels == 1 {
+        return Ok(false);
+    }
+    let out_spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 8000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
     };
-    samples
-        .chunks(ch)
-        .map(|frame| frame.iter().sum::<f32>() / ch as f32)
-        .collect()
+    let mut writer = hound::WavWriter::create(tmp_wav, out_spec)
+        .map_err(|e| format!("軽量音声ファイルの作成に失敗: {e}"))?;
+    let written = stream_wav_to_rate_writer(reader, &mut writer, 8000)?;
+    writer
+        .finalize()
+        .map_err(|e| format!("軽量音声ファイルの確定に失敗: {e}"))?;
+    Ok(written > 0)
 }
 
 fn resample_mono(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
@@ -699,9 +685,10 @@ fn resample_mono(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     out
 }
 
-fn stream_wav_to_16k_writer<R: std::io::Read, W: std::io::Write + std::io::Seek>(
+fn stream_wav_to_rate_writer<R: std::io::Read, W: std::io::Write + std::io::Seek>(
     reader: &mut hound::WavReader<R>,
     writer: &mut hound::WavWriter<W>,
+    target_rate: u32,
 ) -> Result<usize, String> {
     const FRAME_CHUNK: usize = 4096;
     let spec = reader.spec();
@@ -756,7 +743,7 @@ fn stream_wav_to_16k_writer<R: std::io::Read, W: std::io::Write + std::io::Seek>
         if chunk_mono.is_empty() {
             break;
         }
-        let out_chunk = resample_mono(&chunk_mono, from_rate, 16_000);
+        let out_chunk = resample_mono(&chunk_mono, from_rate, target_rate);
         for s in out_chunk {
             let sample = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
             writer
@@ -787,8 +774,8 @@ pub fn concat_wav_audio(existing: &[u8], additional: &Path) -> Result<PathBuf, S
     let mut writer = hound::WavWriter::create(&out_wav, out_spec)
         .map_err(|e| format!("連結音声の作成に失敗: {e}"))?;
 
-    let n1 = stream_wav_to_16k_writer(&mut old_reader, &mut writer)?;
-    let n2 = stream_wav_to_16k_writer(&mut new_reader, &mut writer)?;
+    let n1 = stream_wav_to_rate_writer(&mut old_reader, &mut writer, 16_000)?;
+    let n2 = stream_wav_to_rate_writer(&mut new_reader, &mut writer, 16_000)?;
     if n1 == 0 && n2 == 0 {
         drop(writer);
         let _ = fs::remove_file(&out_wav);
@@ -830,12 +817,7 @@ pub fn normalize_media_to_16k_wav(input_path: &Path) -> (PathBuf, u64) {
         if spec.channels == 1 && spec.sample_rate == 16_000 && spec.bits_per_sample == 16 {
             return (input_path.to_path_buf(), dur_sec);
         }
-        // Resample WAV to 16kHz mono 16-bit in pure Rust
-        let mono = wav_reader_mono_f32(&mut reader);
-        if mono.is_empty() {
-            return (input_path.to_path_buf(), 0);
-        }
-        let resampled = resample_mono(&mono, spec.sample_rate.max(1), 16_000);
+        // Resample WAV to 16kHz mono 16-bit in streaming chunks
         let out_spec = hound::WavSpec {
             channels: 1,
             sample_rate: 16_000,
@@ -843,13 +825,12 @@ pub fn normalize_media_to_16k_wav(input_path: &Path) -> (PathBuf, u64) {
             sample_format: hound::SampleFormat::Int,
         };
         if let Ok(mut writer) = hound::WavWriter::create(&out_wav, out_spec) {
-            for s in resampled {
-                let sample = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                let _ = writer.write_sample(sample);
-            }
+            let res = stream_wav_to_rate_writer(&mut reader, &mut writer, 16_000);
             let _ = writer.finalize();
-            let _ = fs::remove_file(input_path);
-            return (out_wav, dur_sec);
+            if res.map(|n| n > 0).unwrap_or(false) {
+                let _ = fs::remove_file(input_path);
+                return (out_wav, dur_sec);
+            }
         }
         return (input_path.to_path_buf(), dur_sec);
     }

@@ -462,6 +462,12 @@ describe('Regression fixes for #25-#31', () => {
           currentSnap = { ...currentSnap, notes: [note, ...currentSnap.notes.filter((n) => n.id !== note.id)] };
           return currentSnap;
         }
+        case 'save_note_fast': {
+          const note = (args as { note: Note }).note;
+          savedNotes.push(note);
+          currentSnap = { ...currentSnap, notes: [note, ...currentSnap.notes.filter((n) => n.id !== note.id)] };
+          return note;
+        }
         case 'plugin:event|listen': {
           const { event, handler } = (args ?? {}) as { event: string; handler: number };
           const cb = callbackMap.get(handler);
