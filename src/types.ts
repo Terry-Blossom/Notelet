@@ -292,10 +292,19 @@ export interface ChatActionResult {
   success: boolean;
 }
 
+export interface ChatActionProposal {
+  id: string;
+  action: string;
+  target_id?: string | null;
+  description: string;
+  spec: unknown;
+}
+
 export interface ChatAnswer {
   answer: string;
   citations: ChatCitation[];
   actions?: ChatActionResult[];
+  proposed_actions?: ChatActionProposal[];
   thinking?: string | null;
 }
 

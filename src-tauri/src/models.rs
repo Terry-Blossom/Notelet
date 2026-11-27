@@ -496,11 +496,23 @@ pub struct ChatActionResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatActionProposal {
+    pub id: String,
+    pub action: String,
+    pub target_id: Option<String>,
+    pub description: String,
+    /// 承認後に実行するアクション本体（LLM が生成した spec）。
+    pub spec: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatAnswer {
     pub answer: String,
     pub citations: Vec<ChatCitation>,
     #[serde(default)]
     pub actions: Vec<ChatActionResult>,
+    #[serde(default)]
+    pub proposed_actions: Vec<ChatActionProposal>,
     #[serde(default)]
     pub thinking: Option<String>,
 }

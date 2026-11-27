@@ -115,9 +115,10 @@ function loadSnapshot(dataFilePath, scope) {
 
   if (scope.startsWith('personal_30d')) {
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    // 日時が欠損・不正なノートは公開しない（フェイルクローズ）。
     notes = notes.filter((n) => {
       const ts = Date.parse(n.created_at || '');
-      return Number.isNaN(ts) || ts >= cutoff;
+      return !Number.isNaN(ts) && ts >= cutoff;
     });
   }
 
@@ -208,6 +209,13 @@ const TOOLS = [
   },
 ];
 
+function clampLimit(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  // 過大なレスポンスを防ぐため 1〜100 件に制限する。
+  return Math.min(100, Math.max(1, Math.floor(n)));
+}
+
 function handleRequest(req) {
   const { id, method, params } = req;
 
@@ -243,7 +251,7 @@ function handleRequest(req) {
     const snap = loadSnapshot(dataFilePath, scope);
 
     if (toolName === 'list_recent_notes') {
-      const limit = Number(args.limit) > 0 ? Number(args.limit) : 20;
+      const limit = clampLimit(args.limit, 20);
       let notes = snap.notes;
       if (args.folder_id) {
         notes = notes.filter((n) => n.folder_id === args.folder_id);
@@ -267,7 +275,7 @@ function handleRequest(req) {
 
     if (toolName === 'search_notes') {
       const q = String(args.query || '').trim().toLowerCase();
-      const limit = Number(args.limit) > 0 ? Number(args.limit) : 10;
+      const limit = clampLimit(args.limit, 10);
       const matches = snap.notes
         .filter((n) => {
           if (!q) return true;

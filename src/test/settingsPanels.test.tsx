@@ -100,11 +100,7 @@ describe('UpdateSettingsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /今すぐアップデート/ }));
 
     await waitFor(() => expect(flash).toHaveBeenCalledWith('更新しました。再起動します。'));
-    expect(onInstallUpdate).toHaveBeenCalledWith(
-      autoInstallUpdateResult.download_url,
-      autoInstallUpdateResult.asset_name,
-      autoInstallUpdateResult.asset_sha256
-    );
+    expect(onInstallUpdate).toHaveBeenCalledWith();
     expect(mockedInvoke).not.toHaveBeenCalled();
     expect(setInstallingUpdate).toHaveBeenNthCalledWith(1, true);
     expect(setInstallingUpdate).toHaveBeenLastCalledWith(false);

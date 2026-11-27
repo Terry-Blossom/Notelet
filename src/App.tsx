@@ -37,6 +37,7 @@ import {
 } from './types';
 import {
   apiChatNotes,
+  apiApplyChatActionProposals,
   apiCopyAndPreparePaste,
   apiDeleteDictionaryEntry,
   apiDeleteNote,
@@ -1979,6 +1980,12 @@ const MainApp: React.FC = () => {
                 }));
               }
               return res;
+            }}
+            onApplyChatActions={async (proposals) => {
+              if (!isTauriRuntime()) return [];
+              const res = await apiApplyChatActionProposals(proposals);
+              setSnapshot(res.snapshot);
+              return res.results;
             }}
             onClearHistory={async () => {
               if (isTauriRuntime()) {

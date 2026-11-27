@@ -168,6 +168,59 @@ pub fn audio_dir() -> PathBuf {
     dir
 }
 
+pub fn temp_recordings_dir() -> PathBuf {
+    let dir = app_data_dir().join("temp_recordings");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+fn managed_audio_roots() -> Vec<PathBuf> {
+    vec![audio_dir(), temp_recordings_dir()]
+}
+
+pub(crate) fn path_is_within(root: &Path, candidate: &Path) -> bool {
+    candidate != root && candidate.starts_with(root)
+}
+
+/// アプリ管理下の音声ファイルのみ許可する。
+/// `canonicalize` でシンボリックリンクを解決したうえで判定するため、`..` やリンクによる脱出も拒否する。
+pub fn validate_managed_audio_path(path: &str) -> Option<PathBuf> {
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() {
+        return None;
+    }
+    let canonical = fs::canonicalize(candidate).ok()?;
+    for root in managed_audio_roots() {
+        if let Ok(root) = fs::canonicalize(&root) {
+            if path_is_within(&root, &canonical) {
+                return Some(canonical);
+            }
+        }
+    }
+    None
+}
+
+pub fn is_managed_audio_path(path: &str) -> bool {
+    validate_managed_audio_path(path).is_some()
+}
+
+/// 管理下の音声パスのうち、対象ノート自身の保存ファイル（`<note_id>.wav[.enc]`）または一時録音のみ許可する。
+pub fn validate_note_audio_path(path: &str, note_id: &str) -> Option<PathBuf> {
+    let canonical = validate_managed_audio_path(path)?;
+    let audio_root = fs::canonicalize(audio_dir()).ok()?;
+    if !canonical.starts_with(&audio_root) {
+        // temp_recordings 配下は録音中の一時ファイルとして許可する。
+        return Some(canonical);
+    }
+    let expected_stem = format!("{note_id}.wav");
+    let stem = canonical.file_stem()?.to_string_lossy().to_string();
+    if stem == expected_stem {
+        Some(canonical)
+    } else {
+        None
+    }
+}
+
 fn data_file_path() -> PathBuf {
     app_data_dir().join("notelet_data.json")
 }
@@ -374,6 +427,9 @@ fn get_or_create_audio_key() -> Result<[u8; 32], String> {
 }
 
 pub fn retain_audio_file(temp_wav: &Path, note_id: &str, encrypt: bool) -> Result<(String, bool), String> {
+    if validate_managed_audio_path(&temp_wav.to_string_lossy()).is_none() {
+        return Err("管理外の音声ファイルは取り込めません。".to_string());
+    }
     let ext = if encrypt { "wav.enc" } else { "wav" };
     let dest = audio_dir().join(format!("{note_id}.{ext}"));
     let data = fs::read(temp_wav).map_err(|e| format!("録音ファイルの読み込みに失敗: {e}"))?;
@@ -399,6 +455,9 @@ pub fn retain_audio_file(temp_wav: &Path, note_id: &str, encrypt: bool) -> Resul
 }
 
 pub fn read_retained_audio_bytes(path: &str, encrypted: bool) -> Result<Vec<u8>, String> {
+    if validate_managed_audio_path(path).is_none() {
+        return Err("管理外の音声ファイルは読み込めません。".to_string());
+    }
     let raw = fs::read(path).map_err(|e| format!("録音ファイルの読み込みに失敗: {e}"))?;
     if !encrypted {
         return Ok(raw);
@@ -449,8 +508,8 @@ pub fn recover_orphan_temp_audio(note_id: &str, encrypt: bool) -> Option<(String
 }
 
 pub fn remove_file_if_exists(path: &str) {
-    let p = Path::new(path);
-    if p.exists() {
+    // 管理ディレクトリ配下のみ削除する（任意ファイル削除の防止）。
+    if let Some(p) = validate_managed_audio_path(path) {
         let _ = fs::remove_file(p);
     }
 }
@@ -896,6 +955,32 @@ mod migration_tests {
 
         assert!(new.join("audio").join("a.wav").exists());
         assert_eq!(fs::read_to_string(new.join("keep.txt")).unwrap(), "new");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn managed_audio_path_rejects_parent_and_outside_paths() {
+        let root = std::env::temp_dir().join(format!("notelet-audio-{}", Uuid::new_v4()));
+        let audio = root.join("audio");
+        let temp = root.join("temp_recordings");
+        fs::create_dir_all(&audio).unwrap();
+        fs::create_dir_all(&temp).unwrap();
+        let inside = audio.join("n1.wav");
+        let temp_file = temp.join("live_1.wav");
+        let outside = root.join("secret.txt");
+        fs::write(&inside, b"x").unwrap();
+        fs::write(&temp_file, b"x").unwrap();
+        fs::write(&outside, b"x").unwrap();
+
+        let canonical_audio = fs::canonicalize(&audio).unwrap();
+        let canonical_temp = fs::canonicalize(&temp).unwrap();
+        assert!(path_is_within(&canonical_audio, &fs::canonicalize(&inside).unwrap()));
+        assert!(path_is_within(&canonical_temp, &fs::canonicalize(&temp_file).unwrap()));
+        assert!(!path_is_within(&canonical_audio, &fs::canonicalize(&outside).unwrap()));
+        assert!(!path_is_within(
+            &canonical_audio,
+            &fs::canonicalize(audio.join("../secret.txt")).unwrap()
+        ));
         let _ = fs::remove_dir_all(&root);
     }
 }

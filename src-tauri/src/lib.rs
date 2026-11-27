@@ -98,6 +98,12 @@ fn save_note(state: State<AppState>, mut note: Note) -> Result<AppDataSnapshot, 
         }
     }
 
+    if let Some(ref p) = note.audio_path {
+        if storage::validate_note_audio_path(p, &id).is_none() {
+            return Err("管理外または他ノートの音声パスは保存できません。".to_string());
+        }
+    }
+
     if let Some(existing) = data.notes.iter().find(|n| n.id == id) {
         let content_changed = existing.title != note.title
             || existing.folder_id != note.folder_id
@@ -613,7 +619,7 @@ fn read_note_audio(state: State<AppState>, note_id: String) -> Result<String, St
         let existing_valid = note
             .audio_path
             .as_ref()
-            .filter(|p| std::path::Path::new(p.as_str()).exists())
+            .filter(|p| storage::validate_note_audio_path(p, &note_id).is_some())
             .cloned();
         if let Some(p) = existing_valid {
             (p, note.audio_encrypted)
@@ -885,6 +891,9 @@ async fn transcribe_recording(
             }
         });
     let mut raw_path = std::path::PathBuf::from(&wav_path);
+    if !wav_path.trim().is_empty() && !storage::is_managed_audio_path(&wav_path) {
+        return Err("管理外の音声ファイルは文字起こしできません。".to_string());
+    }
     let mut used_retained_copy = false;
     let mut cleanup_decrypted: Option<std::path::PathBuf> = None;
 
@@ -1316,8 +1325,9 @@ async fn chat_notes_cmd(
     }
     let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     if !specs.is_empty() {
-        ans.actions =
-            chat_actions::apply_chat_actions(&mut data, &specs, default_note_id.as_deref());
+        // 破壊的・上書き操作は自動実行せず、承認待ちの提案として返す。
+        ans.proposed_actions =
+            chat_actions::propose_chat_actions(&data, &specs, default_note_id.as_deref());
     }
     data.chat_history.insert(
         0,
@@ -1337,6 +1347,30 @@ async fn chat_notes_cmd(
     }
     let _ = storage::save_snapshot(&data);
     Ok(ans)
+}
+
+/// ユーザーが承認した提案アクションのみを実行する。
+#[tauri::command]
+fn apply_chat_action_proposals_cmd(
+    state: State<AppState>,
+    proposals: Vec<models::ChatActionProposal>,
+) -> Result<serde_json::Value, String> {
+    if proposals.len() > 20 {
+        return Err("一度に承認できる操作は 20 件までです。".to_string());
+    }
+    let mut specs = Vec::with_capacity(proposals.len());
+    for proposal in proposals {
+        let spec: llm::ChatActionSpec = serde_json::from_value(proposal.spec)
+            .map_err(|_| "不正な操作データです。".to_string())?;
+        specs.push(spec);
+    }
+    let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
+    let results = chat_actions::apply_chat_actions(&mut data, &specs, None);
+    storage::save_snapshot(&data)?;
+    Ok(serde_json::json!({
+        "snapshot": data.clone(),
+        "results": results,
+    }))
 }
 
 #[tauri::command]
@@ -1372,19 +1406,8 @@ async fn check_app_update() -> Result<updater::UpdateCheckResult, String> {
 }
 
 #[tauri::command]
-async fn install_app_update(
-    app: tauri::AppHandle,
-    download_url: String,
-    asset_name: String,
-    expected_sha256: Option<String>,
-) -> Result<String, String> {
-    updater::download_and_launch_update(
-        &app,
-        &download_url,
-        &asset_name,
-        expected_sha256.as_deref(),
-    )
-    .await
+async fn install_app_update(app: tauri::AppHandle) -> Result<String, String> {
+    updater::install_latest_update(&app).await
 }
 
 #[tauri::command]
@@ -2038,7 +2061,22 @@ fn restore_backup_snapshot(
 }
 
 fn apply_backup_snapshot(data: &mut AppDataSnapshot, snapshot: AppDataSnapshot) {
-    data.notes = snapshot.notes;
+    data.notes = snapshot
+        .notes
+        .into_iter()
+        .map(|mut note| {
+            // バックアップ由来の音声パスはアプリ管理下のものだけ許可する。
+            if note
+                .audio_path
+                .as_deref()
+                .is_some_and(|p| storage::validate_note_audio_path(p, &note.id).is_none())
+            {
+                note.audio_path = None;
+                note.audio_encrypted = false;
+            }
+            note
+        })
+        .collect();
     data.folders = snapshot.folders;
     data.dictionary = snapshot.dictionary;
     data.recipes = snapshot.recipes;
@@ -2389,7 +2427,8 @@ pub fn run() {
             install_app_update,
                 test_cloud_asr_connection_cmd,
                 test_llm_connection_cmd,
-                start_mic_test_cmd,
+                apply_chat_action_proposals_cmd,
+            start_mic_test_cmd,
                 stop_mic_test_cmd,
             ])
         .build(tauri::generate_context!())

@@ -582,6 +582,105 @@ pub fn list_models(settings: &AppSettings) -> Vec<AsrModelInfo> {
     ]
 }
 
+fn parse_sha256_digest(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_start_matches("W/").trim_matches('"').trim();
+    let hex = trimmed
+        .strip_prefix("sha256:")
+        .or_else(|| trimmed.strip_prefix("SHA256:"))
+        .unwrap_or(trimmed);
+    if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(hex.to_ascii_lowercase())
+    } else {
+        None
+    }
+}
+
+/// 固定バージョンの実行バイナリの既知 SHA-256。
+fn pinned_runtime_sha256(asset_name: &str) -> Option<&'static str> {
+    Some(match asset_name {
+        "whisper-server-darwin-arm64.zip" => {
+            "d248c01c8824271487fb3dea5aab1aa20ba4a47e04d99b5e0fa13e9efb25d313"
+        }
+        "whisper-server-darwin-x64.zip" => {
+            "3a952899bf01d959f7459e1240bd900f7e2855a4fa0ce875e05885f2952a7b61"
+        }
+        "whisper-server-win32-x64-cpu.zip" => {
+            "7fca73533d5ac5d30f8f6aa0967672321861887c8ea1000cb13196a7d5135fd3"
+        }
+        "whisper-server-win32-x64-cuda.zip" => {
+            "5d0ce15234aed4e30c075010c13dd23771fb5c714c48047e287306ab340eea9a"
+        }
+        "whisper-server-win32-x64-vulkan.zip" => {
+            "24790f91e3ffb161f4c2c9d1f3f6e9d138a23898808d13741b6cdd8921258029"
+        }
+        "whisper-server-linux-x64-cpu.zip" => {
+            "d184b6037f33d15f639cf3363c583148a6b2cb8d0ae7b73aafb8e71950f9fbe7"
+        }
+        "whisper-server-linux-x64-cuda.zip" => {
+            "702478df828069aca6e687b869b2f68d20105143328046cdb070551637b0b198"
+        }
+        "whisper-server-linux-x64-vulkan.zip" => {
+            "aa14ad4196ceedbc958366ea5957b1f0497c9999eeef78a4159baa04236af497"
+        }
+        "ffmpeg-6.1-win-64.zip" => {
+            "b0fb4bcef9d4b5f7a77d2e4854f80d4ce3e43809bc29fd1f97caa1b467f96993"
+        }
+        "ffmpeg-6.1-macos-64.zip" => {
+            "ffcd56ce5ef50c4d36d675b0ee80674f5a0869f94746460ff5d058a33cbd3128"
+        }
+        "ffmpeg-6.1-linux-64.zip" => {
+            "8bb4a27f5fd02f3dd9a5e75c9eddf6ace1d50a08929ee0d20bbf17eb467fb711"
+        }
+        _ => return None,
+    })
+}
+
+/// Hugging Face の非 LFS ファイルは SHA-1 の ETag しか返さないため、既知ファイルは SHA-256 を固定する。
+fn pinned_model_sha256(url: &str) -> Option<&'static str> {
+    match url.trim() {
+        "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/main/tokenizer/merges.txt" => {
+            Some("8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5")
+        }
+        "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt" => {
+            Some("f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc")
+        }
+        "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8/resolve/main/tokens.txt" => {
+            Some("732f64c53909f2620c713f4106b487d92e6f54a6915b3cd3d1dbd32f9f4f392a")
+        }
+        _ => None,
+    }
+}
+
+/// Hugging Face の LFS は X-Linked-ETag に SHA-256 を返す。取得できなければ失敗させる。
+async fn fetch_remote_sha256(url: &str) -> Result<String, String> {
+    if let Some(pinned) = pinned_model_sha256(url) {
+        return Ok(pinned.to_string());
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("Notelet-Desktop/0.1")
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
+    let resp = client
+        .head(url)
+        .send()
+        .await
+        .map_err(|e| format!("検証情報の取得に失敗しました: {e}"))?;
+    if !resp.status().is_success() && !resp.status().is_redirection() {
+        return Err(format!("検証情報の取得に失敗しました (HTTP {})", resp.status()));
+    }
+    resp.headers()
+        .get("x-linked-etag")
+        .or_else(|| resp.headers().get("etag"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_sha256_digest)
+        .ok_or_else(|| {
+            "ダウンロード元から SHA-256 検証情報を取得できませんでした。安全のため中止します。"
+                .to_string()
+        })
+}
+
 async fn download_single_file(
     app: &tauri::AppHandle,
     model_id: &str,
@@ -591,6 +690,7 @@ async fn download_single_file(
     span_pct: f64,
     fallback_bytes: u64,
 ) -> Result<(), String> {
+    let expected = fetch_remote_sha256(url).await?;
     download_single_file_verified(
         Some(app),
         model_id,
@@ -599,7 +699,7 @@ async fn download_single_file(
         base_pct,
         span_pct,
         fallback_bytes,
-        None,
+        Some(&expected),
         1,
     )
     .await
@@ -730,15 +830,23 @@ fn extract_zip_safely(zip_path: &Path, dest_dir: &Path, max_total_bytes: u64) ->
         if total_uncompressed > max_total_bytes {
             return Err("ZIP 展開サイズが安全上限を超えています。".to_string());
         }
-
+        // ヘッダーの size は偽装できるため、実書き込みバイト数で上限を強制する。
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("展開先親ディレクトリ作成に失敗しました: {e}"))?;
         }
         let mut out_file = fs::File::create(&out_path)
             .map_err(|e| format!("展開ファイル作成に失敗しました: {e}"))?;
-        std::io::copy(&mut entry, &mut out_file)
+        let remaining = max_total_bytes.saturating_sub(total_uncompressed);
+        let mut limited = std::io::Read::take(&mut entry, remaining.saturating_add(1));
+        let copied = std::io::copy(&mut limited, &mut out_file)
             .map_err(|e| format!("ZIP エントリの展開に失敗しました: {e}"))?;
+        if copied > remaining {
+            drop(out_file);
+            let _ = fs::remove_file(&out_path);
+            return Err("ZIP 展開サイズが安全上限を超えています。".to_string());
+        }
+        total_uncompressed += copied;
 
         #[cfg(unix)]
         if let Some(mode) = entry.unix_mode() {
@@ -753,7 +861,7 @@ fn validate_tar_entries(archive_path: &Path) -> Result<(), String> {
     let mut cmd = Command::new("tar");
     configure_bg_command(&mut cmd);
     let output = cmd
-        .arg("-tjf")
+        .arg("-tvjf")
         .arg(archive_path)
         .output()
         .map_err(|e| format!("tar アーカイブ検証に失敗しました: {e}"))?;
@@ -761,10 +869,39 @@ fn validate_tar_entries(archive_path: &Path) -> Result<(), String> {
         return Err("tar.bz2 アーカイブの検証に失敗しました。".to_string());
     }
     let listing = String::from_utf8_lossy(&output.stdout);
+    let mut total_bytes: u64 = 0;
     for line in listing.lines() {
         let p = line.trim();
-        if p.starts_with('/') || p.starts_with('\\') || p.split(['/', '\\']).any(|seg| seg == "..") {
-            return Err(format!("不正なアーカイブパスを検出しました: {p}"));
+        if p.is_empty() {
+            continue;
+        }
+        // シンボリックリンク・ハードリンク・デバイス等は展開させない。
+        match p.chars().next() {
+            Some('-') | Some('d') => {}
+            _ => {
+                return Err(format!(
+                    "アーカイブ内に許可されないエントリ種別 (リンク等) を検出しました: {p}"
+                ))
+            }
+        }
+        if p.contains(" -> ") {
+            return Err(format!("アーカイブ内にシンボリックリンクを検出しました: {p}"));
+        }
+        let fields: Vec<&str> = p.split_whitespace().collect();
+        // パスは末尾。空白入りパスは完全には扱えないが、危険な指定は拒否できる。
+        let name = fields.last().copied().unwrap_or("");
+        if name.starts_with('/')
+            || name.starts_with('\\')
+            || name.split(['/', '\\']).any(|seg| seg == "..")
+        {
+            return Err(format!("不正なアーカイブパスを検出しました: {name}"));
+        }
+        // サイズ列（3番目）を合算し、展開後の総量を制限する。
+        if let Some(size) = fields.get(2).and_then(|s| s.parse::<u64>().ok()) {
+            total_bytes = total_bytes.saturating_add(size);
+            if total_bytes > 2 * 1024 * 1024 * 1024 {
+                return Err("アーカイブの展開サイズが上限を超えています。".to_string());
+            }
         }
     }
     Ok(())
@@ -985,6 +1122,10 @@ pub async fn install_runtime_binary(
             let asset_url = format!(
                 "https://github.com/OpenWhispr/whisper.cpp/releases/download/0.0.11/{asset_name}"
             );
+            let expected_sha256 = pinned_runtime_sha256(asset_name).ok_or_else(|| {
+                "whisper 実行バイナリの検証情報が見つかりません。安全のため中止します。"
+                    .to_string()
+            })?;
             let zip_path = bin_root.join(asset_name);
             download_single_file_verified(
                 Some(app),
@@ -994,7 +1135,7 @@ pub async fn install_runtime_binary(
                 0.0,
                 90.0,
                 20 * 1024 * 1024,
-                None,
+                Some(expected_sha256),
                 1024,
             )
             .await?;
@@ -1026,19 +1167,23 @@ pub async fn install_runtime_binary(
             } else {
                 return Err("このOS向けの sherpa-onnx 自動インストールは未対応です。".to_string());
             };
-            let asset_url = release["assets"]
+            let (asset_url, asset_sha256) = release["assets"]
                 .as_array()
                 .and_then(|arr| {
                     arr.iter().find_map(|a| {
                         let name = a["name"].as_str()?;
-                        if name.ends_with(target_suffix) {
-                            a["browser_download_url"].as_str().map(|s| s.to_string())
-                        } else {
-                            None
+                        if !name.ends_with(target_suffix) {
+                            return None;
                         }
+                        let url = a["browser_download_url"].as_str()?.to_string();
+                        let digest = a["digest"].as_str().and_then(parse_sha256_digest)?;
+                        Some((url, digest))
                     })
                 })
-                .ok_or_else(|| "sherpa-onnx の配布アーカイブが見つかりませんでした。".to_string())?;
+                .ok_or_else(|| {
+                    "sherpa-onnx の配布アーカイブまたは SHA-256 検証情報が見つかりませんでした。"
+                        .to_string()
+                })?;
 
             let archive_path = bin_root.join("sherpa-onnx.tar.bz2");
             download_single_file_verified(
@@ -1049,7 +1194,7 @@ pub async fn install_runtime_binary(
                 0.0,
                 90.0,
                 45 * 1024 * 1024,
-                None,
+                Some(&asset_sha256),
                 1024,
             )
             .await?;
@@ -1114,6 +1259,10 @@ async fn resolve_or_install_ffmpeg() -> Result<PathBuf, String> {
         "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffmpeg-6.1-linux-64.zip"
     };
 
+    let zip_name = url.rsplit('/').next().unwrap_or("");
+    let expected_sha256 = pinned_runtime_sha256(zip_name).ok_or_else(|| {
+        "ffmpeg 実行バイナリの検証情報が見つかりません。安全のため中止します。".to_string()
+    })?;
     let zip_path = bin_dir.join("ffmpeg.zip");
     download_single_file_verified(
         None,
@@ -1123,7 +1272,7 @@ async fn resolve_or_install_ffmpeg() -> Result<PathBuf, String> {
         0.0,
         100.0,
         30 * 1024 * 1024,
-        None,
+        Some(expected_sha256),
         1024 * 100,
     )
     .await?;
@@ -3034,6 +3183,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_sha256_headers_and_requires_pinned_runtime_hashes() {
+        assert_eq!(
+            parse_sha256_digest("\"ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb\""),
+            Some("ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb".to_string())
+        );
+        assert_eq!(
+            parse_sha256_digest("sha256:ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"),
+            Some("ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb".to_string())
+        );
+        assert_eq!(parse_sha256_digest("not-a-hash"), None);
+        assert!(pinned_runtime_sha256("whisper-server-linux-x64-cpu.zip").is_some());
+        assert!(pinned_runtime_sha256("ffmpeg-6.1-win-64.zip").is_some());
+        assert!(pinned_runtime_sha256("unknown.zip").is_none());
+    }
+
+    #[test]
     fn chinese_misrecognition_preserves_japanese_kanji_compounds() {
         assert!(!is_likely_chinese_misrecognition("開発会議"));
         assert!(!is_likely_chinese_misrecognition("時間確認"));
@@ -3110,8 +3275,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_zip_safely_blocks_zip_slip_and_zip_bomb() {
-        use std::io::Write;
+    fn extract_zip_safely_blocks_zip_slip_and_zip_bomb() {        use std::io::Write;
         let dir = std::env::temp_dir().join(format!("notelet_zip_test_{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
 

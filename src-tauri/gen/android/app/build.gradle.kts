@@ -66,11 +66,15 @@ android {
             }
         }
         getByName("release") {
-            // 署名鍵が無い環境でもインストール可能な APK にする（debug 署名）。
-            signingConfig = if (hasReleaseKeystore) {
-                signingConfigs.getByName("release")
+            // CI では署名鍵が無い場合に debug 署名へフォールバックせずビルドを失敗させる。
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            } else if (System.getenv("CI") == "true") {
+                throw IllegalStateException(
+                    "リリース署名鍵がありません。NOTELET_KEYSTORE_FILE / NOTELET_KEYSTORE_PASSWORD / NOTELET_KEY_ALIAS / NOTELET_KEY_PASSWORD を設定してください。"
+                )
             } else {
-                signingConfigs.getByName("debug")
+                signingConfig = signingConfigs.getByName("debug")
             }
             optimization {
                enable = true

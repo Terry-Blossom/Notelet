@@ -6,6 +6,8 @@ import {
   AudioDeviceInfo,
   AudioSourceMode,
   CalendarEventItem,
+  ChatActionProposal,
+  ChatActionResult,
   ChatAnswer,
   DictionaryEntry,
   Folder,
@@ -165,6 +167,15 @@ export async function apiChatNotes(
   return invoke<ChatAnswer>('chat_notes_cmd', { noteIds, question, spaceId: spaceId ?? null });
 }
 
+export async function apiApplyChatActionProposals(
+  proposals: ChatActionProposal[]
+): Promise<{ snapshot: AppDataSnapshot; results: ChatActionResult[] }> {
+  return invoke<{ snapshot: AppDataSnapshot; results: ChatActionResult[] }>(
+    'apply_chat_action_proposals_cmd',
+    { proposals }
+  );
+}
+
 export async function apiSetSecret(key: string, value: string): Promise<void> {
   return invoke<void>('set_secret_cmd', { key, value });
 }
@@ -242,16 +253,8 @@ export async function apiCheckAppUpdate(): Promise<UpdateCheckResult> {
   return invoke<UpdateCheckResult>('check_app_update');
 }
 
-export async function apiInstallAppUpdate(
-  downloadUrl: string,
-  assetName: string,
-  expectedSha256?: string | null
-): Promise<string> {
-  return invoke<string>('install_app_update', {
-    downloadUrl,
-    assetName,
-    expectedSha256: expectedSha256 ?? null,
-  });
+export async function apiInstallAppUpdate(): Promise<string> {
+  return invoke<string>('install_app_update');
 }
 
 export async function apiReadNoteAudio(noteId: string): Promise<string> {

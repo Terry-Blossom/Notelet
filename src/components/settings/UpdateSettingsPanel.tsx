@@ -6,11 +6,7 @@ import { UpdateCheckResult } from '../../types';
 interface UpdateSettingsPanelProps {
   updateProgress: number | null;
   onCheckUpdate: () => Promise<UpdateCheckResult>;
-  onInstallUpdate: (
-    downloadUrl: string,
-    assetName: string,
-    expectedSha256?: string | null
-  ) => Promise<string>;
+  onInstallUpdate: () => Promise<string>;
   onOpenExternalUrl?: (url: string) => Promise<void>;
   updateInfo: UpdateCheckResult | null;
   checkingUpdate: boolean;
@@ -109,11 +105,7 @@ export const UpdateSettingsPanel: React.FC<UpdateSettingsPanelProps> = ({
                     setInstallingUpdate(true);
                     setUpdateError(null);
                     try {
-                      const msg = await onInstallUpdate(
-                        updateInfo.download_url,
-                        updateInfo.asset_name || 'Notelet-Setup.exe',
-                        updateInfo.asset_sha256
-                      );
+                      const msg = await onInstallUpdate();
                       flash(msg);
                     } catch (e) {
                       setUpdateError(e instanceof Error ? e.message : String(e));
