@@ -42,6 +42,10 @@ export async function apiSaveNote(note: Note): Promise<AppDataSnapshot> {
   return invoke<AppDataSnapshot>('save_note', { note });
 }
 
+export async function apiSaveNoteFast(note: Note): Promise<Note> {
+  return invoke<Note>('save_note_fast', { note });
+}
+
 export async function apiDeleteNote(noteId: string): Promise<AppDataSnapshot> {
   return invoke<AppDataSnapshot>('delete_note', { noteId });
 }

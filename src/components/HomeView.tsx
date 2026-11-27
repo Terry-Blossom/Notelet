@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useDeferredValue, useMemo, useState } from 'react';
 import {
   CheckSquare,
   ChevronLeft,
@@ -50,6 +50,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [selectedDateKey, setSelectedDateKey] = useState<string>('');
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [contextMenu, setContextMenu] = useState<{ noteId: string; x: number; y: number } | null>(null);
 
   React.useEffect(() => {
@@ -83,27 +84,32 @@ export const HomeView: React.FC<HomeViewProps> = ({
     return cells;
   }, [calYear, calMonth]);
 
+  // 全文検索用の小文字化テキストをノート単位で一度だけ構築し、入力毎の再結合を避ける。
+  const searchIndex = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const n of notes) {
+      map.set(
+        n.id,
+        [n.title, n.summary, n.manual_notes, ...(n.tags ?? []), ...n.segments.map((s) => s.text)]
+          .join(' ')
+          .toLowerCase()
+      );
+    }
+    return map;
+  }, [notes]);
+
   const filteredNotes = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearchQuery.trim().toLowerCase();
     return notes.filter((n) => {
       if (selectedSpaceId !== 'all' && n.folder_id !== selectedSpaceId) return false;
       if (q) {
-        const hay = [
-          n.title,
-          n.summary,
-          n.manual_notes,
-          ...(n.tags ?? []),
-          ...n.segments.map((s) => s.text),
-        ]
-          .join(' ')
-          .toLowerCase();
-        if (!hay.includes(q)) return false;
+        if (!(searchIndex.get(n.id) ?? '').includes(q)) return false;
       } else if (selectedDateKey) {
         if (!n.created_at.startsWith(selectedDateKey)) return false;
       }
       return true;
     }).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
-  }, [notes, selectedSpaceId, searchQuery, selectedDateKey]);
+  }, [notes, searchIndex, selectedSpaceId, deferredSearchQuery, selectedDateKey]);
 
   const openActionItems = useMemo(() => {
     const items: Array<{ note: Note; index: number; text: string; assignee?: string | null }> = [];
@@ -247,7 +253,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div className="flat-list">
                 {filteredNotes.map((note) => {
                   const spaceName = folders.find((f) => f.id === note.folder_id)?.name ?? '個人';
-                  const matches = searchQuery.trim() ? findNoteSearchMatches(note, searchQuery) : [];
+                  const matches = deferredSearchQuery.trim() ? findNoteSearchMatches(note, deferredSearchQuery) : [];
                   return (
                     <button
                       key={note.id}
