@@ -44,6 +44,16 @@ describe('mobile portrait layout', () => {
     expect(screen.queryByRole('dialog', { name: 'その他のメニュー' })).not.toBeInTheDocument();
   });
 
+  it('opens the settings screen in a stacked portrait layout', () => {
+    setMobileViewport(true);
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'その他' }));
+    fireEvent.click(screen.getByRole('button', { name: '設定' }));
+    expect(screen.getByRole('dialog', { name: '設定' })).toBeInTheDocument();
+    // モバイルではタブ列と本文を縦積みにする（row のままだと本文が押し出される）
+    expect(document.querySelector('.settings-layout')).not.toBeNull();
+  });
+
   it('keeps the desktop sidebar in landscape', () => {
     setMobileViewport(false);
     render(<App />);

@@ -1407,9 +1407,8 @@ const MainApp: React.FC = () => {
         <button
           type="button"
           aria-label="設定を閉じる"
-          className="btn btn-ghost"
+          className="btn btn-ghost settings-close-btn"
           onClick={() => setSettingsOpen(false)}
-          style={{ position: 'absolute', top: '12px', right: '16px', zIndex: 20, width: '32px', height: '32px', padding: 0 }}
         >
           <X size={18} strokeWidth={1.75} />
         </button>
