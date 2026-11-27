@@ -68,6 +68,7 @@ pub fn detect_install_kind(os: &str, appimage_env: Option<&str>) -> (&'static st
     match os {
         "windows" => ("windows", true),
         "macos" => ("macos", true),
+        "android" => ("android", true),
         "linux" => {
             if detect_linux_appimage_path(appimage_env).is_some() {
                 ("appimage", true)
@@ -81,7 +82,7 @@ pub fn detect_install_kind(os: &str, appimage_env: Option<&str>) -> (&'static st
 
 fn ensure_can_auto_install(os: &str, appimage_env: Option<&str>) -> Result<Option<PathBuf>, String> {
     match os {
-        "windows" | "macos" => Ok(None),
+        "windows" | "macos" | "android" => Ok(None),
         "linux" => {
             let path = detect_linux_appimage_path(appimage_env)
                 .ok_or_else(|| MANUAL_UPDATE_ERR.to_string())?;
@@ -185,6 +186,15 @@ fn asset_match_priority(name: &str, os: &str, arch: &str, install_kind: &str) ->
             },
             _ => None,
         },
+        "android" => {
+            if name.ends_with("_android.apk") {
+                Some(2)
+            } else if name.ends_with(".apk") {
+                Some(1)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -565,8 +575,91 @@ pub async fn download_and_launch_update(
             .map_err(|e| format!("新しい AppImage の起動に失敗しました: {e}"))?;
         app.exit(0);
         Ok("更新しました。再起動します。".to_string())
+    } else if cfg!(target_os = "android") {
+        if let Some(expected) = expected_sha256.filter(|s| !s.trim().is_empty()) {
+            if let Err(err) = verify_file_sha256(&dest, expected) {
+                let _ = fs::remove_file(&dest);
+                return Err(err);
+            }
+        }
+        #[cfg(target_os = "android")]
+        {
+            return install_android_apk(&dest);
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(format!("{} にダウンロードしました。", dest.display()))
+        }
     } else {
         Ok(format!("{} にダウンロードしました。", dest.display()))
+    }
+}
+
+#[cfg(target_os = "android")]
+fn install_android_apk(apk_path: &Path) -> Result<String, String> {
+    use jni::objects::{JObject, JString, JValue};
+    use jni::JavaVM;
+
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }
+        .map_err(|e| format!("Android JVM 取得失敗: {e}"))?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| format!("Android スレッド接続失敗: {e}"))?;
+    let context_obj = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+    // ワーカースレッドではシステム ClassLoader になるため Context の ClassLoader から検索する。
+    let class_loader = env
+        .call_method(&context_obj, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+        .and_then(|v| v.l())
+        .map_err(|e| {
+            let _ = env.exception_clear();
+            format!("ClassLoader 取得失敗: {e}")
+        })?;
+    let class_name = env
+        .new_string("app.notelet.desktop.ApkInstaller")
+        .map_err(|e| format!("文字列生成失敗: {e}"))?;
+    let installer_class_obj = env
+        .call_method(
+            &class_loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&class_name)],
+        )
+        .and_then(|v| v.l())
+        .map_err(|e| {
+            let _ = env.exception_clear();
+            format!("ApkInstaller クラス読み込み失敗: {e}")
+        })?;
+    let installer_class = jni::objects::JClass::from(installer_class_obj);
+
+    let path_str = apk_path.to_string_lossy();
+    let j_path = env
+        .new_string(path_str.as_ref())
+        .map_err(|e| format!("APK パス文字列生成失敗: {e}"))?;
+
+    let result_obj = env
+        .call_static_method(
+            installer_class,
+            "install",
+            "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+            &[JValue::Object(&context_obj), JValue::Object(&j_path)],
+        )
+        .and_then(|v| v.l());
+
+    match result_obj {
+        Ok(obj) => {
+            let jstr = JString::from(obj);
+            let msg: String = env
+                .get_string(&jstr)
+                .map_err(|e| format!("結果文字列変換失敗: {e}"))?
+                .into();
+            Ok(msg)
+        }
+        Err(e) => {
+            let _ = env.exception_clear();
+            Err(format!("APK インストーラの起動に失敗しました: {e}"))
+        }
     }
 }
 
@@ -608,6 +701,7 @@ mod tests {
         );
         assert_eq!(detect_install_kind("windows", None), ("windows", true));
         assert_eq!(detect_install_kind("macos", None), ("macos", true));
+        assert_eq!(detect_install_kind("android", None), ("android", true));
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -619,6 +713,7 @@ mod tests {
 
         assert!(ensure_can_auto_install("windows", None).is_ok());
         assert!(ensure_can_auto_install("macos", None).is_ok());
+        assert!(ensure_can_auto_install("android", None).is_ok());
     }
 
     #[test]
@@ -729,6 +824,27 @@ mod tests {
                 .name,
             "Notelet_0.18.0_windows_x64-setup.exe"
         );
+    }
+
+    #[test]
+    fn selects_android_apk_asset() {
+        let apk_sha = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        let assets = vec![
+            json!({
+                "name": "Notelet_0.18.0_windows_x64-setup.exe",
+                "browser_download_url": "https://github.com/Terry-Blossom/Notelet/releases/download/v0.18.0/Notelet_0.18.0_windows_x64-setup.exe"
+            }),
+            json!({
+                "name": "Notelet_0.18.0_android.apk",
+                "browser_download_url": "https://github.com/Terry-Blossom/Notelet/releases/download/v0.18.0/Notelet_0.18.0_android.apk",
+                "digest": format!("sha256:{apk_sha}")
+            }),
+        ];
+
+        let selected =
+            select_release_asset(&assets, "android", "aarch64", "android", false).expect("apk");
+        assert_eq!(selected.name, "Notelet_0.18.0_android.apk");
+        assert_eq!(selected.sha256.as_deref(), Some(apk_sha));
     }
 
     #[test]

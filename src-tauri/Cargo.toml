@@ -1,6 +1,6 @@
 [package]
 name = "notelet"
-version = "0.18.0"
+version = "0.18.1"
 description = "軽量なローカルファースト録音・文字起こし・Notion連携ノートアプリ"
 authors = ["Notelet Contributors"]
 edition = "2021"
@@ -30,3 +30,13 @@ rand = "0.8"
 base64 = "0.22"
 dirs = "6"
 sha2 = "0.10"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
