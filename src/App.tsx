@@ -173,6 +173,7 @@ declare global {
 
 const getWindowMode = (): string | null => {
   if (typeof window === 'undefined') return null;
+  if (isAndroidRuntime()) return null;
   const hash = window.location.hash.replace(/^#/, '');
   if (hash === 'recording-overlay' || hash === 'meeting-notify') return hash;
   return (

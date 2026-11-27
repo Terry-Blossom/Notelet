@@ -18,4 +18,5 @@
 
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Keep JNI entry points invoked from Rust (Android APK updater)
+-keep class app.notelet.desktop.ApkInstaller { *; }
