@@ -195,7 +195,7 @@ html.android-runtime .main-area {
 
 /* Settings — フルスクリーン＋横スクロールタブ */
 .app-shell.mobile .settings-modal-backdrop {
-  padding: 0;
+  padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
 }
 
 .app-shell.mobile .settings-modal-panel {
@@ -205,8 +205,25 @@ html.android-runtime .main-area {
   border: none;
   border-radius: 0;
   flex-direction: column;
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ルートが row のままだとタブ列（width:100%）が本文を押し出すため column にする。 */
+.app-shell.mobile .settings-layout {
+  flex-direction: column;
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+/* 閉じるボタンはタブ列の上に固定し、下を流れるタブを隠す。 */
+.app-shell.mobile .settings-close-btn {
+  top: 0;
+  right: 0;
+  width: 52px;
+  height: 52px;
+  border-left: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background-color: var(--bg-canvas);
 }
 
 .app-shell.mobile .settings-sidebar {
@@ -214,10 +231,18 @@ html.android-runtime .main-area {
   flex-direction: row;
   align-items: center;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
   border-right: none;
   border-bottom: 1px solid var(--border-subtle);
-  padding: var(--sp-2) 56px var(--sp-2) var(--sp-3);
+  padding: var(--sp-2) 64px var(--sp-2) var(--sp-3);
   flex-shrink: 0;
+  mask-image: linear-gradient(to right, #000 calc(100% - 80px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 80px), transparent 100%);
+}
+
+.app-shell.mobile .settings-sidebar::-webkit-scrollbar {
+  display: none;
 }
 
 .app-shell.mobile .settings-sidebar-title {

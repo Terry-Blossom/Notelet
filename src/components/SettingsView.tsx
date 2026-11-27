@@ -555,11 +555,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       : null;
 
   return (
-    <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+    <div className="settings-layout">
       {/* Left Sidebar Navigation */}
       <aside className="settings-sidebar" aria-label="設定メニュー">
         {navGroups.map((group) => (
-          <div key={group.heading} style={{ display: 'flex', flexDirection: mobile ? 'row' : 'column', gap: '2px', marginBottom: mobile ? 0 : '12px' }}>
+          <div key={group.heading} style={{ display: 'flex', flexDirection: mobile ? 'row' : 'column', flexShrink: mobile ? 0 : undefined, gap: '2px', marginBottom: mobile ? 0 : '12px' }}>
             <div className="settings-sidebar-title">{group.heading}</div>
             {group.items.map((item) => {
               const Icon = item.icon;
@@ -732,7 +732,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   )}
                 </div>
               )}
-              <div style={{ display: 'grid', gridTemplateColumns: android ? '1fr' : '1fr 1fr', gap: '12px', fontSize: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: mobile || android ? '1fr' : '1fr 1fr', gap: '12px', fontSize: '12px' }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span>マイク音量倍率: {(settings.mic_gain ?? 1.0).toFixed(1)}x</span>
                   <input

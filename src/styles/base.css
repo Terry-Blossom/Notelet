@@ -340,6 +340,22 @@ button:disabled {
   display: flex;
 }
 
+.settings-close-btn {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 20;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.settings-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
 .settings-sidebar {
   width: 204px;
   flex-shrink: 0;
