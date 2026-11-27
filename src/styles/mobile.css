@@ -1,0 +1,221 @@
+/* Mobile layout — 縦画面・狭幅のときだけ適用。横画面は従来のデスクトップUI。 */
+
+/* Android のステータスバー／ジェスチャーバーと重ならないようにする（横画面含む）。 */
+html.android-runtime .app-shell {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+html.android-runtime .sidebar {
+  padding-bottom: calc(var(--sp-3) + env(safe-area-inset-bottom, 0px));
+}
+
+html.android-runtime .main-area {
+  padding-bottom: calc(var(--sp-2) + env(safe-area-inset-bottom, 0px));
+}
+
+.app-shell.mobile {
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.app-shell.mobile .main-area {
+  padding: 0;
+}
+
+.app-shell.mobile .main-canvas {
+  border: none;
+  border-radius: 0;
+}
+
+.app-shell.mobile .topbar {
+  display: flex;
+  height: 52px;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
+}
+
+.app-shell.mobile .topbar-left {
+  flex: 1;
+}
+
+.app-shell.mobile .topbar-title {
+  font-size: 15px;
+}
+
+.app-shell.mobile .topbar-search {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  padding: 0;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+}
+
+.app-shell.mobile .topbar-search span {
+  display: none;
+}
+
+.app-shell.mobile .topbar-right {
+  flex-shrink: 0;
+}
+
+.app-shell.mobile .page-container {
+  padding: var(--sp-4);
+  gap: var(--sp-4);
+}
+
+.app-shell.mobile .cmd-search-panel {
+  width: calc(100vw - 24px);
+  max-width: none;
+}
+
+/* Bottom tab bar */
+.mobile-tabbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background-color: var(--bg-canvas);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.mobile-tab {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: none;
+  background: none;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.mobile-tab.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mobile-record {
+  align-self: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  margin: 0 var(--sp-2);
+  border: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background-color: var(--accent);
+  color: var(--text-inverse);
+}
+
+.mobile-record.recording {
+  background-color: var(--danger);
+}
+
+/* More sheet */
+.mobile-more-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: flex-end;
+  background-color: rgba(17, 17, 17, 0.28);
+}
+
+.mobile-more-sheet {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-4) calc(var(--sp-4) + env(safe-area-inset-bottom, 0px));
+  background-color: var(--bg-canvas);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-md);
+}
+
+.mobile-more-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-2);
+}
+
+.mobile-more-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--sp-3) var(--sp-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.mobile-more-item.active {
+  border-color: var(--accent-border);
+  background-color: var(--accent-tint);
+  color: var(--text-primary);
+}
+
+.mobile-more-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.mobile-more-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.mobile-more-row .input {
+  flex: 1;
+  height: 36px;
+}
+
+/* Settings — フルスクリーン＋横スクロールタブ */
+.app-shell.mobile .settings-modal-backdrop {
+  padding: 0;
+}
+
+.app-shell.mobile .settings-modal-panel {
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  flex-direction: column;
+}
+
+.app-shell.mobile .settings-sidebar {
+  width: 100%;
+  flex-direction: row;
+  align-items: center;
+  overflow-x: auto;
+  border-right: none;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--sp-2) 56px var(--sp-2) var(--sp-3);
+}
+
+.app-shell.mobile .settings-sidebar-title {
+  display: none;
+}
+
+.app-shell.mobile .settings-sidebar .nav-item {
+  flex-shrink: 0;
+  height: 36px;
+  white-space: nowrap;
+}
+
+.app-shell.mobile .settings-body {
+  padding: var(--sp-4);
+}

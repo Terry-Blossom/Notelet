@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/tokens.css';
 import './styles/base.css';
 import './styles/note-screen.css';
+import './styles/mobile.css';
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

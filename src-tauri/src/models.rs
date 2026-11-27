@@ -354,8 +354,15 @@ impl Default for AppSettings {
         Self {
             plan_tier: PlanTier::Basic,
             active_asr_model_id: String::new(),
+            // Android ではローカル実行バイナリを動かせないため、クラウド ASR を既定にする。
+            #[cfg(target_os = "android")]
+            active_asr_provider: AsrProviderKind::CloudOpenAi,
+            #[cfg(not(target_os = "android"))]
             active_asr_provider: AsrProviderKind::LocalWhisper,
             language: "ja".to_string(),
+            #[cfg(target_os = "android")]
+            allow_cloud_asr: true,
+            #[cfg(not(target_os = "android"))]
             allow_cloud_asr: false,
             llm_provider: "none".to_string(),
             llm_model: "gpt-4o-mini".to_string(),

@@ -12,6 +12,7 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
+  Square,
   Trash2,
 } from 'lucide-react';
 import { AppSettings, AsrModelInfo, AudioDeviceInfo, DEFAULT_SUMMARY_PRESETS, Folder, GpuCapabilities, Note, SecretStatus, StorageStats, SummaryPreset, UpdateCheckResult } from '../types';
@@ -25,11 +26,14 @@ import {
   apiListAudioDevices,
   apiOpenStorageFolder,
   apiPurgeSyncedLocalNotes,
+  apiStartMicTest,
+  apiStopMicTest,
   apiTestCloudAsrConnection,
   apiTestLlmConnection,
-  apiTestMicLevel,
   isTauriRuntime,
 } from '../lib/tauri';
+import { useTauriEvent } from '../lib/tauriEvents';
+import { isAndroidRuntime, useMobileLayout } from '../lib/platform';
 
 declare const __APP_VERSION__: string | undefined;
 
@@ -101,8 +105,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onRestoreBackup,
   onExportObsidianZip,
 }) => {
+  const mobile = useMobileLayout();
+  const android = isAndroidRuntime();
   const [tab, setTab] = useState<SettingsTab>('asr');
   const [asrCategory, setAsrCategory] = useState<AsrCategory>(() => {
+    if (isAndroidRuntime()) return 'cloud';
     if (settings.active_asr_provider === 'local_parakeet') return 'parakeet';
     if (settings.active_asr_provider === 'local_qwen') return 'qwen';
     if (settings.active_asr_provider.startsWith('cloud_')) return 'cloud';
@@ -120,8 +127,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [gpuCaps, setGpuCaps] = useState<GpuCapabilities | null>(null);
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
   const [testFeedback, setTestFeedback] = useState<Record<string, { ok: boolean; msg: string }>>({});
-  const [micTestResult, setMicTestResult] = useState<{ rms: number; device_name: string } | null>(null);
+  const [micTestResult, setMicTestResult] = useState<{
+    active: boolean;
+    rms: number;
+    peak?: number;
+    elapsed_ms: number;
+    device_name: string;
+  } | null>(null);
   const [testingMic, setTestingMic] = useState(false);
+  const micTestSessionRef = useRef(0);
   const [audioDevices, setAudioDevices] = useState<AudioDeviceInfo[]>([]);
   const [refreshingAudioDevices, setRefreshingAudioDevices] = useState(false);
   const [appVersion, setAppVersion] = useState<string>(
@@ -130,11 +144,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   useEffect(() => {
     if (tab === 'asr' && isTauriRuntime()) {
-      void apiDetectGpuCapabilities()
-        .then((caps) => setGpuCaps(caps))
-        .catch(() => {
-          // ignore
-        });
+      if (!android) {
+        void apiDetectGpuCapabilities()
+          .then((caps) => setGpuCaps(caps))
+          .catch(() => {
+            // ignore
+          });
+      }
       void apiListAudioDevices()
         .then(setAudioDevices)
         .catch(() => {
@@ -177,6 +193,48 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setStatusMessage(msg);
     setTimeout(() => setStatusMessage(null), 3200);
   };
+
+  // マイクテストはバックエンドが継続的にレベルを配信する。終了イベントで自動的に停止する。
+  useTauriEvent<{
+    session: number;
+    active: boolean;
+    device_name: string;
+    rms: number;
+    peak?: number;
+    elapsed_ms: number;
+    error?: string | null;
+  }>('mic-test-level', (payload) => {
+    // 停止直後の古いセッションのイベントは無視する。
+    if (payload.session !== micTestSessionRef.current) return;
+    if (payload.error) {
+      setTestingMic(false);
+      flash(`マイクテスト失敗: ${payload.error}`);
+      return;
+    }
+    setMicTestResult({
+      active: payload.active,
+      rms: payload.rms,
+      peak: payload.peak,
+      elapsed_ms: payload.elapsed_ms,
+      device_name: payload.device_name,
+    });
+    setTestingMic(payload.active);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (isTauriRuntime()) void apiStopMicTest().catch(() => {});
+    };
+  }, []);
+
+  // 設定の別タブへ移動したらマイクテストを止める（録音デバイスを解放する）。
+  useEffect(() => {
+    if (tab !== 'asr' && testingMic) {
+      micTestSessionRef.current = 0;
+      void apiStopMicTest().catch(() => {});
+      setTestingMic(false);
+    }
+  }, [tab]);
 
   const refreshAudioDevices = async () => {
     setRefreshingAudioDevices(true);
@@ -475,7 +533,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     {
       heading: '一般',
       items: [
-        { id: 'shortcuts', label: 'ショートカット・再生', icon: Keyboard },
+        { id: 'shortcuts', label: android ? '外観・通知' : 'ショートカット・再生', icon: Keyboard },
         { id: 'update', label: 'アップデート', icon: RefreshCw },
       ],
     },
@@ -501,7 +559,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Left Sidebar Navigation */}
       <aside className="settings-sidebar" aria-label="設定メニュー">
         {navGroups.map((group) => (
-          <div key={group.heading} style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '12px' }}>
+          <div key={group.heading} style={{ display: 'flex', flexDirection: mobile ? 'row' : 'column', gap: '2px', marginBottom: mobile ? 0 : '12px' }}>
             <div className="settings-sidebar-title">{group.heading}</div>
             {group.items.map((item) => {
               const Icon = item.icon;
@@ -584,22 +642,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 {isTauriRuntime() && (
                   <button
                     type="button"
-                    className="btn btn-secondary"
+                    className={`btn ${testingMic ? 'btn-primary' : 'btn-secondary'}`}
                     style={{ height: '28px', fontSize: '12px' }}
-                    disabled={testingMic}
                     onClick={async () => {
+                      if (testingMic) {
+                        micTestSessionRef.current = 0;
+                        await apiStopMicTest().catch(() => {});
+                        setTestingMic(false);
+                        return;
+                      }
+                      setMicTestResult(null);
                       setTestingMic(true);
                       try {
-                        const res = await apiTestMicLevel(settings.preferred_mic_device_id ?? null);
-                        setMicTestResult(res);
+                        const session = await apiStartMicTest(settings.preferred_mic_device_id ?? null);
+                        micTestSessionRef.current = session;
                       } catch (e) {
-                        flash(`マイクテスト失敗: ${e instanceof Error ? e.message : String(e)}`);
-                      } finally {
                         setTestingMic(false);
+                        flash(`マイクテスト失敗: ${e instanceof Error ? e.message : String(e)}`);
                       }
                     }}
                   >
-                    {testingMic ? '計測中...' : 'マイクをテスト'}
+                    {testingMic ? (
+                      <>
+                        <Square size={12} strokeWidth={2} />
+                        テストを停止
+                      </>
+                    ) : (
+                      <>
+                        <Mic size={12} strokeWidth={2} />
+                        マイクをテスト
+                      </>
+                    )}
                   </button>
                 )}
               </div>
@@ -641,18 +714,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <div style={{ flex: 1, height: '6px', borderRadius: '999px', backgroundColor: 'var(--border-subtle)', overflow: 'hidden' }}>
                     <div
                       style={{
-                        width: `${Math.min(100, Math.round(micTestResult.rms * 350))}%`,
+                        width: `${Math.min(100, Math.round(Math.max(micTestResult.rms * 350, (micTestResult.peak ?? 0) * 120)))}%`,
                         height: '100%',
                         backgroundColor: micTestResult.rms < 0.002 ? 'var(--warning)' : 'var(--success)',
+                        transition: 'width 80ms linear',
                       }}
                     />
                   </div>
-                  <span className={`status-chip ${micTestResult.rms < 0.002 ? 'warn' : 'ok'}`}>
-                    {micTestResult.rms < 0.002 ? '入力なし/極小' : '正常に検出'}
-                  </span>
+                  {testingMic ? (
+                    <span className={`status-chip ${micTestResult.rms < 0.002 ? 'warn' : 'ok'}`} style={{ flexShrink: 0 }}>
+                      テスト中 {(micTestResult.elapsed_ms / 1000).toFixed(1)}s
+                    </span>
+                  ) : (
+                    <span className={`status-chip ${micTestResult.rms < 0.002 ? 'warn' : 'ok'}`} style={{ flexShrink: 0 }}>
+                      {micTestResult.rms < 0.002 ? '入力なし/極小' : '正常に検出'}
+                    </span>
+                  )}
                 </div>
               )}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: android ? '1fr' : '1fr 1fr', gap: '12px', fontSize: '12px' }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span>マイク音量倍率: {(settings.mic_gain ?? 1.0).toFixed(1)}x</span>
                   <input
@@ -664,46 +744,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onChange={(e) => update({ mic_gain: Number(e.target.value) })}
                   />
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span>システム音声倍率: {(settings.system_gain ?? 1.0).toFixed(1)}x</span>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="2.5"
-                    step="0.1"
-                    value={settings.system_gain ?? 1.0}
-                    onChange={(e) => update({ system_gain: Number(e.target.value) })}
-                  />
-                </label>
+                {!android && (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span>システム音声倍率: {(settings.system_gain ?? 1.0).toFixed(1)}x</span>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="2.5"
+                      step="0.1"
+                      value={settings.system_gain ?? 1.0}
+                      onChange={(e) => update({ system_gain: Number(e.target.value) })}
+                    />
+                  </label>
+                )}
               </div>
             </div>
 
             {/* Category Tabs */}
             <div className="category-tabs" role="tablist" aria-label="音声認識エンジンカテゴリ">
-              <button
-                type="button"
-                className={`category-tab ${asrCategory === 'whisper' ? 'active' : ''}`}
-                onClick={() => setAsrCategory('whisper')}
-              >
-                <OpenAILogo />
-                Whisper ({whisperModels.length})
-              </button>
-              <button
-                type="button"
-                className={`category-tab ${asrCategory === 'parakeet' ? 'active' : ''}`}
-                onClick={() => setAsrCategory('parakeet')}
-              >
-                <NvidiaLogo />
-                Parakeet ({parakeetModels.length})
-              </button>
-              <button
-                type="button"
-                className={`category-tab ${asrCategory === 'qwen' ? 'active' : ''}`}
-                onClick={() => setAsrCategory('qwen')}
-              >
-                <QwenLogo />
-                Qwen ({qwenModels.length})
-              </button>
+              {!android && (
+                <>
+                  <button
+                    type="button"
+                    className={`category-tab ${asrCategory === 'whisper' ? 'active' : ''}`}
+                    onClick={() => setAsrCategory('whisper')}
+                  >
+                    <OpenAILogo />
+                    Whisper ({whisperModels.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`category-tab ${asrCategory === 'parakeet' ? 'active' : ''}`}
+                    onClick={() => setAsrCategory('parakeet')}
+                  >
+                    <NvidiaLogo />
+                    Parakeet ({parakeetModels.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`category-tab ${asrCategory === 'qwen' ? 'active' : ''}`}
+                    onClick={() => setAsrCategory('qwen')}
+                  >
+                    <QwenLogo />
+                    Qwen ({qwenModels.length})
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className={`category-tab ${asrCategory === 'cloud' ? 'active' : ''}`}
@@ -1298,36 +1384,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {/* 3. Shortcuts */}
         {tab === 'shortcuts' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div>
-              <h2 className="section-title">ショートカットキー</h2>
-              <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                どのアプリを開いていても録音や音声入力を呼び出せます。
-              </p>
-            </div>
-            <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>
-                  録音開始 / 停止
-                </label>
-                <input
-                  type="text"
-                  className="input mono-num"
-                  value={settings.record_shortcut}
-                  onChange={(e) => update({ record_shortcut: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>
-                  音声入力 (Voice Typing)
-                </label>
-                <input
-                  type="text"
-                  className="input mono-num"
-                  value={settings.voice_typing_shortcut}
-                  onChange={(e) => update({ voice_typing_shortcut: e.target.value })}
-                />
-              </div>
-            </div>
+            {!android && (
+              <>
+                <div>
+                  <h2 className="section-title">ショートカットキー</h2>
+                  <p className="text-muted" style={{ margin: '4px 0 0' }}>
+                    どのアプリを開いていても録音や音声入力を呼び出せます。
+                  </p>
+                </div>
+                <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                      録音開始 / 停止
+                    </label>
+                    <input
+                      type="text"
+                      className="input mono-num"
+                      value={settings.record_shortcut}
+                      onChange={(e) => update({ record_shortcut: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>
+                      音声入力 (Voice Typing)
+                    </label>
+                    <input
+                      type="text"
+                      className="input mono-num"
+                      value={settings.voice_typing_shortcut}
+                      onChange={(e) => update({ voice_typing_shortcut: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <strong style={{ fontSize: '13px' }}>外観・通知・音声再生設定</strong>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
@@ -1380,19 +1470,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <strong style={{ fontSize: '13px' }}>ストレージ使用状況</strong>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ height: '28px', fontSize: '12px' }}
-                    onClick={async () => {
-                      if (isTauriRuntime()) {
-                        await apiOpenStorageFolder();
-                      }
-                    }}
-                  >
-                    <FolderOpen size={13} strokeWidth={1.5} />
-                    保存フォルダを開く
-                  </button>
+                  {!android && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ height: '28px', fontSize: '12px' }}
+                      onClick={async () => {
+                        if (isTauriRuntime()) {
+                          await apiOpenStorageFolder();
+                        }
+                      }}
+                    >
+                      <FolderOpen size={13} strokeWidth={1.5} />
+                      保存フォルダを開く
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn btn-secondary"

@@ -7,6 +7,7 @@ import {
   NotionTarget,
   SecretStatus,
 } from '../types';
+import { isAndroidRuntime } from '../lib/platform';
 
 interface IntegrationsViewProps {
   settings: AppSettings;
@@ -366,7 +367,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
           value={settings.generic_webhook_url}
           onChange={(e) => update({ generic_webhook_url: e.target.value })}
         />
-        {mcpPreview && (
+        {mcpPreview && !isAndroidRuntime() && (
           <details style={{ fontSize: '12px' }}>
             <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>
               MCP サーバー設定（Claude Desktop / Cursor 用）を表示

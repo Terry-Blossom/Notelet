@@ -158,12 +158,13 @@ impl AudioManager {
                 }
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        // Android はループバック録音非対応のため出力デバイスを列挙しない。
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let default_out_name = host
             .default_output_device()
             .and_then(|d| d.name().ok())
             .unwrap_or_default();
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         if let Ok(outputs) = host.output_devices() {
             for (idx, dev) in outputs.enumerate() {
                 if let Ok(name) = dev.name() {
@@ -231,6 +232,10 @@ impl AudioManager {
             self.stop_flag.store(true, Ordering::SeqCst);
             let _ = handle.join();
         }
+
+        // Android はマイク入力のみ対応。システム音声指定はマイクとして扱う。
+        #[cfg(target_os = "android")]
+        let source_mode = AudioSourceMode::Mic;
 
         let host = cpal::default_host();
 
@@ -815,7 +820,59 @@ fn process_16k_samples(
     }
 }
 
-pub fn test_mic_level(device_id: Option<String>) -> Result<(f32, String), String> {
+static MIC_TEST_STOP: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+static MIC_TEST_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn emit_mic_test_level(app: &tauri::AppHandle, payload: serde_json::Value) {
+    let _ = tauri::Emitter::emit(app, "mic-test-level", payload);
+}
+
+pub fn stop_mic_test() {
+    if let Ok(mut guard) = MIC_TEST_STOP.lock() {
+        if let Some(flag) = guard.take() {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+/// マイク入力を継続的にモニタリングし、80ms 間隔で `mic-test-level` イベントを配信する。
+/// 録音と同じ入力経路（選択中の入力デバイス）を使う。
+/// 返り値はセッション ID。古いセッションの終了イベントを画面側で無視するために使う。
+pub fn start_mic_test(app: tauri::AppHandle, device_id: Option<String>) -> Result<u64, String> {
+    stop_mic_test();
+    let session = MIC_TEST_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let stop = Arc::new(AtomicBool::new(false));
+    if let Ok(mut guard) = MIC_TEST_STOP.lock() {
+        *guard = Some(stop.clone());
+    } else {
+        return Err("マイクテストの状態を初期化できませんでした。".to_string());
+    }
+    thread::spawn(move || run_mic_test(app, device_id, stop, session));
+    Ok(session)
+}
+
+fn run_mic_test(
+    app: tauri::AppHandle,
+    device_id: Option<String>,
+    stop: Arc<AtomicBool>,
+    session: u64,
+) {
+    let fail = |app: &tauri::AppHandle, device_name: &str, message: String| {
+        eprintln!("[audio] microphone test failed: {message}");
+        emit_mic_test_level(
+            app,
+            serde_json::json!({
+                "session": session,
+                "active": false,
+                "device_name": device_name,
+                "rms": 0.0,
+                "peak": 0.0,
+                "elapsed_ms": 0,
+                "error": message,
+            }),
+        );
+    };
+
     let host = cpal::default_host();
     let device = if let Some(ref d_str) = device_id {
         if d_str.starts_with("in:") {
@@ -829,21 +886,30 @@ pub fn test_mic_level(device_id: Option<String>) -> Result<(f32, String), String
         }
     } else {
         host.default_input_device()
-    }
-    .ok_or_else(|| "マイク入力デバイスが見つかりません。".to_string())?;
+    };
+    let Some(device) = device else {
+        fail(&app, "既定のマイク", "マイク入力デバイスが見つかりません。OSのマイク権限と入力デバイスを確認してください。".to_string());
+        return;
+    };
 
     let dev_name = device.name().unwrap_or_else(|_| "既定のマイク".to_string());
-    let config = device
-        .default_input_config()
-        .map_err(|e| format!("マイク設定の取得に失敗しました: {e}"))?;
+    let config = match device.default_input_config() {
+        Ok(config) => config,
+        Err(e) => {
+            fail(&app, &dev_name, format!("マイク設定の取得に失敗しました: {e}"));
+            return;
+        }
+    };
     let channels = config.channels();
     let sample_rate = config.sample_rate().0;
     let sample_format = config.sample_format();
     eprintln!(
-        "[audio] microphone test host={:?} device={dev_name:?} sample_rate={sample_rate} channels={channels} format={sample_format:?}",
+        "[audio] microphone test start host={:?} device={dev_name:?} sample_rate={sample_rate} channels={channels} format={sample_format:?}",
         host.id()
     );
-    let acc = Arc::new(Mutex::new((0.0f64, 0usize)));
+
+    // (二乗和, サンプル数, ピーク) を 80ms ごとに取り出す。
+    let acc = Arc::new(Mutex::new((0.0f64, 0usize, 0.0f32)));
     let acc_cb = acc.clone();
 
     macro_rules! build_test_stream {
@@ -854,8 +920,12 @@ pub fn test_mic_level(device_id: Option<String>) -> Result<(f32, String), String
                     if let Ok(mut g) = acc_cb.lock() {
                         for &sample in data {
                             let normalized = $normalize(sample);
+                            let abs = normalized.abs() as f32;
                             g.0 += normalized * normalized;
                             g.1 += 1;
+                            if abs > g.2 {
+                                g.2 = abs;
+                            }
                         }
                     }
                 },
@@ -870,8 +940,10 @@ pub fn test_mic_level(device_id: Option<String>) -> Result<(f32, String), String
         SampleFormat::I8 => build_test_stream!(i8, |sample: i8| sample as f64 / 128.0),
         SampleFormat::I16 => build_test_stream!(i16, |sample: i16| sample as f64 / 32768.0),
         SampleFormat::I32 => build_test_stream!(i32, |sample: i32| normalize_i32(sample) as f64),
-        SampleFormat::I64 => build_test_stream!(i64, |sample: i64| sample as f64
-            / 9_223_372_036_854_775_808.0),
+        SampleFormat::I64 => {
+            build_test_stream!(i64, |sample: i64| sample as f64
+                / 9_223_372_036_854_775_808.0)
+        }
         SampleFormat::U8 => build_test_stream!(u8, |sample: u8| (sample as f64 - 128.0) / 128.0),
         SampleFormat::U16 => {
             build_test_stream!(u16, |sample: u16| (sample as f64 - 32768.0) / 32768.0)
@@ -880,39 +952,81 @@ pub fn test_mic_level(device_id: Option<String>) -> Result<(f32, String), String
         SampleFormat::U64 => build_test_stream!(u64, |sample: u64| (sample as f64
             - 9_223_372_036_854_775_808.0)
             / 9_223_372_036_854_775_808.0),
-        _ => return Err(format!("非対応のマイクサンプル形式です: {sample_format:?}")),
-    }
-    .map_err(|e| format!("マイクテストの開始に失敗しました: {e}"))?;
-
-    stream
-        .play()
-        .map_err(|e| format!("マイクストリームの再生に失敗しました: {e}"))?;
-    let started = Instant::now();
-    let min_wait = Duration::from_millis(350);
-    let timeout = Duration::from_secs(2);
-    loop {
-        let count = acc.lock().map(|g| g.1).unwrap_or(0);
-        if (count > 0 && started.elapsed() >= min_wait) || started.elapsed() >= timeout {
-            break;
+        _ => {
+            let message = format!("非対応のマイクサンプル形式です: {sample_format:?}");
+            fail(&app, &dev_name, message);
+            return;
         }
-        thread::sleep(Duration::from_millis(20));
-    }
-    drop(stream);
-
-    let (sum_sq, count) = acc.lock().map(|g| *g).unwrap_or((0.0, 0));
-    if count == 0 {
-        eprintln!("[audio] microphone test received no samples from {dev_name:?} within 2s");
-        return Err(format!(
-            "マイクから音声サンプルを受信できませんでした（デバイス: {dev_name}、サンプルレート: {sample_rate} Hz、チャンネル数: {channels}、形式: {sample_format:?}）。OSの入力デバイス設定を確認してください。"
-        ));
-    }
-    eprintln!("[audio] microphone test samples_received={count}");
-    let rms = if count > 0 {
-        ((sum_sq / count as f64).sqrt() as f32).min(1.0)
-    } else {
-        0.0
     };
-    Ok((rms, dev_name))
+    let stream = match stream {
+        Ok(stream) => stream,
+        Err(e) => {
+            fail(&app, &dev_name, format!("マイクテストの開始に失敗しました: {e}"));
+            return;
+        }
+    };
+    if let Err(e) = stream.play() {
+        fail(&app, &dev_name, format!("マイクストリームの再生に失敗しました: {e}"));
+        return;
+    }
+
+    let started = Instant::now();
+    emit_mic_test_level(
+        &app,
+        serde_json::json!({
+            "session": session,
+            "active": true,
+            "device_name": dev_name,
+            "rms": 0.0,
+            "peak": 0.0,
+            "elapsed_ms": 0,
+            "error": null,
+        }),
+    );
+
+    while !stop.load(Ordering::SeqCst) {
+        thread::sleep(Duration::from_millis(80));
+        let (sum_sq, count, peak) = acc
+            .lock()
+            .map(|mut g| {
+                let snapshot = *g;
+                *g = (0.0, 0, 0.0);
+                snapshot
+            })
+            .unwrap_or((0.0, 0, 0.0));
+        let rms = if count > 0 {
+            ((sum_sq / count as f64).sqrt() as f32).min(1.0)
+        } else {
+            0.0
+        };
+        emit_mic_test_level(
+            &app,
+            serde_json::json!({
+                "session": session,
+                "active": true,
+                "device_name": dev_name,
+                "rms": rms,
+                "peak": peak,
+                "elapsed_ms": started.elapsed().as_millis() as u64,
+                "error": null,
+            }),
+        );
+    }
+
+    drop(stream);
+    eprintln!("[audio] microphone test stopped device={dev_name:?}");
+    emit_mic_test_level(
+        &app,
+        serde_json::json!({
+            "session": session,
+            "active": false,
+            "device_name": dev_name,
+            "rms": 0.0,
+            "peak": 0.0,
+            "elapsed_ms": started.elapsed().as_millis() as u64,
+            "error": null,
+        }),
+    );
 }
 
 #[cfg(test)]

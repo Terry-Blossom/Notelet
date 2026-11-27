@@ -275,16 +275,14 @@ pub fn migrate_legacy_secrets() {
 }
 
 fn vault_dir() -> PathBuf {
-    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join("Notelet");
+    let dir = crate::storage::default_data_root().join("Notelet");
     let _ = fs::create_dir_all(&dir);
     restrict_dir_permissions(&dir);
     dir
 }
 
 fn legacy_vault_dir() -> PathBuf {
-    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join("KoeNote")
+    crate::storage::default_data_root().join("KoeNote")
 }
 
 fn master_key_fallback_path() -> PathBuf {

@@ -212,7 +212,7 @@ pub fn select_release_asset(
         };
         let should_replace = best
             .as_ref()
-            .map_or(true, |(best_prio, _)| priority > *best_prio);
+            .is_none_or(|(best_prio, _)| priority > *best_prio);
         if should_replace {
             let sha256 = parse_sha256_digest(a["digest"].as_str());
             best = Some((

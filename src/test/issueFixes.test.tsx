@@ -606,7 +606,8 @@ describe('Regression fixes for #25-#31', () => {
           { id: 'speaker-loopback', name: 'Speaker', kind: 'loopback', is_default: true },
         ];
       }
-      if (cmd === 'test_mic_level_cmd') return { rms: 0.1, device_name: 'USB Mic' };
+      if (cmd === 'start_mic_test_cmd') return 1;
+      if (cmd === 'stop_mic_test_cmd') return null;
       return null;
     });
 
@@ -641,7 +642,30 @@ describe('Regression fixes for #25-#31', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'マイクをテスト' }));
     });
-    expect(invokeMock).toHaveBeenCalledWith('test_mic_level_cmd', { deviceId: 'mic-usb' });
+    expect(invokeMock).toHaveBeenCalledWith('start_mic_test_cmd', { deviceId: 'mic-usb' });
+
+    // 継続モニタリングのレベルイベントでライブ表示が更新される
+    await act(async () => {
+      for (const handler of listenHandlers.get('mic-test-level') ?? []) {
+        handler({
+          payload: {
+            session: 1,
+            active: true,
+            device_name: 'USB Mic',
+            rms: 0.05,
+            peak: 0.12,
+            elapsed_ms: 1500,
+            error: null,
+          },
+        });
+      }
+    });
+    expect(screen.getByText('テスト中 1.5s')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'テストを停止' }));
+    });
+    expect(invokeMock).toHaveBeenCalledWith('stop_mic_test_cmd');
   });
 
   it('uses the saved preferred microphone when starting a recording', async () => {

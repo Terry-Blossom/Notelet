@@ -314,12 +314,12 @@ export async function apiTestLlmConnection(): Promise<string> {
   return invoke<string>('test_llm_connection_cmd');
 }
 
-export async function apiTestMicLevel(
-  deviceId?: string | null
-): Promise<{ rms: number; device_name: string }> {
-  return invoke<{ rms: number; device_name: string }>('test_mic_level_cmd', {
-    deviceId: deviceId ?? null,
-  });
+export async function apiStartMicTest(deviceId?: string | null): Promise<number> {
+  return invoke<number>('start_mic_test_cmd', { deviceId: deviceId ?? null });
+}
+
+export async function apiStopMicTest(): Promise<void> {
+  return invoke<void>('stop_mic_test_cmd');
 }
 
 export async function apiSavePopupChatSessions(

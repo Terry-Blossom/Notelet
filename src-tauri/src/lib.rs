@@ -2,6 +2,7 @@ pub mod asr;
 pub mod asr_diarization;
 mod audio;
 mod chat_actions;
+#[cfg(desktop)]
 mod desktop_integration;
 mod integrations;
 mod llm;
@@ -23,6 +24,7 @@ use notion::NotionTarget;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+#[cfg(desktop)]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 struct AppState {
@@ -36,6 +38,7 @@ fn get_snapshot(state: State<AppState>) -> AppDataSnapshot {
 }
 
 #[tauri::command]
+#[cfg_attr(not(desktop), allow(unused_variables))]
 fn save_settings(
     app: tauri::AppHandle,
     state: State<AppState>,
@@ -47,16 +50,19 @@ fn save_settings(
     storage::save_snapshot(&data)?;
     drop(data);
 
-    let _ = app.global_shortcut().unregister_all();
-    if !settings.record_shortcut.trim().is_empty() {
-        let _ = app.global_shortcut().register(settings.record_shortcut.trim());
-    }
-    if !settings.voice_typing_shortcut.trim().is_empty()
-        && settings.voice_typing_shortcut.trim() != settings.record_shortcut.trim()
+    #[cfg(desktop)]
     {
-        let _ = app
-            .global_shortcut()
-            .register(settings.voice_typing_shortcut.trim());
+        let _ = app.global_shortcut().unregister_all();
+        if !settings.record_shortcut.trim().is_empty() {
+            let _ = app.global_shortcut().register(settings.record_shortcut.trim());
+        }
+        if !settings.voice_typing_shortcut.trim().is_empty()
+            && settings.voice_typing_shortcut.trim() != settings.record_shortcut.trim()
+        {
+            let _ = app
+                .global_shortcut()
+                .register(settings.voice_typing_shortcut.trim());
+        }
     }
     if settings.notion_target_type == "database" && !settings.notion_target_id.trim().is_empty() {
         let db_id = settings.notion_target_id.clone();
@@ -358,6 +364,7 @@ async fn start_recording(
         data.settings.clone()
     };
     validate_recording_asr(&settings, &asr::list_models(&settings))?;
+    audio::stop_mic_test();
     let status = {
         let mut audio = state.audio.lock().unwrap_or_else(|e| e.into_inner());
         audio.start(
@@ -394,6 +401,7 @@ async fn start_recording(
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         // Pre-warm OpenWhispr-style persistent whisper-server immediately when recording starts
+        #[cfg(desktop)]
         {
             let st_ref = app_handle.state::<AppState>();
             let initial_settings = {
@@ -579,7 +587,14 @@ fn open_external_url(url: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("URL を開けませんでした: {e}"))?;
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    {
+        std::process::Command::new("am")
+            .args(["start", "-a", "android.intent.action.VIEW", "-d", safe_url])
+            .spawn()
+            .map_err(|e| format!("URL を開けませんでした: {e}"))?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
     {
         std::process::Command::new("xdg-open")
             .arg(safe_url)
@@ -606,6 +621,9 @@ async fn download_asr_model(
     state: State<'_, AppState>,
     model_id: String,
 ) -> Result<String, String> {
+    if cfg!(target_os = "android") {
+        return Err("ローカルモデルのダウンロードはデスクトップ版の機能です。Android ではクラウド ASR を利用してください。".to_string());
+    }
     let settings = state.data.lock().unwrap_or_else(|e| e.into_inner()).settings.clone();
     asr::download_whisper_model(&app, &model_id, &settings).await
 }
@@ -616,6 +634,9 @@ async fn install_asr_runtime(
     state: State<'_, AppState>,
     kind: String,
 ) -> Result<String, String> {
+    if cfg!(target_os = "android") {
+        return Err("ローカル実行エンジンの導入はデスクトップ版の機能です。Android ではクラウド ASR を利用してください。".to_string());
+    }
     let installed_path = asr::install_runtime_binary(&app, &kind).await?;
     let mut data = state.data.lock().unwrap_or_else(|e| e.into_inner());
     if kind == "whisper" {
@@ -1748,6 +1769,8 @@ fn copy_and_prepare_paste(app: tauri::AppHandle, text: String) -> Result<String,
         .map_err(|e| format!("クリップボードへの書き込みに失敗: {e}"))?;
     if cfg!(target_os = "macos") {
         Ok("クリップボードにコピーしました。他アプリへ貼り付けるには、貼り付け先を選択して Cmd+V を押してください（自動ペーストには macOS の「システム設定＞プライバシーとセキュリティ＞アクセシビリティ」許可が必要です）。".to_string())
+    } else if cfg!(target_os = "android") {
+        Ok("クリップボードにコピーしました。貼り付け先の入力欄を長押しして「貼り付け」を選択してください。".to_string())
     } else {
         Ok("クリップボードにコピーしました。貼り付け先の入力欄にフォーカスを移して Ctrl+V で貼り付けできます（アプリへ勝手に文字を送信しません）。".to_string())
     }
@@ -1796,7 +1819,12 @@ fn open_storage_folder_cmd() -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("フォルダを開けませんでした: {e}"))?;
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    {
+        let _ = dir_str;
+        return Err("Android 版では保存フォルダを直接開けません。バックアップのエクスポートをご利用ください。".to_string());
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
     {
         std::process::Command::new("xdg-open")
             .arg(&dir_str)
@@ -1952,7 +1980,7 @@ foreach ($p in $procs) {
         if !text.is_empty() {
             return Some(text);
         }
-        return None;
+        None
     }
 
     #[cfg(target_os = "macos")]
@@ -1996,9 +2024,24 @@ async fn test_llm_connection_cmd(state: State<'_, AppState>) -> Result<String, S
 }
 
 #[tauri::command]
-fn test_mic_level_cmd(device_id: Option<String>) -> Result<serde_json::Value, String> {
-    let (rms, device_name) = audio::test_mic_level(device_id)?;
-    Ok(serde_json::json!({ "rms": rms, "device_name": device_name }))
+fn start_mic_test_cmd(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    device_id: Option<String>,
+) -> Result<u64, String> {
+    let recording = {
+        let audio = state.audio.lock().unwrap_or_else(|e| e.into_inner());
+        audio.status().state
+    };
+    if recording == "recording" || recording == "paused" {
+        return Err("録音中はマイクテストを開始できません。録音を停止してから試してください。".to_string());
+    }
+    audio::start_mic_test(app, device_id)
+}
+
+#[tauri::command]
+fn stop_mic_test_cmd() {
+    audio::stop_mic_test();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2010,129 +2053,137 @@ pub fn run() {
         data: Mutex::new(snapshot),
     };
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(app_state)
-        .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
-                        let role = {
-                            let state = app.state::<AppState>();
-                            let (record, voice) = {
-                                let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
-                                (
-                                    data.settings.record_shortcut.clone(),
-                                    data.settings.voice_typing_shortcut.clone(),
-                                )
-                            };
-                            let pressed = shortcut.to_string();
-                            let matches = |value: &str| {
-                                value
-                                    .trim()
-                                    .parse::<tauri_plugin_global_shortcut::Shortcut>()
-                                    .map(|s| s.to_string() == pressed)
-                                    .unwrap_or(false)
-                            };
-                            if !voice.trim().is_empty()
-                                && voice.trim() != record.trim()
-                                && matches(&voice)
-                            {
-                                "voice_typing"
-                            } else {
-                                "record"
-                            }
+        .plugin(tauri_plugin_clipboard_manager::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    let role = {
+                        let state = app.state::<AppState>();
+                        let (record, voice) = {
+                            let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
+                            (
+                                data.settings.record_shortcut.clone(),
+                                data.settings.voice_typing_shortcut.clone(),
+                            )
                         };
-                        let _ = app.emit(
-                            "global-shortcut-triggered",
-                            serde_json::json!({ "role": role, "shortcut": shortcut.to_string() }),
-                        );
-                    }
-                })
-                .build(),
-        )
-        .setup(|app| {
-            desktop_integration::ensure_appimage_desktop_integration_async();
-            let (shortcut_str, voice_typing_str, mw_x, mw_y, mw_w, mw_h) = {
-                let state = app.state::<AppState>();
-                let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    data.settings.record_shortcut.clone(),
-                    data.settings.voice_typing_shortcut.clone(),
-                    data.settings.main_window_x,
-                    data.settings.main_window_y,
-                    data.settings.main_window_width,
-                    data.settings.main_window_height,
-                )
-            };
-            if !shortcut_str.trim().is_empty() {
-                let _ = app.global_shortcut().register(shortcut_str.trim());
-            }
-            if !voice_typing_str.trim().is_empty() && voice_typing_str.trim() != shortcut_str.trim() {
-                let _ = app.global_shortcut().register(voice_typing_str.trim());
-            }
-
-            if let Some(main_win) = app.get_webview_window("main") {
-                #[cfg(target_os = "linux")]
-                let _ = main_win.set_icon(tauri::include_image!("icons/128x128.png"));
-                #[cfg(not(target_os = "linux"))]
-                let _ = main_win.set_icon(tauri::include_image!("icons/icon.png"));
-                if let (Some(w), Some(h)) = (mw_w, mw_h) {
-                    if w >= 760.0 && h >= 480.0 && w <= 3840.0 && h <= 2160.0 {
-                        let _ = main_win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
-                    }
-                }
-                if let (Some(x), Some(y)) = (mw_x, mw_y) {
-                    if x >= -100.0 && y >= -50.0 && x <= 3800.0 && y <= 2100.0 {
-                        let _ = main_win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
-                    }
-                }
-            }
-
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let mut last_notified: Option<String> = None;
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
-                    let is_rec = {
-                        let st = app_handle.state::<AppState>();
-                        let audio = st.audio.lock().unwrap_or_else(|e| e.into_inner());
-                        let s = audio.status().state;
-                        s == "recording" || s == "paused"
+                        let pressed = shortcut.to_string();
+                        let matches = |value: &str| {
+                            value
+                                .trim()
+                                .parse::<tauri_plugin_global_shortcut::Shortcut>()
+                                .map(|s| s.to_string() == pressed)
+                                .unwrap_or(false)
+                        };
+                        if !voice.trim().is_empty()
+                            && voice.trim() != record.trim()
+                            && matches(&voice)
+                        {
+                            "voice_typing"
+                        } else {
+                            "record"
+                        }
                     };
-                    if is_rec {
-                        continue;
+                    let _ = app.emit(
+                        "global-shortcut-triggered",
+                        serde_json::json!({ "role": role, "shortcut": shortcut.to_string() }),
+                    );
+                }
+            })
+            .build(),
+    );
+    builder
+        .setup(|app| {
+            #[cfg(not(desktop))]
+            let _ = &app;
+            #[cfg(desktop)]
+            desktop_integration::ensure_appimage_desktop_integration_async();
+            #[cfg(desktop)]
+            {
+                let (shortcut_str, voice_typing_str, mw_x, mw_y, mw_w, mw_h) = {
+                    let state = app.state::<AppState>();
+                    let data = state.data.lock().unwrap_or_else(|e| e.into_inner());
+                    (
+                        data.settings.record_shortcut.clone(),
+                        data.settings.voice_typing_shortcut.clone(),
+                        data.settings.main_window_x,
+                        data.settings.main_window_y,
+                        data.settings.main_window_width,
+                        data.settings.main_window_height,
+                    )
+                };
+                if !shortcut_str.trim().is_empty() {
+                    let _ = app.global_shortcut().register(shortcut_str.trim());
+                }
+                if !voice_typing_str.trim().is_empty() && voice_typing_str.trim() != shortcut_str.trim() {
+                    let _ = app.global_shortcut().register(voice_typing_str.trim());
+                }
+
+                if let Some(main_win) = app.get_webview_window("main") {
+                    #[cfg(target_os = "linux")]
+                    let _ = main_win.set_icon(tauri::include_image!("icons/128x128.png"));
+                    #[cfg(not(target_os = "linux"))]
+                    let _ = main_win.set_icon(tauri::include_image!("icons/icon.png"));
+                    if let (Some(w), Some(h)) = (mw_w, mw_h) {
+                        if w >= 760.0 && h >= 480.0 && w <= 3840.0 && h <= 2160.0 {
+                            let _ = main_win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+                        }
                     }
-                    let detected = tokio::task::spawn_blocking(detect_active_meeting)
-                        .await
-                        .ok()
-                        .flatten();
-                    match detected {
-                        Some(meeting_label) => {
-                            if last_notified.as_deref() != Some(meeting_label.as_str()) {
-                                if let Some(win) = app_handle.get_webview_window("meeting-notify") {
-                                    let is_visible = win.is_visible().unwrap_or(false);
-                                    if !is_visible {
-                                        last_notified = Some(meeting_label.clone());
-                                        if let Ok(Some(monitor)) = app_handle.primary_monitor() {
-                                            let scale = monitor.scale_factor();
-                                            let sw = monitor.size().width as f64 / scale;
-                                            let _ = win.set_position(tauri::Position::Logical(
-                                                tauri::LogicalPosition::new((sw - 360.0).max(16.0), 24.0),
-                                            ));
+                    if let (Some(x), Some(y)) = (mw_x, mw_y) {
+                        if x >= -100.0 && y >= -50.0 && x <= 3800.0 && y <= 2100.0 {
+                            let _ = main_win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
+                        }
+                    }
+                }
+
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut last_notified: Option<String> = None;
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                        let is_rec = {
+                            let st = app_handle.state::<AppState>();
+                            let audio = st.audio.lock().unwrap_or_else(|e| e.into_inner());
+                            let s = audio.status().state;
+                            s == "recording" || s == "paused"
+                        };
+                        if is_rec {
+                            continue;
+                        }
+                        let detected = tokio::task::spawn_blocking(detect_active_meeting)
+                            .await
+                            .ok()
+                            .flatten();
+                        match detected {
+                            Some(meeting_label) => {
+                                if last_notified.as_deref() != Some(meeting_label.as_str()) {
+                                    if let Some(win) = app_handle.get_webview_window("meeting-notify") {
+                                        let is_visible = win.is_visible().unwrap_or(false);
+                                        if !is_visible {
+                                            last_notified = Some(meeting_label.clone());
+                                            if let Ok(Some(monitor)) = app_handle.primary_monitor() {
+                                                let scale = monitor.scale_factor();
+                                                let sw = monitor.size().width as f64 / scale;
+                                                let _ = win.set_position(tauri::Position::Logical(
+                                                    tauri::LogicalPosition::new((sw - 360.0).max(16.0), 24.0),
+                                                ));
+                                            }
+                                            let _ = app_handle.emit_to("meeting-notify", "meeting-detected", meeting_label);
+                                            let _ = win.show();
                                         }
-                                        let _ = app_handle.emit_to("meeting-notify", "meeting-detected", meeting_label);
-                                        let _ = win.show();
                                     }
                                 }
                             }
-                        }
-                        None => {
-                            last_notified = None;
+                            None => {
+                                last_notified = None;
+                            }
                         }
                     }
-                }
-            });
+                });
+            }
 
             Ok(())
         })
@@ -2245,16 +2296,21 @@ pub fn run() {
             restore_backup_snapshot,
             check_app_update,
             install_app_update,
-            test_cloud_asr_connection_cmd,
-            test_llm_connection_cmd,
-            test_mic_level_cmd,
-        ])
+                test_cloud_asr_connection_cmd,
+                test_llm_connection_cmd,
+                start_mic_test_cmd,
+                stop_mic_test_cmd,
+            ])
         .build(tauri::generate_context!())
         .expect("Notelet のビルド中にエラーが発生しました")
         .run(|_app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                #[cfg(desktop)]
                 whisper_server::stop_server_sync();
+                audio::stop_mic_test();
             }
+            #[cfg(not(desktop))]
+            let _ = event;
         });
 }
 

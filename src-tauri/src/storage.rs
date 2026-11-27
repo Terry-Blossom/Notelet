@@ -28,8 +28,27 @@ pub fn app_data_dir() -> PathBuf {
     dir
 }
 
-fn default_data_root() -> PathBuf {
+pub fn default_data_root() -> PathBuf {
+    #[cfg(target_os = "android")]
+    {
+        if let Some(dir) = android_app_files_dir() {
+            return dir;
+        }
+    }
     dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Android のアプリ専用 files ディレクトリ。
+/// dirs クレートは Android をサポートしないため、/proc/self/cmdline から
+/// パッケージ名を求めて /data/data/<package>/files を使う。
+#[cfg(target_os = "android")]
+fn android_app_files_dir() -> Option<PathBuf> {
+    let cmdline = fs::read_to_string("/proc/self/cmdline").ok()?;
+    let package = cmdline.split('\0').next()?.trim();
+    if package.is_empty() || !package.contains('.') {
+        return None;
+    }
+    Some(PathBuf::from(format!("/data/data/{package}/files")))
 }
 
 fn legacy_data_dir() -> PathBuf {

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   Home,
+  Menu,
   MessageSquare,
   FileText,
   Upload,
@@ -84,6 +85,7 @@ import {
   isTauriRuntime,
 } from './lib/tauri';
 import { createEmptyNote, findNoteSearchMatches, formatMs } from './lib/format';
+import { isAndroidRuntime, useMobileLayout } from './lib/platform';
 import { exportNotesAsObsidianZip, mergeNoteletBackupJson } from './lib/noteExportImport';
 import { HomeView } from './components/HomeView';
 import { ConfirmDialogHost } from './components/ConfirmDialog';
@@ -183,6 +185,9 @@ if (typeof document !== 'undefined') {
   const initialMode = getWindowMode();
   if (initialMode === 'recording-overlay' || initialMode === 'recording' || initialMode === 'meeting-notify') {
     document.documentElement.classList.add('overlay-window');
+  }
+  if (isAndroidRuntime()) {
+    document.documentElement.classList.add('android-runtime');
   }
 }
 
@@ -531,12 +536,15 @@ export const App: React.FC = () => {
 };
 
 const MainApp: React.FC = () => {
+  const mobile = useMobileLayout();
+  const android = isAndroidRuntime();
   const [view, setView] = useState<NavView>('home');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [recordingStartError, setRecordingStartError] = useState<string | null>(null);
   const [commandSearchOpen, setCommandSearchOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const [recordingSpaceId, setRecordingSpaceId] = useState('personal');
   const [snapshot, setSnapshot] = useState<AppDataSnapshot>({
     notes: [],
@@ -561,6 +569,11 @@ const MainApp: React.FC = () => {
       setSelectedDeviceId(snapshot.settings.preferred_mic_device_id ?? '');
     }
   }, [snapshot.settings.preferred_mic_device_id, sourceMode]);
+
+  // Android はマイク録音のみ対応。
+  useEffect(() => {
+    if (android && sourceMode !== 'mic') setSourceMode('mic');
+  }, [android, sourceMode]);
 
   useEffect(() => {
     if (!recordOptionsOpen) return;
@@ -1482,7 +1495,7 @@ const MainApp: React.FC = () => {
 
   return (
     <div
-      className="app-shell"
+      className={`app-shell ${mobile ? 'mobile' : ''}`}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
           e.preventDefault();
@@ -1537,6 +1550,7 @@ const MainApp: React.FC = () => {
           </span>
         </div>
       )}
+      {!mobile && (
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <nav className="nav-list" aria-label="メインメニュー" style={{ marginTop: '8px' }}>
           {navItems.map((item) => {
@@ -1578,7 +1592,9 @@ const MainApp: React.FC = () => {
                       { id: 'system', label: '本体音声' },
                       { id: 'both', label: '両方' },
                     ] as const
-                  ).map((opt) => (
+                  )
+                    .filter((opt) => !android || opt.id === 'mic')
+                    .map((opt) => (
                     <button
                       key={opt.id}
                       type="button"
@@ -1726,20 +1742,23 @@ const MainApp: React.FC = () => {
           )}
         </div>
       </aside>
+      )}
 
       <main className="main-area">
         <div className="main-canvas">
           <header className="topbar">
             <div className="topbar-left">
-              <button
-                type="button"
-                aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
-                className="btn btn-ghost"
-                style={{ width: '32px', height: '32px', padding: 0 }}
-                onClick={() => setSidebarCollapsed((v) => !v)}
-              >
-                {sidebarCollapsed ? <PanelLeftOpen size={16} strokeWidth={1.5} /> : <PanelLeftClose size={16} strokeWidth={1.5} />}
-              </button>
+              {!mobile && (
+                <button
+                  type="button"
+                  aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
+                  className="btn btn-ghost"
+                  style={{ width: '32px', height: '32px', padding: 0 }}
+                  onClick={() => setSidebarCollapsed((v) => !v)}
+                >
+                  {sidebarCollapsed ? <PanelLeftOpen size={16} strokeWidth={1.5} /> : <PanelLeftClose size={16} strokeWidth={1.5} />}
+                </button>
+              )}
               <h1 className="topbar-title">
                 {view === 'editor'
                   ? 'ノート'
@@ -1752,6 +1771,7 @@ const MainApp: React.FC = () => {
             <button
               type="button"
               className="topbar-search"
+              aria-label="ノートや会話を検索"
               onClick={() => {
                 setCommandQuery('');
                 setCommandSearchOpen(true);
@@ -1782,23 +1802,26 @@ const MainApp: React.FC = () => {
                   </button>
                 );
               })()}
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ height: '30px', padding: '0 8px', fontSize: '12px' }}
-                title="キーボードショートカット (?)"
-                onClick={() => setShortcutsOpen(true)}
-              >
-                ?
-              </button>
+              {!mobile && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ height: '30px', padding: '0 8px', fontSize: '12px' }}
+                  title="キーボードショートカット (?)"
+                  onClick={() => setShortcutsOpen(true)}
+                >
+                  ?
+                </button>
+              )}
               <button
                 type="button"
                 className="btn btn-secondary"
-                style={{ height: '30px', padding: '0 12px', fontSize: '12px' }}
+                aria-label="新規ノート"
+                style={mobile ? { height: '32px', width: '32px', padding: 0, justifyContent: 'center' } : { height: '30px', padding: '0 12px', fontSize: '12px' }}
                 onClick={() => handleCreateManualNote(recordingSpaceId)}
               >
                 <Plus size={14} strokeWidth={1.5} />
-                新規ノート
+                {!mobile && '新規ノート'}
               </button>
             </div>
           </header>
@@ -2263,6 +2286,149 @@ const MainApp: React.FC = () => {
           </div>
         </div>
       </main>
+      {mobile && (
+        <nav className="mobile-tabbar" aria-label="メインメニュー">
+          <button
+            type="button"
+            className={`mobile-tab ${view === 'home' || view === 'recording' ? 'active' : ''}`}
+            onClick={() => setView('home')}
+          >
+            <Home size={20} strokeWidth={1.5} />
+            <span>ホーム</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-tab ${view === 'notes' || view === 'editor' ? 'active' : ''}`}
+            onClick={() => setView('notes')}
+          >
+            <FileText size={20} strokeWidth={1.5} />
+            <span>ノート</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-record ${isRecordingActive ? 'recording' : ''}`}
+            aria-label={isRecordingActive ? '録音を停止' : '録音を開始'}
+            onClick={() => {
+              setMoreSheetOpen(false);
+              if (isRecordingActive) {
+                void handleStopAndFinish();
+              } else {
+                void handleStartRecording();
+              }
+            }}
+          >
+            {isRecordingActive ? <Square size={20} strokeWidth={1.5} /> : <Mic size={20} strokeWidth={1.5} />}
+          </button>
+          <button
+            type="button"
+            className={`mobile-tab ${view === 'chat' ? 'active' : ''}`}
+            onClick={() => setView('chat')}
+          >
+            <MessageSquare size={20} strokeWidth={1.5} />
+            <span>チャット</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-tab ${moreSheetOpen ? 'active' : ''}`}
+            aria-expanded={moreSheetOpen}
+            onClick={() => setMoreSheetOpen((o) => !o)}
+          >
+            <Menu size={20} strokeWidth={1.5} />
+            <span>その他</span>
+          </button>
+        </nav>
+      )}
+      {mobile && moreSheetOpen && (
+        <div className="mobile-more-backdrop" onClick={() => setMoreSheetOpen(false)}>
+          <div
+            className="mobile-more-sheet"
+            role="dialog"
+            aria-label="その他のメニュー"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mobile-more-grid">
+              {(
+                [
+                  { id: 'upload', label: 'アップロード', icon: Upload },
+                  { id: 'dictionary', label: '辞書', icon: BookOpen },
+                  { id: 'integrations', label: '連携', icon: Link2 },
+                ] as const
+              ).map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`mobile-more-item ${view === item.id ? 'active' : ''}`}
+                    onClick={() => {
+                      setView(item.id);
+                      setMoreSheetOpen(false);
+                    }}
+                  >
+                    <Icon size={20} strokeWidth={1.5} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                className="mobile-more-item"
+                onClick={() => {
+                  setSettingsOpen(true);
+                  setMoreSheetOpen(false);
+                }}
+              >
+                <Settings size={20} strokeWidth={1.5} />
+                <span>設定</span>
+              </button>
+            </div>
+            <div className="mobile-more-row">
+              <span className="mobile-more-label">保存先スペース</span>
+              <select
+                aria-label="録音先のスペース"
+                className="input"
+                value={recordingSpaceId}
+                onChange={(e) => setRecordingSpaceId(e.target.value)}
+              >
+                {snapshot.folders.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {!android && (
+              <div className="mobile-more-row">
+                <span className="mobile-more-label">録音ソース</span>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {(
+                    [
+                      { id: 'mic', label: 'マイク' },
+                      { id: 'system', label: '本体音声' },
+                      { id: 'both', label: '両方' },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={`tab-btn ${sourceMode === opt.id ? 'active' : ''}`}
+                      style={{ height: '32px', padding: '0 12px', fontSize: '12px' }}
+                      onClick={() => {
+                        if (sourceMode !== opt.id && (sourceMode === 'system' || opt.id === 'system')) {
+                          setSelectedDeviceId('');
+                        }
+                        setSourceMode(opt.id);
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {settingsModal}
       {commandSearchOpen && (
         <div

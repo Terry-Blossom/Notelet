@@ -4,8 +4,14 @@ node_modules/
 # Build outputs
 dist/
 src-tauri/target/
-src-tauri/gen/
+# Tauri が生成するスキーマのみ無視（Android プロジェクトはリリースビルドに必要なので追跡する）
+src-tauri/gen/schemas/
 release-artifacts/
+
+# Release signing keystore (CI では secrets から復元する)
+src-tauri/keystore/*.jks
+src-tauri/keystore/*.keystore
+src-tauri/keystore/keystore.properties
 
 # OS / Editor
 .DS_Store
