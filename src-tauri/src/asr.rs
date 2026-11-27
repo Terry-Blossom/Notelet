@@ -591,8 +591,42 @@ async fn download_single_file(
     span_pct: f64,
     fallback_bytes: u64,
 ) -> Result<(), String> {
+    download_single_file_verified(
+        Some(app),
+        model_id,
+        url,
+        dest,
+        base_pct,
+        span_pct,
+        fallback_bytes,
+        None,
+        1,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn download_single_file_verified(
+    app: Option<&tauri::AppHandle>,
+    model_id: &str,
+    url: &str,
+    dest: &Path,
+    base_pct: f64,
+    span_pct: f64,
+    fallback_bytes: u64,
+    expected_sha256: Option<&str>,
+    min_bytes: u64,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+
+    const MAX_DOWNLOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
     let tmp = dest.with_extension("part");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .user_agent("Notelet-Desktop/0.1")
+        .build()
+        .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
     let mut resp = client
         .get(url)
         .send()
@@ -602,29 +636,137 @@ async fn download_single_file(
     if !resp.status().is_success() {
         return Err(format!("ダウンロードエラー: HTTP {} ({url})", resp.status()));
     }
+    if let Some(len) = resp.content_length() {
+        if len > MAX_DOWNLOAD_BYTES {
+            return Err("ダウンロードサイズが上限を超えています。".to_string());
+        }
+    }
 
     let total = resp.content_length().unwrap_or(fallback_bytes.max(1));
     let mut downloaded: u64 = 0;
+    let mut hasher = Sha256::new();
     let mut file = fs::File::create(&tmp).map_err(|e| format!("一時ファイル作成失敗: {e}"))?;
-    use std::io::Write;
 
     while let Some(chunk) = resp
         .chunk()
         .await
-        .map_err(|e| format!("受信中にエラーが発生しました: {e}"))?
+        .map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("受信中にエラーが発生しました: {e}")
+        })?
     {
-        file.write_all(&chunk)
-            .map_err(|e| format!("ファイル書き込み失敗: {e}"))?;
-        downloaded += chunk.len() as u64;
-        let ratio = (downloaded as f64 / total.max(1) as f64).min(1.0);
-        let pct = (base_pct + ratio * span_pct).min(100.0) as u8;
-        let _ = app.emit(
-            "asr-download-progress",
-            serde_json::json!({ "model_id": model_id, "progress": pct }),
-        );
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        if downloaded > MAX_DOWNLOAD_BYTES {
+            drop(file);
+            let _ = fs::remove_file(&tmp);
+            return Err("ダウンロードサイズが上限を超えています。".to_string());
+        }
+        hasher.update(&chunk);
+        file.write_all(&chunk).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("ファイル書き込み失敗: {e}")
+        })?;
+        if let Some(app_handle) = app {
+            let ratio = (downloaded as f64 / total.max(1) as f64).min(1.0);
+            let pct = (base_pct + ratio * span_pct).min(100.0) as u8;
+            let _ = app_handle.emit(
+                "asr-download-progress",
+                serde_json::json!({ "model_id": model_id, "progress": pct }),
+            );
+        }
     }
     drop(file);
-    fs::rename(&tmp, dest).map_err(|e| format!("モデルファイルの配置に失敗: {e}"))?;
+
+    if downloaded < min_bytes {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!(
+            "ダウンロードファイルが不完全です ({downloaded} bytes < {min_bytes} bytes)"
+        ));
+    }
+
+    if let Some(expected) = expected_sha256.filter(|s| !s.trim().is_empty()) {
+        let actual = format!("{:x}", hasher.finalize());
+        if !actual.eq_ignore_ascii_case(expected.trim()) {
+            let _ = fs::remove_file(&tmp);
+            return Err(format!(
+                "SHA-256 整合性検証に失敗しました (expected={}, actual={actual})",
+                expected.trim()
+            ));
+        }
+    }
+
+    fs::rename(&tmp, dest).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("モデルファイルの配置に失敗: {e}")
+    })?;
+    Ok(())
+}
+
+fn extract_zip_safely(zip_path: &Path, dest_dir: &Path, max_total_bytes: u64) -> Result<(), String> {
+    let file = fs::File::open(zip_path)
+        .map_err(|e| format!("ZIP アーカイブを開けませんでした: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("ZIP アーカイブの解析に失敗しました: {e}"))?;
+
+    let mut total_uncompressed: u64 = 0;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("ZIP エントリの読み込みに失敗しました: {e}"))?;
+        let rel_path = entry
+            .enclosed_name()
+            .ok_or_else(|| format!("不正なアーカイブパスを検出しました (Zip Slip): {}", entry.name()))?;
+        let out_path = dest_dir.join(rel_path);
+
+        if entry.is_dir() {
+            fs::create_dir_all(&out_path)
+                .map_err(|e| format!("展開先ディレクトリ作成に失敗しました: {e}"))?;
+            continue;
+        }
+
+        total_uncompressed = total_uncompressed
+            .checked_add(entry.size())
+            .ok_or_else(|| "ZIP 展開サイズが上限を超えています。".to_string())?;
+        if total_uncompressed > max_total_bytes {
+            return Err("ZIP 展開サイズが安全上限を超えています。".to_string());
+        }
+
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("展開先親ディレクトリ作成に失敗しました: {e}"))?;
+        }
+        let mut out_file = fs::File::create(&out_path)
+            .map_err(|e| format!("展開ファイル作成に失敗しました: {e}"))?;
+        std::io::copy(&mut entry, &mut out_file)
+            .map_err(|e| format!("ZIP エントリの展開に失敗しました: {e}"))?;
+
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&out_path, fs::Permissions::from_mode(mode & 0o777));
+        }
+    }
+    Ok(())
+}
+
+fn validate_tar_entries(archive_path: &Path) -> Result<(), String> {
+    let mut cmd = Command::new("tar");
+    configure_bg_command(&mut cmd);
+    let output = cmd
+        .arg("-tjf")
+        .arg(archive_path)
+        .output()
+        .map_err(|e| format!("tar アーカイブ検証に失敗しました: {e}"))?;
+    if !output.status.success() {
+        return Err("tar.bz2 アーカイブの検証に失敗しました。".to_string());
+    }
+    let listing = String::from_utf8_lossy(&output.stdout);
+    for line in listing.lines() {
+        let p = line.trim();
+        if p.starts_with('/') || p.starts_with('\\') || p.split(['/', '\\']).any(|seg| seg == "..") {
+            return Err(format!("不正なアーカイブパスを検出しました: {p}"));
+        }
+    }
     Ok(())
 }
 
@@ -844,40 +986,22 @@ pub async fn install_runtime_binary(
                 "https://github.com/OpenWhispr/whisper.cpp/releases/download/0.0.11/{asset_name}"
             );
             let zip_path = bin_root.join(asset_name);
-            download_single_file(app, "runtime:whisper", &asset_url, &zip_path, 0.0, 90.0, 20 * 1024 * 1024).await?;
+            download_single_file_verified(
+                Some(app),
+                "runtime:whisper",
+                &asset_url,
+                &zip_path,
+                0.0,
+                90.0,
+                20 * 1024 * 1024,
+                None,
+                1024,
+            )
+            .await?;
 
-            if cfg!(windows) {
-                let mut cmd = Command::new("powershell");
-                configure_bg_command(&mut cmd);
-                let status = cmd
-                    .env("KN_ZIP", &zip_path)
-                    .env("KN_DEST", &dest_dir)
-                    .args([
-                        "-NoProfile",
-                        "-Command",
-                        "Expand-Archive -LiteralPath $env:KN_ZIP -DestinationPath $env:KN_DEST -Force",
-                    ])
-                    .status()
-                    .map_err(|e| format!("ZIP展開に失敗しました: {e}"))?;
-                let _ = fs::remove_file(&zip_path);
-                if !status.success() {
-                    return Err("whisper-server アーカイブの展開に失敗しました。".to_string());
-                }
-            } else {
-                let mut cmd = Command::new("unzip");
-                configure_bg_command(&mut cmd);
-                let status = cmd
-                    .args(["-o", "-q"])
-                    .arg(&zip_path)
-                    .arg("-d")
-                    .arg(&dest_dir)
-                    .status()
-                    .map_err(|e| format!("ZIP展開に失敗しました: {e}"))?;
-                let _ = fs::remove_file(&zip_path);
-                if !status.success() {
-                    return Err("whisper-server アーカイブの展開に失敗しました。".to_string());
-                }
-            }
+            let extract_res = extract_zip_safely(&zip_path, &dest_dir, 512 * 1024 * 1024);
+            let _ = fs::remove_file(&zip_path);
+            extract_res?;
 
             let _ = app.emit(
                 "asr-download-progress",
@@ -917,7 +1041,23 @@ pub async fn install_runtime_binary(
                 .ok_or_else(|| "sherpa-onnx の配布アーカイブが見つかりませんでした。".to_string())?;
 
             let archive_path = bin_root.join("sherpa-onnx.tar.bz2");
-            download_single_file(app, "runtime:parakeet", &asset_url, &archive_path, 0.0, 90.0, 45 * 1024 * 1024).await?;
+            download_single_file_verified(
+                Some(app),
+                "runtime:parakeet",
+                &asset_url,
+                &archive_path,
+                0.0,
+                90.0,
+                45 * 1024 * 1024,
+                None,
+                1024,
+            )
+            .await?;
+
+            if let Err(err) = validate_tar_entries(&archive_path) {
+                let _ = fs::remove_file(&archive_path);
+                return Err(err);
+            }
 
             let mut cmd = Command::new("tar");
             configure_bg_command(&mut cmd);
@@ -974,61 +1114,26 @@ async fn resolve_or_install_ffmpeg() -> Result<PathBuf, String> {
         "https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v6.1/ffmpeg-6.1-linux-64.zip"
     };
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("ffmpeg の自動取得に失敗しました: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("ffmpeg の自動取得に失敗しました ({})", resp.status()));
-    }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("ffmpeg データの読み込みに失敗しました: {e}"))?;
     let zip_path = bin_dir.join("ffmpeg.zip");
-    fs::write(&zip_path, &bytes).map_err(|e| format!("ffmpeg.zip の保存に失敗しました: {e}"))?;
+    download_single_file_verified(
+        None,
+        "runtime:ffmpeg",
+        url,
+        &zip_path,
+        0.0,
+        100.0,
+        30 * 1024 * 1024,
+        None,
+        1024 * 100,
+    )
+    .await?;
 
     let ffmpeg_dest_dir = bin_dir.join("ffmpeg");
     let _ = fs::create_dir_all(&ffmpeg_dest_dir);
 
-    #[cfg(windows)]
-    {
-        let mut cmd = Command::new("powershell");
-        configure_bg_command(&mut cmd);
-        let st = cmd
-            .env("KN_ZIP", &zip_path)
-            .env("KN_DEST", &ffmpeg_dest_dir)
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Expand-Archive -LiteralPath $env:KN_ZIP -DestinationPath $env:KN_DEST -Force",
-            ])
-            .status()
-            .map_err(|e| format!("ffmpeg の展開に失敗しました: {e}"))?;
-        let _ = fs::remove_file(&zip_path);
-        if !st.success() {
-            return Err("ffmpeg の展開に失敗しました。".to_string());
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let mut cmd = Command::new("unzip");
-        let st = cmd
-            .args([
-                "-o",
-                &zip_path.to_string_lossy(),
-                "-d",
-                &ffmpeg_dest_dir.to_string_lossy(),
-            ])
-            .status()
-            .map_err(|e| format!("ffmpeg の展開に失敗しました: {e}"))?;
-        let _ = fs::remove_file(&zip_path);
-        if !st.success() {
-            return Err("ffmpeg の展開に失敗しました。".to_string());
-        }
-    }
+    let extract_res = extract_zip_safely(&zip_path, &ffmpeg_dest_dir, 256 * 1024 * 1024);
+    let _ = fs::remove_file(&zip_path);
+    extract_res?;
 
     find_file_recursive(&ffmpeg_dest_dir, bin_name)
         .ok_or_else(|| "展開後に ffmpeg が見つかりませんでした。".to_string())
@@ -1787,40 +1892,16 @@ pub async fn transcribe_wav_with_progress(
                 .ok_or_else(|| "Google Cloud APIキーが設定されていません。設定＞音声認識＞クラウド API から登録してください。".to_string())?;
             let api_key = api_key.trim().to_string();
             let (local_wav, should_cleanup) = ensure_local_wav(wav_path).await?;
-            let reader_res = hound::WavReader::open(&local_wav);
-            let (sample_rate, channels, pcm_i16): (u32, u16, Vec<i16>) = match reader_res {
-                Ok(mut reader) => {
-                    let spec = reader.spec();
-                    let samples: Vec<i16> = match spec.sample_format {
-                        hound::SampleFormat::Int => {
-                            reader.samples::<i16>().filter_map(|s| s.ok()).collect()
-                        }
-                        hound::SampleFormat::Float => reader
-                            .samples::<f32>()
-                            .filter_map(|s| s.ok())
-                            .map(|f| (f.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
-                            .collect(),
-                    };
-                    (spec.sample_rate.max(8000), spec.channels.max(1), samples)
-                }
-                Err(e) => {
-                    if should_cleanup {
-                        let _ = fs::remove_file(&local_wav);
-                    }
-                    return Err(format!("WAVファイルの読み込みに失敗しました: {e}"));
-                }
-            };
+            let decode_res = decode_wav_to_pcm_i16(&local_wav);
             if should_cleanup {
                 let _ = fs::remove_file(&local_wav);
             }
+            let (sample_rate, channels, pcm_i16) = decode_res?;
             if pcm_i16.is_empty() {
                 return Ok((Vec::new(), false, model.name));
             }
 
-            let language_code = match settings.language.as_str() {
-                "en" => "en-US",
-                _ => "ja-JP",
-            };
+            let language_code = google_stt_language_code(&settings.language);
             let mut config = serde_json::json!({
                 "encoding": "LINEAR16",
                 "sampleRateHertz": sample_rate,
@@ -2014,35 +2095,26 @@ fn contains_japanese_kana(text: &str) -> bool {
 }
 
 /// 日本語認識モード時に、StepFun などが無音や短い発話を中国語文として誤認識した出力を検出する。
-/// ひらがな・カタカナを1文字も含まないテキストのうち、簡体字・中国語特有の頻出文字を含むもの、
-/// または CJK 漢字が6文字以上連続して仮名がゼロのものを誤認識とみなす。
+/// ひらがな・カタカナを1文字も含まないテキストのうち、日本語の新字体・常用漢字と重複しない
+/// 簡体字・中国語特有の頻出文字を含むもののみを誤認識とみなす。
 fn is_likely_chinese_misrecognition(text: &str) -> bool {
     if contains_japanese_kana(text) {
         return false;
     }
     const ZH_MARKERS: &[char] = &[
-        '这', '那', '们', '什', '么', '吗', '呢', '吧', '啊', '呀', '哦', '嗯', '对', '说', '话',
-        '请', '谢', '没', '还', '就', '个', '为', '与', '的', '了', '过', '听', '我', '你', '他',
-        '她', '它', '里', '哪', '怎', '样', '几', '很', '都', '只', '但', '并', '让', '给', '从',
-        '您', '咱', '啥', '咋', '嘛', '呗', '啦', '咯', '嘞', '语', '读', '记', '计', '设', '议',
-        '证', '评', '识', '认', '调', '谈', '论', '讲', '许', '译', '试', '误', '课', '谁', '词',
-        '诉', '详', '访', '订', '讨', '训', '讯', '诚', '该', '诸', '诺', '谱', '谨', '时', '间',
-        '门', '开', '闭', '问', '闻', '阅', '阁', '关', '发', '电', '录', '进', '远', '连', '运',
-        '达', '违', '选', '适', '迟', '遗', '边', '邻', '经', '结', '线', '级', '组', '织', '维',
-        '续', '约', '统', '总', '绝', '终', '细', '绘', '纪', '纯', '纳', '纸', '练', '编', '缩',
-        '综', '绿', '缓', '缘', '继', '绩', '红', '网', '罗', '实', '际', '动', '机', '构', '题',
-        '页', '顺', '须', '领', '额', '颜', '愿', '类', '预', '频', '顶', '项', '顾',
+        '这', '那', '们', '什', '么', '吗', '呢', '啊', '呀', '哦', '嗯', '对', '说', '话',
+        '请', '谢', '没', '还', '就', '个', '为', '过', '听', '你', '哪', '怎', '样',
+        '并', '让', '给', '从', '您', '咱', '啥', '咋', '嘛', '呗', '啦', '咯', '嘞', '语', '读',
+        '记', '计', '设', '议', '证', '评', '识', '认', '调', '谈', '论', '讲', '许', '译', '试',
+        '误', '课', '谁', '词', '诉', '详', '访', '订', '讨', '训', '讯', '诚', '该', '诸', '诺',
+        '谱', '谨', '时', '间', '门', '开', '闭', '问', '闻', '阅', '阁', '关', '发', '电', '录',
+        '进', '远', '连', '运', '达', '违', '选', '适', '迟', '遗', '边', '邻', '经', '结', '线',
+        '级', '组', '织', '维', '续', '约', '统', '总', '绝', '终', '细', '绘', '纪', '纯', '纳',
+        '纸', '练', '编', '缩', '综', '绿', '缓', '缘', '继', '绩', '红', '网', '罗', '实', '际',
+        '动', '机', '构', '题', '页', '顺', '须', '领', '额', '颜', '愿', '类', '预', '频', '顶',
+        '项', '顾',
     ];
-    let mut cjk_count = 0usize;
-    for c in text.chars() {
-        if ZH_MARKERS.contains(&c) {
-            return true;
-        }
-        if ('\u{4E00}'..='\u{9FFF}').contains(&c) {
-            cjk_count += 1;
-        }
-    }
-    cjk_count >= 6
+    text.chars().any(|c| ZH_MARKERS.contains(&c))
 }
 
 fn normalize_simplified_to_jp_shinjitai(text: &str) -> String {
@@ -2899,4 +2971,186 @@ pub fn trim_long_silence_wav(wav_path: &Path) -> Option<PathBuf> {
     }
     writer.finalize().ok()?;
     Some(trimmed_path)
+}
+
+fn decode_wav_to_pcm_i16(wav_path: &Path) -> Result<(u32, u16, Vec<i16>), String> {
+    let mut reader = hound::WavReader::open(wav_path)
+        .map_err(|e| format!("WAVファイルの読み込みに失敗しました: {e}"))?;
+    let spec = reader.spec();
+    let samples: Vec<i16> = match spec.sample_format {
+        hound::SampleFormat::Int => match spec.bits_per_sample {
+            8 => reader
+                .samples::<i8>()
+                .filter_map(|s| s.ok())
+                .map(|s| (s as i16) << 8)
+                .collect(),
+            16 => reader.samples::<i16>().filter_map(|s| s.ok()).collect(),
+            24 => reader
+                .samples::<i32>()
+                .filter_map(|s| s.ok())
+                .map(|s| (s >> 8).clamp(i16::MIN as i32, i16::MAX as i32) as i16)
+                .collect(),
+            32 => reader
+                .samples::<i32>()
+                .filter_map(|s| s.ok())
+                .map(|s| (s >> 16) as i16)
+                .collect(),
+            other => {
+                return Err(format!("未対応の PCM ビット深度です: {other} bit"));
+            }
+        },
+        hound::SampleFormat::Float => reader
+            .samples::<f32>()
+            .filter_map(|s| s.ok())
+            .map(|f| (f.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+            .collect(),
+    };
+    Ok((spec.sample_rate.max(8000), spec.channels.max(1), samples))
+}
+
+fn google_stt_language_code(lang: &str) -> String {
+    let trimmed = lang.trim();
+    match trimmed {
+        "" | "auto" | "ja" => "ja-JP".to_string(),
+        "en" => "en-US".to_string(),
+        "zh" | "zh-cn" => "zh-CN".to_string(),
+        "zh-tw" => "zh-TW".to_string(),
+        "ko" => "ko-KR".to_string(),
+        "fr" => "fr-FR".to_string(),
+        "de" => "de-DE".to_string(),
+        "es" => "es-ES".to_string(),
+        "pt" => "pt-BR".to_string(),
+        "it" => "it-IT".to_string(),
+        "vi" => "vi-VN".to_string(),
+        "th" => "th-TH".to_string(),
+        "id" => "id-ID".to_string(),
+        other if other.contains('-') => other.to_string(),
+        _ => "ja-JP".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chinese_misrecognition_preserves_japanese_kanji_compounds() {
+        assert!(!is_likely_chinese_misrecognition("開発会議"));
+        assert!(!is_likely_chinese_misrecognition("時間確認"));
+        assert!(!is_likely_chinese_misrecognition("個人情報保護法"));
+        assert!(!is_likely_chinese_misrecognition("東京都渋谷区"));
+        assert!(!is_likely_chinese_misrecognition("電話確認済み"));
+        assert!(!is_likely_chinese_misrecognition("これはテストです"));
+    }
+
+    #[test]
+    fn chinese_misrecognition_catches_simplified_chinese() {
+        assert!(is_likely_chinese_misrecognition("谢谢大家"));
+        assert!(is_likely_chinese_misrecognition("你好请问"));
+        assert!(is_likely_chinese_misrecognition("这个是什么"));
+        assert!(is_likely_chinese_misrecognition("没有问题"));
+    }
+
+    #[test]
+    fn google_stt_language_code_maps_non_ja_en_languages() {
+        assert_eq!(google_stt_language_code("auto"), "ja-JP");
+        assert_eq!(google_stt_language_code("ja"), "ja-JP");
+        assert_eq!(google_stt_language_code("en"), "en-US");
+        assert_eq!(google_stt_language_code("zh"), "zh-CN");
+        assert_eq!(google_stt_language_code("ko"), "ko-KR");
+        assert_eq!(google_stt_language_code("fr"), "fr-FR");
+        assert_eq!(google_stt_language_code("es-MX"), "es-MX");
+    }
+
+    #[test]
+    fn decode_wav_supports_8_16_24_32_int_and_float_pcm() {
+        let dir = std::env::temp_dir().join(format!("notelet_wav_test_{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+
+        for bits in [8u16, 16, 24, 32] {
+            let p = dir.join(format!("int_{bits}.wav"));
+            let spec = hound::WavSpec {
+                channels: 1,
+                sample_rate: 16_000,
+                bits_per_sample: bits,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut w = hound::WavWriter::create(&p, spec).unwrap();
+            let val: i32 = match bits {
+                8 => 64,
+                16 => 16_384,
+                24 => 4_194_304,
+                32 => 1_073_741_824,
+                _ => 0,
+            };
+            w.write_sample(val).unwrap();
+            w.finalize().unwrap();
+            let (sr, ch, pcm) = decode_wav_to_pcm_i16(&p).unwrap();
+            assert_eq!(sr, 16_000);
+            assert_eq!(ch, 1);
+            assert_eq!(pcm.len(), 1);
+            assert!(pcm[0] > 8_000, "unexpected decoded value for {bits}-bit: {}", pcm[0]);
+        }
+
+        let fp = dir.join("float_32.wav");
+        let fspec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut fw = hound::WavWriter::create(&fp, fspec).unwrap();
+        fw.write_sample(0.5f32).unwrap();
+        fw.finalize().unwrap();
+        let (_, _, fpcm) = decode_wav_to_pcm_i16(&fp).unwrap();
+        assert_eq!(fpcm.len(), 1);
+        assert!(fpcm[0] > 16_000);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_zip_safely_blocks_zip_slip_and_zip_bomb() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("notelet_zip_test_{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+
+        // 1. Valid ZIP extraction
+        let valid_zip = dir.join("valid.zip");
+        let valid_dest = dir.join("valid_out");
+        {
+            let f = fs::File::create(&valid_zip).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("bin/tool.txt", opts).unwrap();
+            zw.write_all(b"hello-notelet").unwrap();
+            zw.finish().unwrap();
+        }
+        extract_zip_safely(&valid_zip, &valid_dest, 1024).unwrap();
+        assert_eq!(
+            fs::read_to_string(valid_dest.join("bin/tool.txt")).unwrap(),
+            "hello-notelet"
+        );
+
+        // 2. Zip Slip rejection
+        let slip_zip = dir.join("slip.zip");
+        let slip_dest = dir.join("slip_out");
+        {
+            let f = fs::File::create(&slip_zip).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("../evil.txt", opts).unwrap();
+            zw.write_all(b"pwned").unwrap();
+            zw.finish().unwrap();
+        }
+        let err = extract_zip_safely(&slip_zip, &slip_dest, 1024).unwrap_err();
+        assert!(err.contains("Zip Slip"));
+        assert!(!dir.join("evil.txt").exists());
+
+        // 3. Size limit (Zip Bomb) rejection
+        let err_bomb = extract_zip_safely(&valid_zip, &valid_dest, 5).unwrap_err();
+        assert!(err_bomb.contains("安全上限"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

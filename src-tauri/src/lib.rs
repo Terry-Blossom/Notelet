@@ -1,6 +1,7 @@
 pub mod asr;
 pub mod asr_diarization;
 mod audio;
+mod audio_server;
 mod chat_actions;
 #[cfg(desktop)]
 mod desktop_integration;
@@ -411,7 +412,99 @@ async fn start_recording(
             asr::prewarm_whisper_server(&initial_settings).await;
         }
 
-        let mut error_reported = false;
+        struct LiveChunkJob {
+            chunk_path: std::path::PathBuf,
+            elapsed_ms: u64,
+            chunk_span_ms: u64,
+            settings: AppSettings,
+            dictionary: Vec<DictionaryEntry>,
+        }
+
+        let latest_job: std::sync::Arc<std::sync::Mutex<Option<LiveChunkJob>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let stop_worker = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let worker_job = std::sync::Arc::clone(&latest_job);
+        let worker_notify = std::sync::Arc::clone(&notify);
+        let worker_stop = std::sync::Arc::clone(&stop_worker);
+        let worker_app = app_handle.clone();
+
+        tauri::async_runtime::spawn(async move {
+            let mut error_reported = false;
+            let mut backoff_secs = 0u64;
+            loop {
+                worker_notify.notified().await;
+                if worker_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                loop {
+                    let job = {
+                        let mut guard = worker_job.lock().unwrap_or_else(|e| e.into_inner());
+                        guard.take()
+                    };
+                    let Some(job) = job else {
+                        break;
+                    };
+                    let res = asr::transcribe_chunk_async(
+                        &job.chunk_path,
+                        &job.settings,
+                        &job.dictionary,
+                    )
+                    .await;
+                    let _ = std::fs::remove_file(&job.chunk_path);
+                    match res {
+                        Ok(text) => {
+                            if error_reported {
+                                error_reported = false;
+                                backoff_secs = 0;
+                                let _ = worker_app.emit("live-transcript-recovered", ());
+                            }
+                            if !text.is_empty() {
+                                let start_ms = job.elapsed_ms.saturating_sub(job.chunk_span_ms);
+                                let seg = models::TranscriptSegment {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    start_ms,
+                                    end_ms: job.elapsed_ms,
+                                    speaker: String::new(),
+                                    text,
+                                };
+                                let _ = worker_app.emit("live-transcript-segment", seg);
+                            }
+                        }
+                        Err(err) => {
+                            let is_transient = err.contains("429")
+                                || err.contains("500")
+                                || err.contains("502")
+                                || err.contains("503")
+                                || err.contains("504")
+                                || err.contains("timeout")
+                                || err.contains("レート");
+                            if !error_reported {
+                                error_reported = true;
+                                let _ = worker_app.emit("live-transcript-error", err);
+                            }
+                            if is_transient {
+                                backoff_secs = if backoff_secs == 0 {
+                                    2
+                                } else {
+                                    (backoff_secs * 2).min(30)
+                                };
+                                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs))
+                                    .await;
+                            }
+                        }
+                    }
+                    if worker_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                }
+            }
+            if let Some(leftover) = worker_job.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                let _ = std::fs::remove_file(&leftover.chunk_path);
+            }
+        });
+
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(600)).await;
             let st_ref = app_handle.state::<AppState>();
@@ -459,29 +552,24 @@ async fn start_recording(
                 audio.take_live_chunk(min_samples)
             };
             if let Some((chunk_path, elapsed_ms, _dominant_source)) = chunk_opt {
-                let chunk_clone = chunk_path.clone();
-                let res = asr::transcribe_chunk_async(&chunk_clone, &settings, &dictionary).await;
-                let _ = std::fs::remove_file(&chunk_clone);
-                match res {
-                    Ok(text) if !text.is_empty() => {
-                        let start_ms = elapsed_ms.saturating_sub(chunk_span_ms);
-                        let seg = models::TranscriptSegment {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            start_ms,
-                            end_ms: elapsed_ms,
-                            speaker: String::new(),
-                            text,
-                        };
-                        let _ = app_handle.emit("live-transcript-segment", seg);
-                    }
-                    Err(err) if !error_reported => {
-                        error_reported = true;
-                        let _ = app_handle.emit("live-transcript-error", err);
-                    }
-                    _ => {}
+                let replaced = {
+                    let mut guard = latest_job.lock().unwrap_or_else(|e| e.into_inner());
+                    guard.replace(LiveChunkJob {
+                        chunk_path,
+                        elapsed_ms,
+                        chunk_span_ms,
+                        settings,
+                        dictionary,
+                    })
+                };
+                if let Some(old) = replaced {
+                    let _ = std::fs::remove_file(&old.chunk_path);
                 }
+                notify.notify_one();
             }
         }
+        stop_worker.store(true, std::sync::atomic::Ordering::Relaxed);
+        notify.notify_one();
     });
 
     Ok(status)
@@ -540,24 +628,7 @@ fn read_note_audio(state: State<AppState>, note_id: String) -> Result<String, St
             return Err("このノートには保存された録音音声がありません".to_string());
         }
     };
-    let bytes = storage::read_retained_audio_bytes(&audio_path, encrypted)?;
-    let ext = std::path::Path::new(&audio_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_default();
-    let mime = match ext.as_str() {
-        "mp3" => "audio/mpeg",
-        "m4a" | "mp4" => "audio/mp4",
-        "ogg" | "opus" => "audio/ogg",
-        "webm" => "audio/webm",
-        "flac" => "audio/flac",
-        "aac" => "audio/aac",
-        _ => "audio/wav",
-    };
-    use base64::Engine as _;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-    Ok(format!("data:{mime};base64,{encoded}"))
+    audio_server::register_note_audio(&note_id, std::path::PathBuf::from(audio_path), encrypted)
 }
 
 #[tauri::command]
@@ -573,12 +644,32 @@ fn open_external_url(url: String) -> Result<(), String> {
     let safe_url = parsed.as_str();
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        std::process::Command::new("rundll32")
-            .args(["url.dll,FileProtocolHandler", safe_url])
-            .creation_flags(0x08000000)
-            .spawn()
-            .map_err(|e| format!("URL を開けませんでした: {e}"))?;
+        #[link(name = "shell32")]
+        extern "system" {
+            fn ShellExecuteW(
+                hwnd: *mut core::ffi::c_void,
+                lp_operation: *const u16,
+                lp_file: *const u16,
+                lp_parameters: *const u16,
+                lp_directory: *const u16,
+                n_show_cmd: i32,
+            ) -> isize;
+        }
+        let op_wide: Vec<u16> = "open\0".encode_utf16().collect();
+        let url_wide: Vec<u16> = safe_url.encode_utf16().chain(std::iter::once(0)).collect();
+        let rc = unsafe {
+            ShellExecuteW(
+                core::ptr::null_mut(),
+                op_wide.as_ptr(),
+                url_wide.as_ptr(),
+                core::ptr::null(),
+                core::ptr::null(),
+                1,
+            )
+        };
+        if rc <= 32 {
+            return Err(format!("URL を開けませんでした (ShellExecuteW code={rc})"));
+        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -2305,6 +2396,7 @@ pub fn run() {
         .expect("Notelet のビルド中にエラーが発生しました")
         .run(|_app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                storage::flush_snapshot_sync();
                 #[cfg(desktop)]
                 whisper_server::stop_server_sync();
                 audio::stop_mic_test();

@@ -265,7 +265,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)' }}>
               <div className="text-muted">OAuth 2.0 で接続する場合</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px' }}>
                 <input className="input" placeholder="Client ID" value={notionClientId} onChange={(e) => setNotionClientId(e.target.value)} />
                 <input className="input" type="password" placeholder="Client Secret" value={notionClientSecret} onChange={(e) => setNotionClientSecret(e.target.value)} />
                 <input className="input" placeholder="Redirect URI" value={notionRedirectUri} onChange={(e) => setNotionRedirectUri(e.target.value)} />

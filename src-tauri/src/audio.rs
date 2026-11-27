@@ -13,6 +13,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+pub(crate) const SILENCE_RMS_THRESHOLD: f64 = 0.002;
+
+pub(crate) fn is_silent_rms(rms: f64) -> bool {
+    rms < SILENCE_RMS_THRESHOLD
+}
+
 pub struct AudioManager {
     runtime: Arc<Mutex<RecordingRuntime>>,
     live_chunk_pcm: Arc<Mutex<Vec<i16>>>,
@@ -90,7 +96,7 @@ impl AudioManager {
             sum_sq += f * f;
         }
         let rms = (sum_sq / samples.len().max(1) as f64).sqrt();
-        if rms < 0.003 {
+        if is_silent_rms(rms) {
             return None;
         }
         let (elapsed_ms, source_mode) = self
@@ -805,7 +811,7 @@ fn process_16k_samples(
         rt.level_rms = rms;
         rt.waveform.remove(0);
         rt.waveform.push(visual);
-        if rms < 0.002 {
+        if is_silent_rms(rms as f64) {
             if let Some(since) = rt.silent_since {
                 if since.elapsed() >= Duration::from_secs(6) {
                     rt.is_silent_warning = true;
@@ -1037,5 +1043,13 @@ mod tests {
         assert!(super::normalize_i32(i32::MAX) > 0.999_999);
         assert_eq!(super::normalize_u32(0), -1.0);
         assert!(super::normalize_u32(u32::MAX) > 0.999_999);
+    }
+
+    #[test]
+    fn silence_threshold_is_consistent_for_live_chunk_and_warning() {
+        assert!(super::is_silent_rms(0.0019));
+        assert!(!super::is_silent_rms(0.0020));
+        assert!(!super::is_silent_rms(0.0025));
+        assert!(!super::is_silent_rms(0.0030));
     }
 }

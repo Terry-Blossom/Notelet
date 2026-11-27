@@ -322,6 +322,34 @@ fn write_vault_map(map: &HashMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 
+fn can_generate_new_master_key(has_encrypted_vault: bool, has_encrypted_audio: bool) -> bool {
+    !has_encrypted_vault && !has_encrypted_audio
+}
+
+fn has_existing_encrypted_data() -> bool {
+    let has_encrypted_vault = {
+        let vault_path = secrets_vault_path();
+        vault_path.is_file()
+            && read_vault_map()
+                .values()
+                .any(|v| v.starts_with(ENC_PREFIX))
+    };
+    let audio_dir = crate::storage::audio_dir();
+    let has_encrypted_audio = fs::read_dir(&audio_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .map(|n| n.ends_with(".enc"))
+                .unwrap_or(false)
+        });
+    !can_generate_new_master_key(has_encrypted_vault, has_encrypted_audio)
+}
+
 fn get_or_create_secret_cipher_key() -> Result<[u8; 32], String> {
     ensure_legacy_migration();
     if let Ok(key_entry) = Entry::new(SERVICE_NAME, KEYCHAIN_ACCOUNT) {
@@ -343,6 +371,10 @@ fn get_or_create_secret_cipher_key() -> Result<[u8; 32], String> {
             let _ = key_entry.set_password(&encoded);
         }
         return Ok(key);
+    }
+
+    if has_existing_encrypted_data() {
+        return Err("OS キーチェーンまたはマスターキーが利用できないため、既存の暗号化データを復号できません。キーチェーンのロックを解除してから再試行してください。".to_string());
     }
 
     let mut key = [0u8; 32];
@@ -515,5 +547,13 @@ mod tests {
         let (n, c) = raw.split_at(12);
         let pt = cipher.decrypt(Nonce::from_slice(n), c).unwrap();
         assert_eq!(String::from_utf8(pt).unwrap(), "sk-roundtrip-secret");
+    }
+
+    #[test]
+    fn refuses_master_key_regeneration_when_encrypted_data_exists() {
+        assert!(can_generate_new_master_key(false, false));
+        assert!(!can_generate_new_master_key(true, false));
+        assert!(!can_generate_new_master_key(false, true));
+        assert!(!can_generate_new_master_key(true, true));
     }
 }

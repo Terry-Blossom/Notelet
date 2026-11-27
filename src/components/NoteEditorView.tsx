@@ -3,7 +3,6 @@ import {
   ArrowDown,
   ArrowUp,
   AudioLines,
-  BookPlus,
   Calendar,
   Check,
   ChevronDown,
@@ -21,10 +20,8 @@ import {
   Loader2,
   Menu,
   Mic,
-  Pause,
   Pencil,
   Pin,
-  Play,
   Plus,
   Search,
   Send,
@@ -57,11 +54,13 @@ import {
   formatNoteForCopy,
   formatNoteTimer,
 } from '../lib/format';
+import { sanitizeMemoHtml } from '../lib/sanitizeHtml';
 import { useTauriEvent } from '../lib/tauriEvents';
 import { NoteChatPopup } from './note-editor/NoteChatPopup';
 import { NoteMemoPanel } from './note-editor/NoteMemoPanel';
+import { NoteRecordingPill } from './note-editor/NoteRecordingPill';
 import { NoteSummaryPanel } from './note-editor/NoteSummaryPanel';
-import { NoteWaveform } from './NoteWaveform';
+import { NoteTranscriptPanel } from './note-editor/NoteTranscriptPanel';
 import { NotionSyncBadge } from './NotionSyncBadge';
 import { confirmActionDialog, confirmDeleteDialog } from './ConfirmDialog';
 import {
@@ -454,7 +453,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         note.storage_mode === 'notion_only' && viewerNote && viewerNote.id === note.id
           ? viewerNote.manual_notes
           : note.manual_notes;
-      const targetHtml = sourceMemo || '';
+      const targetHtml = sanitizeMemoHtml(sourceMemo || '');
       if (
         document.activeElement !== memoEditorRef.current &&
         memoEditorRef.current.innerHTML !== targetHtml
@@ -465,10 +464,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   }, [note.id, activeTab, note.manual_notes, note.storage_mode, viewerNote]);
 
   const saveMemoHtml = (html: string) => {
-    if (html === note.manual_notes) return;
+    const clean = sanitizeMemoHtml(html);
+    if (clean === note.manual_notes) return;
     onUpdateNote({
       ...note,
-      manual_notes: html,
+      manual_notes: clean,
       updated_at: new Date().toISOString(),
     });
   };
@@ -1318,6 +1318,15 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       ? Math.min(1, playbackMs / totalDurationMs)
       : 0;
 
+  const activeSegId = useMemo(() => {
+    if (!isPlaying) return null;
+    return (
+      displayedSegments.find(
+        (s) => playbackMs >= s.start_ms && playbackMs < s.end_ms
+      )?.id ?? null
+    );
+  }, [isPlaying, playbackMs, displayedSegments]);
+
   return (
     <div className="note-shell">
       {/* Mobile drawer backdrop */}
@@ -1599,7 +1608,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
             return (
               <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', flex: 1 }}>
+                <div className="note-space-container" style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <FolderIcon size={20} strokeWidth={1.75} />
@@ -1617,7 +1626,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           <input
                             type="text"
                             className="input"
-                            style={{ height: '32px', width: '200px' }}
+                            style={{ height: '32px', width: 'min(200px, 100%)' }}
                             value={spaceNameDraft}
                             onChange={(e) => setSpaceNameDraft(e.target.value)}
                             autoFocus
@@ -2580,127 +2589,21 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
           <div className="note-toolbar-right">
             {/* Recording / Processing / Completed Pill */}
-            {(phase === 'idle' || phase === 'recording') && (
-              <div className="note-rec-pill">
-                <button
-                  type="button"
-                  className="note-rec-btn"
-                  aria-pressed={phase === 'recording'}
-                  aria-label={phase === 'recording' ? '録音を停止' : '録音を開始'}
-                  onClick={handleRecordButtonClick}
-                >
-                  {phase === 'recording' ? (
-                    <span className="note-rec-btn-square" />
-                  ) : (
-                    <span className="note-rec-btn-dot" />
-                  )}
-                </button>
-
-                <NoteWaveform
-                  mode={phase === 'recording' ? 'recording' : 'idle'}
-                  levelRms={
-                    isExternalRecording
-                      ? recordingStatus?.level_rms ?? 0
-                      : localRms
-                  }
-                  waveform={recordingStatus?.waveform ?? []}
-                />
-
-                <span
-                  className={`note-timer ${phase === 'idle' ? 'muted' : ''}`}
-                  aria-hidden="true"
-                >
-                  {formatNoteTimer(timerMs)}
-                </span>
-              </div>
-            )}
-
-            {phase === 'processing' && (
-              <div className="note-rec-pill">
-                <NoteWaveform mode="processing" />
-                <span className="note-status-label">文字起こし中…</span>
-              </div>
-            )}
-
-            {phase === 'completed' && note.audio_path && (
-              <div className="note-rec-pill">
-                <button
-                  type="button"
-                  className="note-play-btn"
-                  aria-label={isPlaying ? '再生を一時停止' : '録音を再生'}
-                  onClick={togglePlayback}
-                >
-                  {isPlaying ? (
-                    <Pause size={20} strokeWidth={1.75} />
-                  ) : (
-                    <Play size={20} strokeWidth={1.75} />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="chip-filter mono-num"
-                  aria-label="5秒戻る"
-                  title="5秒戻る (←)"
-                  style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
-                  onClick={() => skipAudioBy(-5000)}
-                >
-                  -5s
-                </button>
-                <button
-                  type="button"
-                  className="chip-filter mono-num"
-                  aria-label="5秒進む"
-                  title="5秒進む (→)"
-                  style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
-                  onClick={() => skipAudioBy(5000)}
-                >
-                  +5s
-                </button>
-
-                <NoteWaveform mode="completed" playbackProgress={playbackProgress} />
-
-                <span className="note-timer" aria-hidden="true">
-                  {formatNoteTimer(timerMs)}
-                </span>
-
-                <button
-                  type="button"
-                  className="chip-filter mono-num"
-                  aria-label="再生速度を切り替え"
-                  title="再生速度を切り替え (1.0x / 1.25x / 1.5x / 2.0x)"
-                  style={{ height: '24px', padding: '0 8px', fontSize: '12px', fontWeight: 600 }}
-                  onClick={cyclePlaybackRate}
-                >
-                  {playbackRate}x
-                </button>
-
-                <button
-                  type="button"
-                  className="note-rerecord-btn"
-                  aria-label="再録音"
-                  onClick={handleRecordButtonClick}
-                >
-                  <Mic size={12} strokeWidth={1.75} />
-                </button>
-              </div>
-            )}
-
-            {phase === 'completed' && !note.audio_path && (
-              <div className="note-rec-pill">
-                <button
-                  type="button"
-                  className="note-rec-btn"
-                  aria-label="録音を開始"
-                  onClick={handleRecordButtonClick}
-                >
-                  <span className="note-rec-btn-dot" />
-                </button>
-                <NoteWaveform mode="idle" levelRms={0} waveform={[]} />
-                <span className="note-timer muted" aria-hidden="true">
-                  {formatNoteTimer(0)}
-                </span>
-              </div>
-            )}
+            <NoteRecordingPill
+              phase={phase}
+              hasAudioPath={Boolean(note.audio_path)}
+              isExternalRecording={isExternalRecording}
+              levelRms={isExternalRecording ? recordingStatus?.level_rms ?? 0 : localRms}
+              waveform={recordingStatus?.waveform ?? []}
+              timerMs={timerMs}
+              isPlaying={isPlaying}
+              playbackProgress={playbackProgress}
+              playbackRate={playbackRate}
+              onRecordButtonClick={handleRecordButtonClick}
+              onTogglePlayback={togglePlayback}
+              onSkipAudioBy={skipAudioBy}
+              onCyclePlaybackRate={cyclePlaybackRate}
+            />
 
             <NotionSyncBadge status={note.notion_sync.status} pageUrl={note.notion_sync.page_url} />
 
@@ -3166,141 +3069,36 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     )}
                   </div>
                 ) : (
-                  <div
-                    className={`note-transcript-list ${
-                      phase === 'completed' ? 'completed' : ''
-                    }`}
-                  >
-                    {displayedSegments.map((seg) => {
-                      const isActiveSeg =
-                        isPlaying && playbackMs >= seg.start_ms && playbackMs < seg.end_ms;
-                      const isInterimSeg = isRecording || seg.id.startsWith('live-');
-                      const isEditingSeg = editingSegId === seg.id;
-                      return (
-                        <article key={seg.id} className={`note-turn ${isActiveSeg ? 'playing' : ''}`}>
-                          <div className="note-turn-meta" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                            <button
-                              type="button"
-                              className={`note-seg-play-btn ${isActiveSeg ? 'active' : ''}`}
-                              aria-label={isActiveSeg ? '一時停止' : `${formatNoteTimer(seg.start_ms)} から再生`}
-                              title={isActiveSeg ? '一時停止' : `${formatNoteTimer(seg.start_ms)} から再生`}
-                              onClick={() => {
-                                if (isActiveSeg) {
-                                  togglePlayback();
-                                } else {
-                                  void playNoteAudioFromMs(seg.start_ms);
-                                }
-                              }}
-                            >
-                              {isActiveSeg ? <Pause size={11} strokeWidth={2} /> : <Play size={11} strokeWidth={2} />}
-                            </button>
-                            <button
-                              type="button"
-                              className="note-turn-time"
-                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-                              title={`${formatNoteTimer(seg.start_ms)} から再生`}
-                              onClick={() => void playNoteAudioFromMs(seg.start_ms)}
-                            >
-                              {formatNoteTimer(seg.start_ms)}
-                            </button>
-                            {isInterimSeg && (
-                              <span className="status-chip" style={{ fontSize: '10px', padding: '0 4px', opacity: 0.8 }}>
-                                暫定
-                              </span>
-                            )}
-                            {!isRecording && !isEditingSeg && (
-                              <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost"
-                                  style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
-                                  title="この発言を編集"
-                                  onClick={() => {
-                                    setEditingSegId(seg.id);
-                                    setEditingSegText(seg.text);
-                                  }}
-                                >
-                                  <Pencil size={11} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost"
-                                  style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
-                                  title="選択テキストまたは単語を辞書に追加"
-                                  onClick={async () => {
-                                    const sel = window.getSelection()?.toString().trim();
-                                    const candidate = sel || seg.text.trim().slice(0, 24);
-                                    if (!candidate) return;
-                                    await onAddDictionaryTerm(candidate);
-                                    notify(`「${candidate}」を辞書に追加しました`);
-                                  }}
-                                >
-                                  <BookPlus size={11} />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                          {isEditingSeg ? (
-                            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                              <input
-                                type="text"
-                                className="input"
-                                value={editingSegText}
-                                autoFocus
-                                onChange={(e) => setEditingSegText(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    const nextSegs = note.segments.map((s) =>
-                                      s.id === seg.id ? { ...s, text: editingSegText } : s
-                                    );
-                                    onUpdateNote({
-                                      ...note,
-                                      segments: nextSegs,
-                                      updated_at: new Date().toISOString(),
-                                    });
-                                    setEditingSegId(null);
-                                  } else if (e.key === 'Escape') {
-                                    setEditingSegId(null);
-                                  }
-                                }}
-                                style={{ flex: 1, height: '30px', fontSize: '13px' }}
-                              />
-                              <button
-                                type="button"
-                                className="btn btn-primary"
-                                style={{ height: '30px', padding: '0 12px', fontSize: '12px' }}
-                                onClick={() => {
-                                  const nextSegs = note.segments.map((s) =>
-                                    s.id === seg.id ? { ...s, text: editingSegText } : s
-                                  );
-                                  onUpdateNote({
-                                    ...note,
-                                    segments: nextSegs,
-                                    updated_at: new Date().toISOString(),
-                                  });
-                                  setEditingSegId(null);
-                                }}
-                              >
-                                保存
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-ghost"
-                                style={{ height: '30px', padding: '0 8px', fontSize: '12px' }}
-                                onClick={() => setEditingSegId(null)}
-                              >
-                                取消
-                              </button>
-                            </div>
-                          ) : (
-                            <p className="note-turn-text" style={{ opacity: isInterimSeg ? 0.85 : 1 }}>
-                              {highlightSearchText(seg.text)}
-                            </p>
-                          )}
-                        </article>
+                  <NoteTranscriptPanel
+                    segments={displayedSegments}
+                    activeSegId={activeSegId}
+                    isRecording={isRecording}
+                    isCompleted={phase === 'completed'}
+                    editingSegId={editingSegId}
+                    editingSegText={editingSegText}
+                    onStartEdit={(segId, text) => {
+                      setEditingSegId(segId);
+                      setEditingSegText(text);
+                    }}
+                    onChangeEditText={setEditingSegText}
+                    onCommitEdit={(segId) => {
+                      const nextSegs = note.segments.map((s) =>
+                        s.id === segId ? { ...s, text: editingSegText } : s
                       );
-                    })}
-                  </div>
+                      onUpdateNote({
+                        ...note,
+                        segments: nextSegs,
+                        updated_at: new Date().toISOString(),
+                      });
+                      setEditingSegId(null);
+                    }}
+                    onCancelEdit={() => setEditingSegId(null)}
+                    onTogglePlayback={togglePlayback}
+                    onPlayFromMs={(ms) => void playNoteAudioFromMs(ms)}
+                    onAddDictionaryTerm={onAddDictionaryTerm}
+                    onNotify={notify}
+                    highlightSearchText={highlightSearchText}
+                  />
                 )}
               </div>
             )}

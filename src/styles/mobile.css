@@ -16,15 +16,21 @@ html.android-runtime .main-area {
 .app-shell.mobile {
   flex-direction: column;
   padding-top: env(safe-area-inset-top, 0px);
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 .app-shell.mobile .main-area {
   padding: 0;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .app-shell.mobile .main-canvas {
   border: none;
   border-radius: 0;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .app-shell.mobile .topbar {
@@ -32,14 +38,19 @@ html.android-runtime .main-area {
   height: 52px;
   gap: var(--sp-2);
   padding: 0 var(--sp-3);
+  min-width: 0;
 }
 
 .app-shell.mobile .topbar-left {
   flex: 1;
+  min-width: 0;
 }
 
 .app-shell.mobile .topbar-title {
   font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-shell.mobile .topbar-search {
@@ -194,6 +205,8 @@ html.android-runtime .main-area {
   border: none;
   border-radius: 0;
   flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .app-shell.mobile .settings-sidebar {
@@ -204,6 +217,7 @@ html.android-runtime .main-area {
   border-right: none;
   border-bottom: 1px solid var(--border-subtle);
   padding: var(--sp-2) 56px var(--sp-2) var(--sp-3);
+  flex-shrink: 0;
 }
 
 .app-shell.mobile .settings-sidebar-title {
@@ -218,4 +232,121 @@ html.android-runtime .main-area {
 
 .app-shell.mobile .settings-body {
   padding: var(--sp-4);
+  min-width: 0;
+}
+
+/* Chat view — 縦積みにして狭い画面でも会話欄を確保 */
+.app-shell.mobile .chat-split {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  height: 100%;
+}
+
+.app-shell.mobile .chat-history-rail {
+  border-right: none;
+  border-bottom: 1px solid var(--border-subtle);
+  max-height: 148px;
+  padding: var(--sp-3);
+}
+
+.app-shell.mobile .chat-main-pane {
+  padding: var(--sp-3);
+}
+
+/* Note Editor & Space view — 縦画面向けに余白・ツールバー・ポップオーバー・チャットを調整 */
+.app-shell.mobile .note-main {
+  padding: var(--sp-3) var(--sp-3) calc(var(--sp-8) + 64px);
+}
+
+.app-shell.mobile .note-space-container {
+  padding: var(--sp-4) !important;
+}
+
+.app-shell.mobile .note-toolbar {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  height: auto;
+}
+
+.app-shell.mobile .note-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
+.app-shell.mobile .note-tab {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.app-shell.mobile .note-toolbar-right {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+.app-shell.mobile .note-rec-pill {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  gap: 4px;
+  padding: 4px 8px;
+  overflow: hidden;
+}
+
+.app-shell.mobile .note-waveform {
+  min-width: 32px;
+  flex: 1 1 40px;
+}
+
+.app-shell.mobile .note-title-input {
+  font-size: 20px;
+}
+
+.app-shell.mobile .note-meta-pills {
+  flex-wrap: wrap;
+}
+
+.app-shell.mobile .note-popover {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  top: auto;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: calc(100vw - 24px);
+  max-height: 60dvh;
+  overflow-y: auto;
+  z-index: 60;
+}
+
+.app-shell.mobile .note-chat-fab {
+  bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  right: 12px;
+}
+
+.app-shell.mobile .note-composer-box {
+  width: calc(100vw - 24px);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 140px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+}
+
+.app-shell.mobile .rich-memo-toolbar {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Modals */
+.app-shell.mobile .modal-panel {
+  width: calc(100vw - 24px);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
 }

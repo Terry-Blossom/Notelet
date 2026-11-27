@@ -202,6 +202,32 @@ pub async fn download_remote_bytes(raw_url: &str, max_redirects: usize) -> Resul
     Err("リダイレクト回数が上限を超えました。".to_string())
 }
 
+pub async fn post_json_validated<T: serde::Serialize + ?Sized>(
+    raw_url: &str,
+    body: &T,
+) -> Result<reqwest::Response, String> {
+    let (parsed, addrs) = resolve_and_validate_url(raw_url).await?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "有効なホスト名を含む URL を入力してください。".to_string())?
+        .trim_matches(['[', ']'])
+        .to_string();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(20))
+        .resolve_to_addrs(&host, &addrs)
+        .build()
+        .map_err(|e| format!("HTTPクライアント構築に失敗: {e}"))?;
+
+    client
+        .post(parsed)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("Webhook 送信エラー: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,7 +6,7 @@ interface NoteMemoPanelProps {
   saveMemoHtml: (html: string) => void;
 }
 
-export const NoteMemoPanel: React.FC<NoteMemoPanelProps> = ({
+export const NoteMemoPanel: React.FC<NoteMemoPanelProps> = React.memo(({
   memoEditorRef,
   applyMemoCommand,
   saveMemoHtml,
@@ -88,4 +88,4 @@ export const NoteMemoPanel: React.FC<NoteMemoPanelProps> = ({
       />
     </section>
   </div>
-);
+));

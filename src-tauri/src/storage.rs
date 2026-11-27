@@ -9,6 +9,8 @@ use chrono::Utc;
 use rand::RngCore;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::time::Duration;
 use uuid::Uuid;
 
 pub fn app_data_dir() -> PathBuf {
@@ -240,14 +242,103 @@ pub fn load_snapshot() -> AppDataSnapshot {
     }
 }
 
-pub fn save_snapshot(snapshot: &AppDataSnapshot) -> Result<(), String> {
-    let path = data_file_path();
-    let json = serde_json::to_string_pretty(snapshot)
+fn write_snapshot_to_path(path: &Path, snapshot: &AppDataSnapshot) -> Result<(), String> {
+    let json = serde_json::to_vec(snapshot)
         .map_err(|e| format!("データのシリアライズに失敗: {e}"))?;
     let tmp_path = path.with_extension("json.tmp");
     fs::write(&tmp_path, json).map_err(|e| format!("一時ファイルの書き込みに失敗: {e}"))?;
-    fs::rename(&tmp_path, &path).map_err(|e| format!("データファイルの更新に失敗: {e}"))?;
+    fs::rename(&tmp_path, path).map_err(|e| format!("データファイルの更新に失敗: {e}"))?;
     Ok(())
+}
+
+struct PendingSave {
+    target: Option<(PathBuf, AppDataSnapshot)>,
+    seq: u64,
+}
+
+struct SnapshotWriter {
+    state: Mutex<PendingSave>,
+    cv: Condvar,
+    flushed_cv: Condvar,
+}
+
+static SNAPSHOT_WRITER: OnceLock<SnapshotWriter> = OnceLock::new();
+
+fn snapshot_writer() -> &'static SnapshotWriter {
+    SNAPSHOT_WRITER.get_or_init(|| {
+        let writer = SnapshotWriter {
+            state: Mutex::new(PendingSave {
+                target: None,
+                seq: 0,
+            }),
+            cv: Condvar::new(),
+            flushed_cv: Condvar::new(),
+        };
+        let _ = std::thread::Builder::new()
+            .name("notelet-storage-writer".to_string())
+            .spawn(|| {
+                let w = snapshot_writer();
+                loop {
+                    let (path, snap) = {
+                        let mut guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
+                        while guard.target.is_none() {
+                            guard = w.cv.wait(guard).unwrap_or_else(|e| e.into_inner());
+                        }
+                        let seq_seen = guard.seq;
+                        // 250ms デバウンスで連続更新を合流させ、呼び出し元のロック保持を最小化する
+                        let (g, _) = w
+                            .cv
+                            .wait_timeout_while(
+                                guard,
+                                Duration::from_millis(250),
+                                |st| st.seq == seq_seen,
+                            )
+                            .unwrap_or_else(|e| e.into_inner());
+                        guard = g;
+                        let Some((p, s)) = guard.target.take() else {
+                            w.flushed_cv.notify_all();
+                            continue;
+                        };
+                        (p, s)
+                    };
+                    if let Err(err) = write_snapshot_to_path(&path, &snap) {
+                        eprintln!("[notelet] async snapshot save failed: {err}");
+                    }
+                    let guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if guard.target.is_none() {
+                        w.flushed_cv.notify_all();
+                    }
+                }
+            });
+        writer
+    })
+}
+
+pub fn save_snapshot(snapshot: &AppDataSnapshot) -> Result<(), String> {
+    let path = data_file_path();
+    if cfg!(test) {
+        return write_snapshot_to_path(&path, snapshot);
+    }
+    let w = snapshot_writer();
+    let mut guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
+    guard.target = Some((path, snapshot.clone()));
+    guard.seq = guard.seq.wrapping_add(1);
+    w.cv.notify_all();
+    Ok(())
+}
+
+pub fn flush_snapshot_sync() {
+    if let Some(w) = SNAPSHOT_WRITER.get() {
+        let mut guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((path, snap)) = guard.target.take() {
+            drop(guard);
+            let _ = write_snapshot_to_path(&path, &snap);
+        } else {
+            let _ = w
+                .flushed_cv
+                .wait_timeout_while(guard, Duration::from_secs(2), |st| st.target.is_some());
+        }
+    }
 }
 
 pub fn append_audit(snapshot: &mut AppDataSnapshot, action: &str, detail: &str) {

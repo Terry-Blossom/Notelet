@@ -90,12 +90,19 @@ jobs:
           elif [ "${{ runner.os }}" = "Windows" ]; then
             cp "src-tauri/target/release/bundle/nsis/Notelet_${VERSION}_x64-setup.exe" \
                "release_assets/Notelet_${VERSION}_windows_x64-setup.exe"
-          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            cp "src-tauri/target/release/bundle/dmg/Notelet_${VERSION}_aarch64.dmg" \
-               "release_assets/Notelet_${VERSION}_macos_aarch64.dmg"
-          elif [ "${{ matrix.os }}" = "macos-26-intel" ]; then
-            cp "src-tauri/target/release/bundle/dmg/Notelet_${VERSION}_x64.dmg" \
-               "release_assets/Notelet_${VERSION}_macos_x64.dmg"
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            if ls src-tauri/target/release/bundle/dmg/*_aarch64.dmg >/dev/null 2>&1; then
+              cp src-tauri/target/release/bundle/dmg/*_aarch64.dmg \
+                 "release_assets/Notelet_${VERSION}_macos_aarch64.dmg"
+            fi
+            if ls src-tauri/target/release/bundle/dmg/*_x64.dmg >/dev/null 2>&1; then
+              cp src-tauri/target/release/bundle/dmg/*_x64.dmg \
+                 "release_assets/Notelet_${VERSION}_macos_x64.dmg"
+            fi
+          fi
+          if [ -z "$(ls -A release_assets)" ]; then
+            echo "Error: No release assets prepared for ${{ matrix.os }}" >&2
+            exit 1
           fi
           ls -la release_assets
 
