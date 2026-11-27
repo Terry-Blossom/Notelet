@@ -63,8 +63,8 @@ export const ConfirmDialogHost: React.FC = () => {
       <div
         className="surface-card"
         style={{
-          width: '380px',
-          maxWidth: 'calc(100vw - 32px)',
+          width: 'min(380px, calc(100vw - 24px))',
+          maxWidth: 'calc(100vw - 24px)',
           padding: '20px',
           display: 'flex',
           flexDirection: 'column',

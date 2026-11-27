@@ -285,6 +285,10 @@ pub fn verify_file_sha256(path: &Path, expected: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_appimage_target_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 pub fn replace_appimage_file(
     downloaded_path: &Path,
     target_appimage_path: &Path,
@@ -294,11 +298,12 @@ pub fn replace_appimage_file(
         verify_file_sha256(downloaded_path, expected)?;
     }
 
-    let target_dir = target_appimage_path
+    let resolved_target = resolve_appimage_target_path(target_appimage_path);
+    let target_dir = resolved_target
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .ok_or_else(|| "AppImage の配置ディレクトリを特定できませんでした。".to_string())?;
-    let file_name = target_appimage_path
+    let file_name = resolved_target
         .file_name()
         .and_then(|n| n.to_str())
         .filter(|n| !n.is_empty())
@@ -337,7 +342,7 @@ pub fn replace_appimage_file(
         }
     }
 
-    if let Err(e) = fs::rename(&staged_path, target_appimage_path) {
+    if let Err(e) = fs::rename(&staged_path, &resolved_target) {
         let _ = fs::remove_file(&staged_path);
         return Err(format!(
             "{} に書き込めません。リリースページから手動で更新してください ({e})",
@@ -481,6 +486,9 @@ pub async fn download_and_launch_update(
         .build()
         .map_err(|e| format!("HTTPクライアント初期化失敗: {e}"))?;
     let mut req = client.get(parsed_url);
+    if host == "api.github.com" {
+        req = req.header("Accept", "application/octet-stream");
+    }
     if let Ok(Some(token)) = secrets::get_secret("github_update_token") {
         if !token.trim().is_empty() {
             req = req
@@ -548,7 +556,11 @@ pub async fn download_and_launch_update(
                 .spawn()
                 .map_err(|e| format!("インストーラ起動失敗: {e}"))?;
         }
-        app.exit(0);
+        let app_for_exit = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            app_for_exit.exit(0);
+        });
         Ok("サイレント上書き更新を開始しました。完了後に自動で再起動します。".to_string())
     } else if cfg!(target_os = "macos") {
         Command::new("open")
@@ -566,14 +578,19 @@ pub async fn download_and_launch_update(
         let _ = fs::remove_file(&dest);
 
         crate::whisper_server::stop_server_sync();
-        Command::new(&target_appimage)
+        let launch_target = resolve_appimage_target_path(&target_appimage);
+        Command::new(&launch_target)
             .env_remove("APPDIR")
             .env_remove("APPIMAGE")
             .env_remove("OWD")
             .env_remove("ARGV0")
             .spawn()
             .map_err(|e| format!("新しい AppImage の起動に失敗しました: {e}"))?;
-        app.exit(0);
+        let app_for_exit = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            app_for_exit.exit(0);
+        });
         Ok("更新しました。再起動します。".to_string())
     } else if cfg!(target_os = "android") {
         if let Some(expected) = expected_sha256.filter(|s| !s.trim().is_empty()) {

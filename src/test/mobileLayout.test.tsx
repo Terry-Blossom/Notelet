@@ -50,4 +50,15 @@ describe('mobile portrait layout', () => {
     expect(screen.getByRole('button', { name: 'アップロード' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'その他' })).not.toBeInTheDocument();
   });
+
+  it('applies mobile shell class and renders chat and settings in portrait', () => {
+    setMobileViewport(true);
+    const { container } = render(<App />);
+    expect(container.querySelector('.app-shell.mobile')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'チャット' }));
+    expect(container.querySelector('.chat-split')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'その他' }));
+    fireEvent.click(screen.getByRole('button', { name: '設定' }));
+    expect(container.querySelector('.settings-modal-panel')).toBeInTheDocument();
+  });
 });

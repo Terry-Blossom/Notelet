@@ -1,7 +1,16 @@
 use crate::models::{AppSettings, CalendarEventMock, IntegrationAdapterInfo, IssueCreateResult, Note, PlanTier};
+use crate::net_security;
 use crate::secrets;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde_json::json;
+use std::time::Duration;
+
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 
 pub fn list_adapters(settings: &AppSettings) -> Vec<IntegrationAdapterInfo> {
     let calendar_ready = !settings.calendar_ics_url.trim().is_empty();
@@ -92,7 +101,7 @@ pub async fn send_slack_share(note: &Note) -> Result<(), String> {
             text.push_str(&format!("\n• {}", a.text));
         }
     }
-    let client = reqwest::Client::new();
+    let client = http_client();
     let resp = client
         .post(url)
         .json(&json!({ "text": text }))
@@ -110,18 +119,13 @@ pub async fn send_generic_webhook(note: &Note, url: &str) -> Result<(), String> 
     if trimmed.is_empty() {
         return Err("Webhook URL が設定されていません。".to_string());
     }
-    let parsed = reqwest::Url::parse(trimmed)
-        .map_err(|_| "有効な http:// または https:// の Webhook URL を指定してください。".to_string())?;
-    if parsed.scheme() != "https" && parsed.scheme() != "http" {
-        return Err("Webhook URL は http:// または https:// のみ対応しています。".to_string());
+    let resp = net_security::post_json_validated(trimmed, note).await?;
+    if resp.status().is_redirection() {
+        return Err(format!(
+            "Webhook エラー: リダイレクト ({}) はセキュリティ上許可されていません。",
+            resp.status()
+        ));
     }
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(parsed)
-        .json(note)
-        .send()
-        .await
-        .map_err(|e| format!("Webhook 送信エラー: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("Webhook エラー: HTTP {}", resp.status()));
     }
@@ -263,18 +267,10 @@ pub async fn fetch_ics_calendar_events(ics_url: &str) -> Result<Vec<CalendarEven
     if url.is_empty() {
         return Ok(Vec::new());
     }
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(url)
-        .send()
+    let bytes = net_security::download_remote_bytes(url, 3)
         .await
         .map_err(|e| format!("カレンダー ICS 取得エラー: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("カレンダー ICS エラー: HTTP {}", resp.status()));
-    }
-    let raw = resp
-        .text()
-        .await
+    let raw = String::from_utf8(bytes)
         .map_err(|e| format!("カレンダー ICS 読み取りエラー: {e}"))?;
 
     // Unfold RFC 5545 folded lines

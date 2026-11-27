@@ -51,7 +51,7 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
         </div>
 
         {dictionary.length > 0 && (
-          <div style={{ position: 'relative', width: '240px' }}>
+          <div style={{ position: 'relative', width: 'min(240px, 100%)', maxWidth: '100%' }}>
             <Search
               size={14}
               strokeWidth={1.5}
