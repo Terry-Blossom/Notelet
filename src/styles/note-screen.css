@@ -505,6 +505,22 @@
   contain-intrinsic-size: auto 96px;
 }
 
+.note-transcript-more {
+  align-self: center;
+  margin: 8px auto;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.note-transcript-more:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .note-turn-meta {
   display: flex;
   align-items: center;
