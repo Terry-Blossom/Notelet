@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Plus, Search, Trash2 } from 'lucide-react';
 import { DictionaryEntry } from '../types';
 import { confirmDeleteDialog } from './ConfirmDialog';
+import { t } from '../i18n';
 
 interface DictionaryViewProps {
   dictionary: DictionaryEntry[];
@@ -44,9 +45,9 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
         <div>
-          <h2 className="section-title">カスタム辞書 ({dictionary.length})</h2>
+          <h2 className="section-title">{t('カスタム辞書 ({0})', [dictionary.length])}</h2>
           <p className="text-muted" style={{ margin: '4px 0 0' }}>
-            固有名詞や専門用語を登録すると、文字起こし時の認識精度が向上します。
+            {t('固有名詞や専門用語を登録すると、文字起こし時の認識精度が向上します。')}
           </p>
         </div>
 
@@ -67,7 +68,7 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
               type="text"
               className="input"
               style={{ height: '32px', paddingLeft: '32px', borderRadius: '999px', backgroundColor: 'var(--bg-subtle)' }}
-              placeholder="登録語を検索..."
+              placeholder={t('登録語を検索...')}
               value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)}
             />
@@ -80,7 +81,7 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
           type="text"
           className="input"
           style={{ flex: '2 1 220px' }}
-          placeholder="表記（例: Notelet / 製品名 / 人名）"
+          placeholder={t('表記（例: Notelet / 製品名 / 人名）')}
           value={term}
           onChange={(e) => setTerm(e.target.value)}
         />
@@ -88,20 +89,20 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
           type="text"
           className="input"
           style={{ flex: '2 1 220px' }}
-          placeholder="読み・補足（任意）"
+          placeholder={t('読み・補足（任意）')}
           value={reading}
           onChange={(e) => setReading(e.target.value)}
         />
         <button type="submit" className="btn btn-primary" disabled={!term.trim()}>
           <Plus size={14} strokeWidth={1.5} />
-          追加
+          {t('追加')}
         </button>
       </form>
 
       {filtered.length === 0 ? (
         <div style={{ padding: '24px 0', borderTop: '1px solid var(--border-subtle)' }}>
           <p className="text-muted" style={{ margin: '0px' }}>
-            登録された単語はありません。
+            {t('登録された単語はありません。')}
           </p>
         </div>
       ) : (
@@ -114,13 +115,13 @@ export const DictionaryView: React.FC<DictionaryViewProps> = ({
               </div>
               <button
                 type="button"
-                aria-label={`${d.term}を削除`}
+                aria-label={t('{0}を削除', [d.term])}
                 className="btn btn-ghost"
                 style={{ width: '28px', height: '28px', padding: 0 }}
                 onClick={async () => {
                   const ok = await confirmDeleteDialog(
-                    `「${d.term}」を辞書から削除しますか？`,
-                    '削除した登録語は元に戻せません。'
+                    t('「{0}」を辞書から削除しますか？', [d.term]),
+                    t('削除した登録語は元に戻せません。')
                   );
                   if (!ok) return;
                   await onDeleteEntry(d.id);

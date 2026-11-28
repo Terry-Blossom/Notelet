@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { AppDataSnapshot, DictionaryEntry, Folder, Note, Recipe } from '../types';
 import { formatMs } from './format';
 import { createZipBlob, ZipTextEntry } from './zip';
@@ -35,7 +36,7 @@ export function sanitizeFileName(name: string): string {
 }
 
 export function noteToObsidianMarkdown(note: Note, folderName?: string): string {
-  const title = note.title.trim() || '無題のノート';
+  const title = note.title.trim() || t('無題のノート');
   const lines: string[] = [
     '---',
     `id: ${escapeYaml(note.id)}`,
@@ -62,17 +63,17 @@ export function noteToObsidianMarkdown(note: Note, folderName?: string): string 
   lines.push('---', '', `# ${title}`, '');
 
   if (note.summary.trim()) {
-    lines.push('## 要約', '', note.summary.trim(), '');
+    lines.push(`## ${t('要約')}`, '', note.summary.trim(), '');
   }
   if (note.decisions.length > 0) {
-    lines.push('## 決定事項', '');
+    lines.push(`## ${t('決定事項')}`, '');
     for (const d of note.decisions) {
       lines.push(`- ${d}`);
     }
     lines.push('');
   }
   if (note.action_items.length > 0) {
-    lines.push('## アクション項目', '');
+    lines.push(`## ${t('アクション項目')}`, '');
     for (const a of note.action_items) {
       lines.push(`- [${a.done ? 'x' : ' '}] ${a.text}${a.assignee ? ` (@${a.assignee})` : ''}`);
     }
@@ -80,12 +81,12 @@ export function noteToObsidianMarkdown(note: Note, folderName?: string): string 
   }
   const cleanMemo = note.manual_notes.replace(/<[^>]*>/g, '').trim();
   if (cleanMemo) {
-    lines.push('## メモ', '', cleanMemo, '');
+    lines.push(`## ${t('メモ')}`, '', cleanMemo, '');
   }
   if (note.segments.length > 0) {
-    lines.push('## 文字起こし', '');
+    lines.push(`## ${t('文字起こし')}`, '');
     for (const seg of note.segments) {
-      lines.push(`- [${formatMs(seg.start_ms)}] **${seg.speaker || '話者'}**: ${seg.text}`);
+      lines.push(`- [${formatMs(seg.start_ms)}] **${seg.speaker || t('話者')}**: ${seg.text}`);
     }
     lines.push('');
   }
@@ -134,16 +135,20 @@ export function mergeNoteletBackupJson(
   try {
     parsed = JSON.parse(jsonText.replace(/^\uFEFF/, ''));
   } catch (e) {
-    throw new Error(`JSON バックアップの解析に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(
+      t('JSON バックアップの解析に失敗しました: {0}', [
+        e instanceof Error ? e.message : String(e),
+      ])
+    );
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('有効な Notelet バックアップ JSON オブジェクトではありません。');
+    throw new Error(t('有効な Notelet バックアップ JSON オブジェクトではありません。'));
   }
 
   const obj = parsed as Partial<AppDataSnapshot>;
   if (!Array.isArray(obj.notes)) {
-    throw new Error('バックアップ JSON に notes 配列が含まれていません。');
+    throw new Error(t('バックアップ JSON に notes 配列が含まれていません。'));
   }
 
   const incomingNotes = obj.notes.filter((n): n is Note => Boolean(n && typeof n === 'object' && typeof n.id === 'string'));

@@ -34,6 +34,7 @@ import {
 } from '../lib/tauri';
 import { useTauriEvent } from '../lib/tauriEvents';
 import { isAndroidRuntime, useMobileLayout } from '../lib/platform';
+import { t } from '../i18n';
 
 declare const __APP_VERSION__: string | undefined;
 
@@ -204,7 +205,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (payload.session !== micTestSessionRef.current) return;
     if (payload.error) {
       setTestingMic(false);
-      flash(`マイクテスト失敗: ${payload.error}`);
+      flash(t('マイクテスト失敗: {0}', [payload.error]));
       return;
     }
     setMicTestResult({
@@ -237,7 +238,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       setAudioDevices(await apiListAudioDevices());
     } catch (e) {
-      flash(`マイク入力元の更新に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+      flash(t('マイク入力元の更新に失敗しました: {0}', [e instanceof Error ? e.message : String(e)]));
     } finally {
       setRefreshingAudioDevices(false);
     }
@@ -255,7 +256,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
     const val = (secretInputs[keyName] || '').trim();
     if (!val) {
-      flash('設定を保存しました');
+      flash(t('設定を保存しました'));
       return;
     }
     savingKeysRef.current[keyName] = true;
@@ -270,13 +271,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         keyName === 'google_stt_api_key';
       if (isCloudAsrKey && !settings.allow_cloud_asr) {
         await onSaveSettings({ ...settings, allow_cloud_asr: true });
-        flash('APIキーを保存し、クラウド音声認識を有効化しました');
+        flash(t('APIキーを保存し、クラウド音声認識を有効化しました'));
       } else {
-        flash('APIキーを暗号化して保存しました');
+        flash(t('APIキーを暗号化して保存しました'));
       }
     } catch (e) {
       setSecretInputs((prev) => ({ ...prev, [keyName]: val }));
-      flash(`APIキーの保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+      flash(t('APIキーの保存に失敗しました: {0}', [e instanceof Error ? e.message : String(e)]));
     } finally {
       savingKeysRef.current[keyName] = false;
     }
@@ -327,28 +328,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               />
               <strong style={{ fontWeight: 600 }}>{m.name}</strong>
               {m.id === 'whisper-large-v3-turbo-q5' && (
-                <span className="status-chip ok">高精度・推奨</span>
+                <span className="status-chip ok">{t('高精度・推奨')}</span>
               )}
               {(m.id === 'whisper-large-v3' || m.id === 'kotoba-whisper-v2') && (
-                <span className="status-chip accent">最高精度 (FP16)</span>
+                <span className="status-chip accent">{t('最高精度 (FP16)')}</span>
               )}
               {(m.id === 'whisper-large-v3-turbo' || m.id === 'whisper-large-v3-q5') && (
-                <span className="status-chip ok">上位モデル</span>
+                <span className="status-chip ok">{t('上位モデル')}</span>
               )}
               {m.id === 'whisper-small-q5' && (
-                <span className="status-chip">軽量・省メモリ</span>
+                <span className="status-chip">{t('軽量・省メモリ')}</span>
               )}
               {m.id === 'stepfun-stepaudio-3-asr-max' && (
-                <span className="status-chip ok">日本語対応・推奨</span>
+                <span className="status-chip ok">{t('日本語対応・推奨')}</span>
               )}
               {m.id === 'stepfun-stepaudio-2.5-asr' && (
-                <span className="status-chip">中英特化（日本語時は3-Maxへ自動切替）</span>
+                <span className="status-chip">{t('中英特化（日本語時は3-Maxへ自動切替）')}</span>
               )}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
               {m.languages.map((lang) => {
                 const label =
-                  lang === '多言語(自動判定)' ? '多言語対応・自動判定' : lang;
+                  lang === '多言語(自動判定)' ? t('多言語対応・自動判定') : lang;
                 return (
                   <span key={lang} className="status-chip" style={{ height: '20px', fontSize: '11px' }}>
                     {label}
@@ -358,11 +359,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               {!m.is_local && (
                 <>
                   <span className="status-chip" style={{ height: '20px', fontSize: '11px' }}>
-                    クラウドAPI
+                    {t('クラウドAPI')}
                   </span>
                   {m.supports_realtime && (
                     <span className="status-chip ok" style={{ height: '20px', fontSize: '11px' }}>
-                      リアルタイム対応
+                      {t('リアルタイム対応')}
                     </span>
                   )}
                 </>
@@ -383,7 +384,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <Download size={14} strokeWidth={1.5} />
                   {progress !== undefined && progress < 100
                     ? `${progress}%`
-                    : 'ダウンロード'}
+                    : t('ダウンロード')}
                 </button>
               )}
 
@@ -403,16 +404,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   })
                 }
               >
-                {selected ? '使用中' : '選択する'}
+                {selected ? t('使用中') : t('選択する')}
               </button>
             </div>
             {m.is_local && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <span className="status-chip mono-num" style={{ height: '20px', fontSize: '11px' }}>
-                  モデル容量 {m.size_mb}MB
+                  {t('モデル容量 {0}MB', [m.size_mb])}
                 </span>
                 <span className="status-chip mono-num" style={{ height: '20px', fontSize: '11px' }}>
-                  メモリ目安 {m.memory_mb}MB
+                  {t('メモリ目安 {0}MB', [m.memory_mb])}
                 </span>
               </div>
             )}
@@ -430,7 +431,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             }}
           >
             <span className={`status-chip ${cloudKeyMeta.saved ? 'ok' : 'warn'}`} style={{ flexShrink: 0 }}>
-              {cloudKeyMeta.saved ? 'キー保存済み' : 'キー未設定'}
+              {cloudKeyMeta.saved ? t('キー保存済み') : t('キー未設定')}
             </span>
             <input
               type="password"
@@ -438,8 +439,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               style={{ height: '32px' }}
               placeholder={
                 cloudKeyMeta.saved
-                  ? `${cloudKeyMeta.label}（更新する場合のみ入力）`
-                  : `${cloudKeyMeta.label} を入力`
+                  ? t('{0}（更新する場合のみ入力）', [cloudKeyMeta.label])
+                  : t('{0} を入力', [cloudKeyMeta.label])
               }
               value={secretInputs[cloudKeyMeta.key] || ''}
               onChange={(e) =>
@@ -464,7 +465,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onClick={() => saveKey(cloudKeyMeta.key)}
             >
               <Key size={13} strokeWidth={1.5} />
-              保存
+              {t('保存')}
             </button>
             {cloudKeyMeta.saved && isTauriRuntime() && (
               <button
@@ -487,7 +488,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   }
                 }}
               >
-                {testingProvider === m.provider ? '確認中...' : '接続テスト'}
+                {testingProvider === m.provider ? t('確認中...') : t('接続テスト')}
               </button>
             )}
           </div>
@@ -513,24 +514,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }[];
   }[] = [
     {
-      heading: 'AIモデル',
+      heading: t('AIモデル'),
       items: [
-        { id: 'asr', label: '音声認識 (ASR)', icon: Mic },
-        { id: 'llm', label: 'エージェント (LLM)', icon: Sparkles },
+        { id: 'asr', label: t('音声認識 (ASR)'), icon: Mic },
+        { id: 'llm', label: t('エージェント (LLM)'), icon: Sparkles },
       ],
     },
     {
-      heading: 'データ管理',
+      heading: t('データ管理'),
       items: [
-        { id: 'storage', label: 'ストレージ', icon: HardDrive },
-        { id: 'import', label: 'インポート', icon: Download },
+        { id: 'storage', label: t('ストレージ'), icon: HardDrive },
+        { id: 'import', label: t('インポート'), icon: Download },
       ],
     },
     {
-      heading: '一般',
+      heading: t('一般'),
       items: [
-        { id: 'shortcuts', label: android ? '外観・通知' : 'ショートカット・再生', icon: Keyboard },
-        { id: 'update', label: 'アップデート', icon: RefreshCw },
+        { id: 'shortcuts', label: android ? t('外観・通知') : t('ショートカット・再生'), icon: Keyboard },
+        { id: 'update', label: t('アップデート'), icon: RefreshCw },
       ],
     },
   ];
@@ -541,7 +542,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       : settings.llm_provider === 'openai_compatible'
       ? {
           key: 'llm_openai_compatible_api_key',
-          label: 'OpenAI互換 API Key',
+          label: t('OpenAI互換 API Key'),
           saved: secretStatus?.llm_openai_compatible_api_key || secretStatus?.llm_openai_api_key,
         }
       : settings.llm_provider === 'anthropic'
@@ -553,7 +554,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   return (
     <div className="settings-layout">
       {/* Left Sidebar Navigation */}
-      <aside className="settings-sidebar" aria-label="設定メニュー">
+      <aside className="settings-sidebar" aria-label={t('設定メニュー')}>
         {navGroups.map((group) => (
           <div key={group.heading} style={{ display: 'flex', flexDirection: mobile ? 'row' : 'column', flexShrink: mobile ? 0 : undefined, gap: '2px', marginBottom: mobile ? 0 : '12px' }}>
             <div className="settings-sidebar-title">{group.heading}</div>
@@ -589,29 +590,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {tab === 'asr' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
-              <h2 className="section-title">音声認識 (ASR) モデル</h2>
+              <h2 className="section-title">{t('音声認識 (ASR) モデル')}</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                エンジン別にカテゴリ分けされています。用途に合わせて選択してください。
+                {t('エンジン別にカテゴリ分けされています。用途に合わせて選択してください。')}
               </p>
             </div>
 
             {!settings.active_asr_model_id && (
               <div role="status" className="surface-subtle" style={{ padding: '12px 16px' }}>
-                ASRモデルが未選択です。利用するモデルを選択してください。
+                {t('ASRモデルが未選択です。利用するモデルを選択してください。')}
               </div>
             )}
 
             <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '12px 16px' }}>
-              <span className="text-muted" style={{ fontWeight: 500 }}>認識言語（全モデル共通）</span>
+              <span className="text-muted" style={{ fontWeight: 500 }}>{t('認識言語（全モデル共通）')}</span>
               <select
                 className="select"
                 style={{ width: '160px', height: '34px', padding: '0 12px', lineHeight: '1.2' }}
                 value={settings.language}
                 onChange={(e) => update({ language: e.target.value })}
               >
-                <option value="ja">日本語 (ja)</option>
-                <option value="en">英語 (en)</option>
-                <option value="auto">自動判定</option>
+                <option value="ja">{t('日本語 (ja)')}</option>
+                <option value="en">{t('英語 (en)')}</option>
+                <option value="auto">{t('自動判定')}</option>
               </select>
             </div>
 
@@ -623,16 +624,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onChange={(e) => update({ enable_local_diarization: e.target.checked })}
               />
               <label htmlFor="enable-local-diarization" style={{ cursor: 'pointer', fontSize: '12.5px' }}>
-                ローカル文字起こしで簡易話者分離を行う（無音の間隔と疑問文から話者A/Bを推定）
+                {t('ローカル文字起こしで簡易話者分離を行う（無音の間隔と疑問文から話者A/Bを推定）')}
               </label>
             </div>
 
             <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  <strong style={{ fontSize: '12.5px' }}>マイク入力テスト & 音量バランス</strong>
+                  <strong style={{ fontSize: '12.5px' }}>{t('マイク入力テスト & 音量バランス')}</strong>
                   <div className="text-muted" style={{ fontSize: '11.5px' }}>
-                    録音前にマイクの反応と、マイク／PC音声（両方録音時）の音量倍率を確認・調整できます
+                    {t('録音前にマイクの反応と、マイク／PC音声（両方録音時）の音量倍率を確認・調整できます')}
                   </div>
                 </div>
                 {isTauriRuntime() && (
@@ -654,34 +655,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         micTestSessionRef.current = session;
                       } catch (e) {
                         setTestingMic(false);
-                        flash(`マイクテスト失敗: ${e instanceof Error ? e.message : String(e)}`);
+                        flash(t('マイクテスト失敗: {0}', [e instanceof Error ? e.message : String(e)]));
                       }
                     }}
                   >
                     {testingMic ? (
                       <>
                         <Square size={12} strokeWidth={2} />
-                        テストを停止
+                        {t('テストを停止')}
                       </>
                     ) : (
                       <>
                         <Mic size={12} strokeWidth={2} />
-                        マイクをテスト
+                        {t('マイクをテスト')}
                       </>
                     )}
                   </button>
                 )}
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                <span>マイク入力元</span>
+                <span>{t('マイク入力元')}</span>
                 <select
-                  aria-label="マイク入力元"
+                  aria-label={t('マイク入力元')}
                   className="select"
                   style={{ flex: 1, minWidth: '180px', height: '32px', padding: '0 8px' }}
                   value={settings.preferred_mic_device_id ?? ''}
                   onChange={(e) => update({ preferred_mic_device_id: e.target.value || null })}
                 >
-                  <option value="">既定のマイク (自動)</option>
+                  <option value="">{t('既定のマイク (自動)')}</option>
                   {audioDevices
                     .filter((device) => device.kind === 'input')
                     .map((device) => (
@@ -694,8 +695,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    aria-label="マイク入力元を再読み込み"
-                    title="マイク入力元を再読み込み"
+                    aria-label={t('マイク入力元を再読み込み')}
+                    title={t('マイク入力元を再読み込み')}
                     style={{ height: '28px', padding: '0 8px' }}
                     disabled={refreshingAudioDevices}
                     onClick={() => void refreshAudioDevices()}
@@ -719,18 +720,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                   {testingMic ? (
                     <span className={`status-chip ${micTestResult.rms < 0.002 ? 'warn' : 'ok'}`} style={{ flexShrink: 0 }}>
-                      テスト中 {(micTestResult.elapsed_ms / 1000).toFixed(1)}s
+                      {t('テスト中 {0}s', [(micTestResult.elapsed_ms / 1000).toFixed(1)])}
                     </span>
                   ) : (
                     <span className={`status-chip ${micTestResult.rms < 0.002 ? 'warn' : 'ok'}`} style={{ flexShrink: 0 }}>
-                      {micTestResult.rms < 0.002 ? '入力なし/極小' : '正常に検出'}
+                      {micTestResult.rms < 0.002 ? t('入力なし/極小') : t('正常に検出')}
                     </span>
                   )}
                 </div>
               )}
               <div style={{ display: 'grid', gridTemplateColumns: mobile || android ? '1fr' : '1fr 1fr', gap: '12px', fontSize: '12px' }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span>マイク音量倍率: {(settings.mic_gain ?? 1.0).toFixed(1)}x</span>
+                  <span>{t('マイク音量倍率: {0}x', [(settings.mic_gain ?? 1.0).toFixed(1)])}</span>
                   <input
                     type="range"
                     min="0.2"
@@ -742,7 +743,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </label>
                 {!android && (
                   <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span>システム音声倍率: {(settings.system_gain ?? 1.0).toFixed(1)}x</span>
+                    <span>{t('システム音声倍率: {0}x', [(settings.system_gain ?? 1.0).toFixed(1)])}</span>
                     <input
                       type="range"
                       min="0.2"
@@ -757,7 +758,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
 
             {/* Category Tabs */}
-            <div className="category-tabs" role="tablist" aria-label="音声認識エンジンカテゴリ">
+            <div className="category-tabs" role="tablist" aria-label={t('音声認識エンジンカテゴリ')}>
               {!android && (
                 <>
                   <button
@@ -792,7 +793,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => setAsrCategory('cloud')}
               >
                 <Cloud size={14} strokeWidth={1.5} />
-                クラウド API ({cloudModels.length})
+                {t('クラウド API ({0})', [cloudModels.length])}
               </button>
             </div>
 
@@ -801,9 +802,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <strong style={{ fontSize: '12px' }}>whisper.cpp 実行エンジン</strong>
+                    <strong style={{ fontSize: '12px' }}>{t('whisper.cpp 実行エンジン')}</strong>
                     <span className={`status-chip ${settings.whisper_cli_path ? 'ok' : ''}`}>
-                      {settings.whisper_cli_path ? '導入済み' : '未導入'}
+                      {settings.whisper_cli_path ? t('導入済み') : t('未導入')}
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -820,10 +821,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         <Download size={13} strokeWidth={1.5} />
                       )}
                       {downloadProgress['runtime:whisper'] !== undefined
-                        ? `導入中 (${downloadProgress['runtime:whisper']}%)`
+                        ? t('導入中 ({0}%)', [downloadProgress['runtime:whisper']])
                         : settings.whisper_cli_path
-                        ? 'GPU/OpenBLAS版へ更新・再導入'
-                        : 'ワンクリック導入'}
+                        ? t('GPU/OpenBLAS版へ更新・再導入')
+                        : t('ワンクリック導入')}
                     </button>
                   </div>
                 </div>
@@ -835,11 +836,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       checked={settings.enable_gpu_asr ?? true}
                       onChange={(e) => update({ enable_gpu_asr: e.target.checked })}
                     />
-                    <span>GPU アクセラレータを有効にする（CUDA / Metal・エラー時は自動でCPUへフォールバック）</span>
+                    <span>{t('GPU アクセラレータを有効にする（CUDA / Metal・エラー時は自動でCPUへフォールバック）')}</span>
                   </label>
                   {gpuCaps && (
                     <span className={`status-chip ${gpuCaps.has_cuda || gpuCaps.has_metal ? 'ok' : ''}`} style={{ fontSize: '11.5px' }}>
-                      検出: {gpuCaps.gpu_name}
+                      {t('検出: {0}', [gpuCaps.gpu_name])}
                     </span>
                   )}
                 </div>
@@ -849,12 +850,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
 
                 <details style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  <summary style={{ cursor: 'pointer' }}>実行バイナリのパスを手動で指定する</summary>
+                  <summary style={{ cursor: 'pointer' }}>{t('実行バイナリのパスを手動で指定する')}</summary>
                   <div style={{ marginTop: '8px' }}>
                     <input
                       type="text"
                       className="input mono-num"
-                      placeholder="例: C:\tools\whisper-cli.exe"
+                      placeholder={t('例: {0}', ['C:\\tools\\whisper-cli.exe'])}
                       value={settings.whisper_cli_path}
                       onChange={(e) => update({ whisper_cli_path: e.target.value })}
                     />
@@ -868,9 +869,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <strong style={{ fontSize: '12px' }}>sherpa-onnx 実行エンジン</strong>
+                    <strong style={{ fontSize: '12px' }}>{t('sherpa-onnx 実行エンジン')}</strong>
                     <span className={`status-chip ${settings.parakeet_cli_path ? 'ok' : ''}`}>
-                      {settings.parakeet_cli_path ? '導入済み' : '未導入'}
+                      {settings.parakeet_cli_path ? t('導入済み') : t('未導入')}
                     </span>
                   </div>
                   <button
@@ -886,10 +887,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <Download size={13} strokeWidth={1.5} />
                     )}
                     {settings.parakeet_cli_path
-                      ? '導入済み'
+                      ? t('導入済み')
                       : downloadProgress['runtime:parakeet'] !== undefined
-                      ? `導入中 (${downloadProgress['runtime:parakeet']}%)`
-                      : 'ワンクリック導入'}
+                      ? t('導入中 ({0}%)', [downloadProgress['runtime:parakeet']])
+                      : t('ワンクリック導入')}
                   </button>
                 </div>
 
@@ -898,12 +899,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
 
                 <details style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  <summary style={{ cursor: 'pointer' }}>実行バイナリのパスを手動で指定する</summary>
+                  <summary style={{ cursor: 'pointer' }}>{t('実行バイナリのパスを手動で指定する')}</summary>
                   <div style={{ marginTop: '8px' }}>
                     <input
                       type="text"
                       className="input mono-num"
-                      placeholder="例: C:\tools\sherpa-onnx-offline.exe"
+                      placeholder={t('例: {0}', ['C:\\tools\\sherpa-onnx-offline.exe'])}
                       value={settings.parakeet_cli_path}
                       onChange={(e) => update({ parakeet_cli_path: e.target.value })}
                     />
@@ -917,11 +918,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                   <div>
-                    <strong style={{ fontSize: '12px' }}>実行エンジン（sherpa-onnx-offline）</strong>
+                    <strong style={{ fontSize: '12px' }}>{t('実行エンジン（sherpa-onnx-offline）')}</strong>
                     <div className="text-muted">
                       {settings.parakeet_cli_path
-                        ? `設定済み: ${settings.parakeet_cli_path}`
-                        : 'Qwen3-ASR は Parakeet と共通の sherpa-onnx-offline 実行エンジンが必要です'}
+                        ? t('設定済み: {0}', [settings.parakeet_cli_path])
+                        : t('Qwen3-ASR は Parakeet と共通の sherpa-onnx-offline 実行エンジンが必要です')}
                     </div>
                   </div>
                   <button
@@ -939,10 +940,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <Download size={13} strokeWidth={1.5} />
                     )}
                     {settings.parakeet_cli_path
-                      ? '導入済み'
+                      ? t('導入済み')
                       : downloadProgress['runtime:parakeet'] !== undefined
-                      ? `導入中 (${downloadProgress['runtime:parakeet']}%)`
-                      : 'ワンクリック導入'}
+                      ? t('導入中 ({0}%)', [downloadProgress['runtime:parakeet']])
+                      : t('ワンクリック導入')}
                   </button>
                 </div>
 
@@ -951,12 +952,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
 
                 <details style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  <summary style={{ cursor: 'pointer' }}>実行バイナリのパスを手動で指定する</summary>
+                  <summary style={{ cursor: 'pointer' }}>{t('実行バイナリのパスを手動で指定する')}</summary>
                   <div style={{ marginTop: '8px' }}>
                     <input
                       type="text"
                       className="input mono-num"
-                      placeholder="例: C:\tools\sherpa-onnx-offline.exe"
+                      placeholder={t('例: {0}', ['C:\\tools\\sherpa-onnx-offline.exe'])}
                       value={settings.parakeet_cli_path}
                       onChange={(e) => update({ parakeet_cli_path: e.target.value })}
                     />
@@ -978,16 +979,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       lineHeight: 1.5,
                     }}
                   >
-                    <strong>クラウド音声認識の使い方（3ステップ）</strong>
+                    <strong>{t('クラウド音声認識の使い方（3ステップ）')}</strong>
                     <div className="text-muted" style={{ marginTop: '2px' }}>
-                      ① 下のスイッチを ON（または下のAPIキーを保存すると自動ON） → ② 使いたいサービスのAPIキーを保存 → ③「選択する」をクリック
+                      {t('① 下のスイッチを ON（または下のAPIキーを保存すると自動ON） → ② 使いたいサービスのAPIキーを保存 → ③「選択する」をクリック')}
                     </div>
                   </div>
                 )}
                 <label className="surface-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
                   <div>
-                    <strong style={{ fontSize: '12px' }}>クラウド音声認識を有効にする</strong>
-                    <div className="text-muted">有効時のみ、選択したクラウドAPIへ音声を送信します（録音中は約3秒ごとにリアルタイム文字起こし、停止時に全体で最終確定します）</div>
+                    <strong style={{ fontSize: '12px' }}>{t('クラウド音声認識を有効にする')}</strong>
+                    <div className="text-muted">{t('有効時のみ、選択したクラウドAPIへ音声を送信します（録音中は約3秒ごとにリアルタイム文字起こし、停止時に全体で最終確定します）')}</div>
                   </div>
                   <input
                     type="checkbox"
@@ -1008,21 +1009,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {tab === 'llm' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div>
-              <h2 className="section-title">エージェント (LLM) 設定</h2>
+              <h2 className="section-title">{t('エージェント (LLM) 設定')}</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                要約・チャット検索・ノート操作エージェントで使用するプロバイダーを選択してください（音声ファイルは送信されません）。
+                {t('要約・チャット検索・ノート操作エージェントで使用するプロバイダーを選択してください（音声ファイルは送信されません）。')}
               </p>
             </div>
 
-            <div className="category-tabs" role="tablist" aria-label="LLMプロバイダー選択">
+            <div className="category-tabs" role="tablist" aria-label={t('LLMプロバイダー選択')}>
               {(
                 [
-                  { id: 'openai_compatible', label: 'OpenAI互換 (OpenRouter等)' },
+                  { id: 'openai_compatible', label: t('OpenAI互換 (OpenRouter等)') },
                   { id: 'openai', label: 'OpenAI' },
                   { id: 'gemini', label: 'Google Gemini' },
                   { id: 'anthropic', label: 'Anthropic' },
-                  { id: 'ollama', label: 'ローカル Ollama' },
-                  { id: 'none', label: 'オフ' },
+                  { id: 'ollama', label: t('ローカル Ollama') },
+                  { id: 'none', label: t('オフ') },
                 ] as const
               ).map((p) => (
                 <button
@@ -1058,7 +1059,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {settings.llm_provider === 'none' ? (
               <div className="surface-subtle">
                 <p className="text-secondary" style={{ margin: '0px' }}>
-                  AI機能はオフになっています。チャット画面ではノート内のキーワード検索結果が表示されます。
+                  {t('AI機能はオフになっています。チャット画面ではノート内のキーワード検索結果が表示されます。')}
                 </p>
               </div>
             ) : (
@@ -1066,7 +1067,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 {settings.llm_provider === 'openai_compatible' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                      <label className="text-muted">ベース URL</label>
+                      <label className="text-muted">{t('ベース URL')}</label>
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                         <button
                           type="button"
@@ -1087,7 +1088,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           className="chip-filter"
                           onClick={() => update({ llm_endpoint: 'http://localhost:1234/v1' })}
                         >
-                          LM Studio (ローカル)
+                          {t('LM Studio (ローカル)')}
                         </button>
                       </div>
                     </div>
@@ -1103,7 +1104,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
                 {settings.llm_provider === 'ollama' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label className="text-muted">Ollama エンドポイント URL</label>
+                    <label className="text-muted">{t('Ollama エンドポイント URL')}</label>
                     <input
                       type="url"
                       className="input"
@@ -1116,7 +1117,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                    <label className="text-muted">モデル名</label>
+                    <label className="text-muted">{t('モデル名')}</label>
                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                       {settings.llm_provider === 'openai' &&
                         ['gpt-4o-mini', 'gpt-4o'].map((preset) => (
@@ -1151,8 +1152,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onChange={(e) => update({ llm_model: e.target.value })}
                     placeholder={
                       settings.llm_provider === 'openai_compatible'
-                        ? '例: openai/gpt-4o-mini / google/gemini-2.5-flash'
-                        : 'モデル名を入力'
+                        ? t('例: openai/gpt-4o-mini / google/gemini-2.5-flash')
+                        : t('モデル名を入力')
                     }
                   />
                 </div>
@@ -1162,7 +1163,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <label className="text-muted">{activeLlmSecretMeta.label}</label>
                       <span className={`status-chip ${activeLlmSecretMeta.saved ? 'ok' : 'warn'}`}>
-                        {activeLlmSecretMeta.saved ? '保存済み' : '未設定'}
+                        {activeLlmSecretMeta.saved ? t('保存済み') : t('未設定')}
                       </span>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -1171,8 +1172,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         className="input"
                         placeholder={
                           activeLlmSecretMeta.saved
-                            ? '保存済み（更新する場合のみ新しいキーを入力）'
-                            : 'APIキーを入力（入力後に保存を押してください）'
+                            ? t('保存済み（更新する場合のみ新しいキーを入力）')
+                            : t('APIキーを入力（入力後に保存を押してください）')
                         }
                         value={secretInputs[activeLlmSecretMeta.key] || ''}
                         onChange={(e) =>
@@ -1193,7 +1194,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         onClick={() => saveKey(activeLlmSecretMeta.key)}
                       >
                         <Key size={14} strokeWidth={1.5} />
-                        保存
+                        {t('保存')}
                       </button>
                       {isTauriRuntime() && (
                         <button
@@ -1215,7 +1216,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             }
                           }}
                         >
-                          {testingProvider === 'llm' ? '確認中...' : '接続テスト'}
+                          {testingProvider === 'llm' ? t('確認中...') : t('接続テスト')}
                         </button>
                       )}
                     </div>
@@ -1235,16 +1236,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <label className="text-muted" style={{ fontWeight: 600 }}>
-                独自ルール・カスタムプロンプト（事前設定可）
+                {t('独自ルール・カスタムプロンプト（事前設定可）')}
               </label>
               <p className="text-muted" style={{ margin: 0, fontSize: '12px' }}>
-                AIプロバイダー設定前でも事前にルールを保存できます。要約・チャット実行時に毎回適用されます。
+                {t('AIプロバイダー設定前でも事前にルールを保存できます。要約・チャット実行時に毎回適用されます。')}
               </p>
               <textarea
-                aria-label="独自ルール・カスタムプロンプト"
+                aria-label={t('独自ルール・カスタムプロンプト')}
                 className="textarea"
                 rows={3}
-                placeholder="例: 回答は常に結論から箇条書きで記述してください。専門用語には簡単な補足を添えてください。"
+                placeholder={t('例: 回答は常に結論から箇条書きで記述してください。専門用語には簡単な補足を添えてください。')}
                 value={settings.llm_custom_prompt || ''}
                 onChange={(e) => update({ llm_custom_prompt: e.target.value })}
               />
@@ -1265,9 +1266,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <div>
-                      <strong style={{ fontSize: '13px' }}>要約プリセットの作成・編集</strong>
+                      <strong style={{ fontSize: '13px' }}>{t('要約プリセットの作成・編集')}</strong>
                       <p className="text-muted" style={{ margin: '2px 0 0', fontSize: '12px' }}>
-                        ノートの要約生成時に選べるプリセットを自由に作成・編集できます。
+                        {t('ノートの要約生成時に選べるプリセットを自由に作成・編集できます。')}
                       </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -1278,14 +1279,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         onClick={() => {
                           const newPreset: SummaryPreset = {
                             id: `custom-${Date.now()}`,
-                            name: '新しいプリセット',
-                            prompt: 'summaryフィールドには「## 概要」「## 重要ポイント」「## ネクストアクション」の見出しを使って整理してください。',
+                            name: t('新しいプリセット'),
+                            prompt: t('summaryフィールドには「## 概要」「## 重要ポイント」「## ネクストアクション」の見出しを使って整理してください。'),
                           };
                           updatePresets([...presets, newPreset]);
                         }}
                       >
                         <Plus size={13} strokeWidth={1.75} />
-                        プリセットを追加
+                        {t('プリセットを追加')}
                       </button>
                       <button
                         type="button"
@@ -1293,7 +1294,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         style={{ height: '30px', fontSize: '12px' }}
                         onClick={() => updatePresets(DEFAULT_SUMMARY_PRESETS, 'standard')}
                       >
-                        デフォルトに戻す
+                        {t('デフォルトに戻す')}
                       </button>
                     </div>
                   </div>
@@ -1317,11 +1318,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <input
                               type="text"
-                              aria-label={`プリセット名 (${preset.name})`}
+                              aria-label={t('プリセット名 ({0})', [preset.name])}
                               className="input"
                               style={{ flex: 1, minWidth: '160px', height: '32px', fontSize: '13px' }}
                               value={preset.name}
-                              placeholder="プリセット名"
+                              placeholder={t('プリセット名')}
                               onChange={(e) => {
                                 const next = presets.map((p) =>
                                   p.id === preset.id ? { ...p, name: e.target.value } : p
@@ -1335,13 +1336,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                               style={{ height: '28px', fontSize: '12px' }}
                               onClick={() => update({ active_template_id: preset.id })}
                             >
-                              {isDefault ? '既定のプリセット' : '既定にする'}
+                              {isDefault ? t('既定のプリセット') : t('既定にする')}
                             </button>
                             {presets.length > 1 && (
                               <button
                                 type="button"
                                 className="btn btn-ghost"
-                                aria-label={`${preset.name}を削除`}
+                                aria-label={t('{0}を削除', [preset.name])}
                                 style={{ height: '28px', padding: '0 8px', color: 'var(--danger)' }}
                                 onClick={() => {
                                   const next = presets.filter((p) => p.id !== preset.id);
@@ -1354,12 +1355,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             )}
                           </div>
                           <textarea
-                            aria-label={`プリセット指示 (${preset.name})`}
+                            aria-label={t('プリセット指示 ({0})', [preset.name])}
                             className="textarea"
                             rows={2}
                             style={{ fontSize: '12.5px' }}
                             value={preset.prompt}
-                            placeholder="要約の構成やフォーマットの指示を入力..."
+                            placeholder={t('要約の構成やフォーマットの指示を入力...')}
                             onChange={(e) => {
                               const next = presets.map((p) =>
                                 p.id === preset.id ? { ...p, prompt: e.target.value } : p
@@ -1383,15 +1384,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {!android && (
               <>
                 <div>
-                  <h2 className="section-title">ショートカットキー</h2>
+                  <h2 className="section-title">{t('ショートカットキー')}</h2>
                   <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                    どのアプリを開いていても録音や音声入力を呼び出せます。
+                    {t('どのアプリを開いていても録音や音声入力を呼び出せます。')}
                   </p>
                 </div>
                 <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <div>
                     <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>
-                      録音開始 / 停止
+                      {t('録音開始 / 停止')}
                     </label>
                     <input
                       type="text"
@@ -1402,7 +1403,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                   <div>
                     <label className="text-muted" style={{ display: 'block', marginBottom: '8px' }}>
-                      音声入力 (Voice Typing)
+                      {t('音声入力 (Voice Typing)')}
                     </label>
                     <input
                       type="text"
@@ -1415,18 +1416,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </>
             )}
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <strong style={{ fontSize: '13px' }}>外観・通知・音声再生設定</strong>
+              <strong style={{ fontSize: '13px' }}>{t('外観・通知・音声再生設定')}</strong>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                <span>カラーテーマ</span>
+                <span>{t('カラーテーマ')}</span>
                 <select
                   className="select"
                   style={{ width: '180px', height: '32px' }}
                   value={settings.theme ?? 'light'}
                   onChange={(e) => update({ theme: e.target.value as 'light' | 'dark' | 'system' })}
                 >
-                  <option value="light">ライト</option>
-                  <option value="dark">ダーク</option>
-                  <option value="system">OS設定に合わせる</option>
+                  <option value="light">{t('ライト')}</option>
+                  <option value="dark">{t('ダーク')}</option>
+                  <option value="system">{t('OS設定に合わせる')}</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                <span>{t('表示言語')}</span>
+                <select
+                  className="select"
+                  style={{ width: '180px', height: '32px' }}
+                  value={settings.ui_language ?? 'en'}
+                  onChange={(e) => update({ ui_language: e.target.value as 'en' | 'ja' })}
+                >
+                  <option value="en">English</option>
+                  <option value="ja">{t('日本語')}</option>
                 </select>
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
@@ -1435,7 +1448,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   checked={Boolean(settings.calendar_reminder_enabled)}
                   onChange={(e) => update({ calendar_reminder_enabled: e.target.checked })}
                 />
-                <span>カレンダー予定の開始前に録音リマインダーを表示する</span>
+                <span>{t('カレンダー予定の開始前に録音リマインダーを表示する')}</span>
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input
@@ -1443,7 +1456,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   checked={Boolean(settings.silence_skip_enabled)}
                   onChange={(e) => update({ silence_skip_enabled: e.target.checked })}
                 />
-                <span>無音スキップ機能を有効にする（クラウド送信時の無音トリミング・再生時早送り）</span>
+                <span>{t('無音スキップ機能を有効にする（クラウド送信時の無音トリミング・再生時早送り）')}</span>
               </label>
             </div>
           </div>
@@ -1453,9 +1466,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {tab === 'storage' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div>
-              <h2 className="section-title">ストレージ管理</h2>
+              <h2 className="section-title">{t('ストレージ管理')}</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                録音ファイルの容量管理・軽量化やデータの暗号化・バックアップを管理します。
+                {t('録音ファイルの容量管理・軽量化やデータの暗号化・バックアップを管理します。')}
               </p>
             </div>
 
@@ -1463,7 +1476,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <HardDrive size={15} strokeWidth={1.5} />
-                  <strong style={{ fontSize: '13px' }}>ストレージ使用状況</strong>
+                  <strong style={{ fontSize: '13px' }}>{t('ストレージ使用状況')}</strong>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   {!android && (
@@ -1478,7 +1491,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       }}
                     >
                       <FolderOpen size={13} strokeWidth={1.5} />
-                      保存フォルダを開く
+                      {t('保存フォルダを開く')}
                     </button>
                   )}
                   <button
@@ -1488,7 +1501,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     disabled={compressingAudio}
                     onClick={async () => {
                       if (!isTauriRuntime()) {
-                        flash('録音音声を軽量化しました');
+                        flash(t('録音音声を軽量化しました'));
                         return;
                       }
                       setCompressingAudio(true);
@@ -1497,24 +1510,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         setStorageStats(res.stats);
                         flash(
                           res.compressed_count > 0
-                            ? `${res.compressed_count} 件の録音を軽量化しました（-${formatBytes(res.saved_bytes)}）`
-                            : 'すべての録音ファイルは既に最適化されています'
+                            ? t('{0} 件の録音を軽量化しました（-{1}）', [
+                                res.compressed_count,
+                                formatBytes(res.saved_bytes),
+                              ])
+                            : t('すべての録音ファイルは既に最適化されています')
                         );
                       } finally {
                         setCompressingAudio(false);
                       }
                     }}
                   >
-                    {compressingAudio ? '軽量化中...' : '録音音声を軽量化（容量圧縮）'}
+                    {compressingAudio ? t('軽量化中...') : t('録音音声を軽量化（容量圧縮）')}
                   </button>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                 <span className="status-chip mono-num">
-                  録音音声: {storageStats ? `${formatBytes(storageStats.audio_bytes)} (${storageStats.audio_count}件)` : '0 B (0件)'}
+                  {t('録音音声: {0} ({1}件)', [
+                    storageStats ? formatBytes(storageStats.audio_bytes) : '0 B',
+                    storageStats?.audio_count ?? 0,
+                  ])}
                 </span>
                 <span className="status-chip mono-num">
-                  ローカルモデル: {storageStats ? formatBytes(storageStats.models_bytes) : '0 B'}
+                  {t('ローカルモデル: {0}', [storageStats ? formatBytes(storageStats.models_bytes) : '0 B'])}
                 </span>
               </div>
             </div>
@@ -1522,9 +1541,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  <strong style={{ fontSize: '13px' }}>Notion オンラインビュワーモード</strong>
+                  <strong style={{ fontSize: '13px' }}>{t('Notion オンラインビュワーモード')}</strong>
                   <p className="text-muted" style={{ margin: '2px 0 0', fontSize: '12px' }}>
-                    Google Keep のように、同期済みノートの本体や録音音声をローカルから削除し、Notion 上のデータを直接閲覧します。
+                    {t('Google Keep のように、同期済みノートの本体や録音音声をローカルから削除し、Notion 上のデータを直接閲覧します。')}
                   </p>
                 </div>
                 <button
@@ -1533,9 +1552,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   style={{ height: '28px', fontSize: '12px' }}
                   onClick={async () => {
                     const ok = await confirmActionDialog(
-                      '同期済みノートのローカルデータを削除して「Notionのみ」にしますか？',
-                      'Notion 上のデータは保持され、Notelet からオンライン閲覧できます。',
-                      '整理する'
+                      t('同期済みノートのローカルデータを削除して「Notionのみ」にしますか？'),
+                      t('Notion 上のデータは保持され、Notelet からオンライン閲覧できます。'),
+                      t('整理する')
                     );
                     if (!ok) return;
                     if (isTauriRuntime()) {
@@ -1543,10 +1562,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       const stats = await apiGetStorageStats();
                       setStorageStats(stats);
                     }
-                    flash('同期済みノートを Notion オンラインのみに整理しました');
+                    flash(t('同期済みノートを Notion オンラインのみに整理しました'));
                   }}
                 >
-                  同期済みノートのローカルデータを整理
+                  {t('同期済みノートのローカルデータを整理')}
                 </button>
               </div>
               <label style={{ display: 'flex', alignItems: 'center', fontSize: '13px', gap: '8px', cursor: 'pointer' }}>
@@ -1557,7 +1576,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     update({ notion_viewer_mode: e.target.checked });
                   }}
                 />
-                <span>Notion 同期後にローカルの本文・音声を自動削除する</span>
+                <span>{t('Notion 同期後にローカルの本文・音声を自動削除する')}</span>
               </label>
             </div>
 
@@ -1568,7 +1587,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   checked={settings.encrypt_retained_audio}
                   onChange={(e) => update({ encrypt_retained_audio: e.target.checked })}
                 />
-                <span>保持する音声ファイルを AES-256-GCM で暗号化する</span>
+                <span>{t('保持する音声ファイルを AES-256-GCM で暗号化する')}</span>
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input
@@ -1576,24 +1595,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   checked={settings.delete_audio_after_transcribe}
                   onChange={(e) => update({ delete_audio_after_transcribe: e.target.checked })}
                 />
-                <span>文字起こし完了後に保持音声を削除する（テキストのみ保存）</span>
+                <span>{t('文字起こし完了後に保持音声を削除する（テキストのみ保存）')}</span>
               </label>
             </div>
 
             <div className="surface-card" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
               <button type="button" className="btn btn-secondary" onClick={onExportAll}>
-                全データをJSONエクスポート
+                {t('全データをJSONエクスポート')}
               </button>
 
               {onExportObsidianZip && (
                 <button type="button" className="btn btn-secondary" onClick={onExportObsidianZip}>
-                  Markdown / Obsidian 一括エクスポート (ZIP)
+                  {t('Markdown / Obsidian 一括エクスポート (ZIP)')}
                 </button>
               )}
 
               {onRestoreBackup && (
                 <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
-                  JSON バックアップから復元
+                  {t('JSON バックアップから復元')}
                   <input
                     type="file"
                     accept=".json,application/json"
@@ -1605,7 +1624,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       try {
                         const text = await file.text();
                         await onRestoreBackup(text);
-                        flash('JSON バックアップを復元・マージしました');
+                        flash(t('JSON バックアップを復元・マージしました'));
                       } catch (err) {
                         flash(err instanceof Error ? err.message : String(err));
                       }
@@ -1616,7 +1635,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               {!confirmPurge ? (
                 <button type="button" className="btn btn-danger" onClick={() => setConfirmPurge(true)}>
-                  全ノートを初期化
+                  {t('全ノートを初期化')}
                 </button>
               ) : (
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -1626,13 +1645,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onClick={async () => {
                       await onPurgeAll();
                       setConfirmPurge(false);
-                      flash('全ノートを消去しました');
+                      flash(t('全ノートを消去しました'));
                     }}
                   >
-                    消去を確定
+                    {t('消去を確定')}
                   </button>
                   <button type="button" className="btn btn-secondary" onClick={() => setConfirmPurge(false)}>
-                    キャンセル
+                    {t('キャンセル')}
                   </button>
                 </div>
               )}
@@ -1644,9 +1663,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {tab === 'import' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div>
-              <h2 className="section-title">データインポート</h2>
+              <h2 className="section-title">{t('データインポート')}</h2>
               <p className="text-muted" style={{ margin: '4px 0 0' }}>
-                外部ノートアプリ（Granola 等）からのデータ移行を行います。
+                {t('外部ノートアプリ（Granola 等）からのデータ移行を行います。')}
               </p>
             </div>
             {onImportNotes && (

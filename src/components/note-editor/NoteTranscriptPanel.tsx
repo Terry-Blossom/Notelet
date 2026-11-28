@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { BookPlus, Pause, Pencil, Play } from 'lucide-react';
 import { TranscriptSegment } from '../../types';
 import { formatNoteTimer } from '../../lib/format';
+import { t } from '../../i18n';
 
 interface NoteTranscriptPanelProps {
   segments: TranscriptSegment[];
@@ -54,7 +55,7 @@ export const NoteTranscriptPanel: React.FC<NoteTranscriptPanelProps> = React.mem
             className="note-transcript-more"
             onClick={() => setVisibleCount((count) => count + WINDOW_STEP)}
           >
-            以前の文字起こしを表示（残り {startIndex} 件）
+            {t('以前の文字起こしを表示（残り {0} 件）', [startIndex])}
           </button>
         )}
         {visibleSegments.map((seg) => {
@@ -70,8 +71,16 @@ export const NoteTranscriptPanel: React.FC<NoteTranscriptPanelProps> = React.mem
                 <button
                   type="button"
                   className={`note-seg-play-btn ${isActiveSeg ? 'active' : ''}`}
-                  aria-label={isActiveSeg ? '一時停止' : `${formatNoteTimer(seg.start_ms)} から再生`}
-                  title={isActiveSeg ? '一時停止' : `${formatNoteTimer(seg.start_ms)} から再生`}
+                  aria-label={
+                    isActiveSeg
+                      ? t('一時停止')
+                      : t('{0} から再生', [formatNoteTimer(seg.start_ms)])
+                  }
+                  title={
+                    isActiveSeg
+                      ? t('一時停止')
+                      : t('{0} から再生', [formatNoteTimer(seg.start_ms)])
+                  }
                   onClick={() => {
                     if (isActiveSeg) {
                       onTogglePlayback();
@@ -90,7 +99,7 @@ export const NoteTranscriptPanel: React.FC<NoteTranscriptPanelProps> = React.mem
                   type="button"
                   className="note-turn-time"
                   style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-                  title={`${formatNoteTimer(seg.start_ms)} から再生`}
+                  title={t('{0} から再生', [formatNoteTimer(seg.start_ms)])}
                   onClick={() => onPlayFromMs(seg.start_ms)}
                 >
                   {formatNoteTimer(seg.start_ms)}
@@ -100,7 +109,7 @@ export const NoteTranscriptPanel: React.FC<NoteTranscriptPanelProps> = React.mem
                     className="status-chip"
                     style={{ fontSize: '10px', padding: '0 4px', opacity: 0.8 }}
                   >
-                    暫定
+                    {t('暫定')}
                   </span>
                 )}
                 {!isRecording && !isEditingSeg && (
@@ -116,7 +125,7 @@ export const NoteTranscriptPanel: React.FC<NoteTranscriptPanelProps> = React.mem
                       type="button"
                       className="btn btn-ghost"
                       style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
-                      title="この発言を編集"
+                      title={t('この発言を編集')}
                       onClick={() => onStartEdit(seg.id, seg.text)}
                     >
                       <Pencil size={11} />
@@ -125,13 +134,13 @@ export const NoteTranscriptPanel: React.FC<NoteTranscriptPanelProps> = React.mem
                       type="button"
                       className="btn btn-ghost"
                       style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
-                      title="選択テキストまたは単語を辞書に追加"
+                      title={t('選択テキストまたは単語を辞書に追加')}
                       onClick={async () => {
                         const sel = window.getSelection()?.toString().trim();
                         const candidate = sel || seg.text.trim().slice(0, 24);
                         if (!candidate) return;
                         await onAddDictionaryTerm(candidate);
-                        onNotify(`「${candidate}」を辞書に追加しました`);
+                        onNotify(t('「{0}」を辞書に追加しました', [candidate]));
                       }}
                     >
                       <BookPlus size={11} />
@@ -162,7 +171,7 @@ export const NoteTranscriptPanel: React.FC<NoteTranscriptPanelProps> = React.mem
                     style={{ height: '30px', padding: '0 12px', fontSize: '12px' }}
                     onClick={() => onCommitEdit(seg.id)}
                   >
-                    保存
+                    {t('保存')}
                   </button>
                   <button
                     type="button"
@@ -170,7 +179,7 @@ export const NoteTranscriptPanel: React.FC<NoteTranscriptPanelProps> = React.mem
                     style={{ height: '30px', padding: '0 8px', fontSize: '12px' }}
                     onClick={onCancelEdit}
                   >
-                    取消
+                    {t('取消')}
                   </button>
                 </div>
               ) : (

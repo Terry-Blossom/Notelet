@@ -1,6 +1,7 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
 import { NotionSyncState } from '../types';
+import { t } from '../i18n';
 import { apiOpenExternalUrl, isTauriRuntime } from '../lib/tauri';
 
 interface NotionSyncBadgeProps {
@@ -48,8 +49,8 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status, pageUr
       return (
         <button
           type="button"
-          title="Notion でこのページを開く"
-          aria-label="Notion でこのページを開く"
+          title={t('Notion でこのページを開く')}
+          aria-label={t('Notion でこのページを開く')}
           onClick={handleOpenPage}
           style={{
             display: 'inline-flex',
@@ -69,8 +70,8 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status, pageUr
     }
     return (
       <span
-        title="Notion 同期済み"
-        aria-label="Notion 同期済み"
+        title={t('Notion 同期済み')}
+        aria-label={t('Notion 同期済み')}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -89,8 +90,8 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status, pageUr
   if (status === 'syncing') {
     return (
       <span
-        title="Notion 同期中"
-        aria-label="Notion 同期中"
+        title={t('Notion 同期中')}
+        aria-label={t('Notion 同期中')}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -102,15 +103,15 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status, pageUr
         }}
       >
         <Loader2 size={14} strokeWidth={1.75} className="spin" />
-        <span>同期中</span>
+        <span>{t('同期中')}</span>
       </span>
     );
   }
 
   return (
     <span
-      title="Notion 未同期"
-      aria-label="Notion 未同期"
+      title={t('Notion 未同期')}
+      aria-label={t('Notion 未同期')}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -122,7 +123,7 @@ export const NotionSyncBadge: React.FC<NotionSyncBadgeProps> = ({ status, pageUr
       }}
     >
       <OfficialNotionLogo />
-      <span>{status === 'failed' ? '同期失敗' : '未同期'}</span>
+      <span>{status === 'failed' ? t('同期失敗') : t('未同期')}</span>
     </span>
   );
 };

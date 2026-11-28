@@ -15,6 +15,7 @@ import { formatDateTime } from '../lib/format';
 import { StreamingMarkdownArticle } from './StreamingMarkdownArticle';
 import { confirmActionDialog, confirmDeleteDialog } from './ConfirmDialog';
 import { useTauriEvent } from '../lib/tauriEvents';
+import { t } from '../i18n';
 
 interface ChatViewProps {
   notes: Note[];
@@ -89,9 +90,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
   const handleCitationNavigate = async (c: ChatCitation) => {
     const ok = await confirmActionDialog(
-      `「${c.note_title}」に移動しますか？`,
-      c.excerpt ? `該当箇所 [${c.timestamp}]: ${c.excerpt}` : `該当箇所: ${c.timestamp}`,
-      'ノートを開く'
+      t('「{0}」に移動しますか？', [c.note_title]),
+      c.excerpt
+        ? t('該当箇所 [{0}]: {1}', [c.timestamp, c.excerpt])
+        : t('該当箇所: {0}', [c.timestamp]),
+      t('ノートを開く')
     );
     if (ok) {
       onOpenNote(c.note_id, c.timestamp, c.excerpt);
@@ -132,10 +135,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
         .map((n) => n.id);
       const res = await onChatAcrossNotes(targetIds, q, spaceId);
       setTurns((prev) =>
-        prev.map((t) => (t.id === pendingId ? { ...t, answer: res, pending: false } : t))
+        prev.map((turn) => (turn.id === pendingId ? { ...turn, answer: res, pending: false } : turn))
       );
     } catch (err) {
-      setTurns((prev) => prev.filter((t) => t.id !== pendingId));
+      setTurns((prev) => prev.filter((turn) => turn.id !== pendingId));
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
@@ -145,8 +148,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
   const activeSpaceName =
     selectedSpaceId === 'all'
-      ? 'すべてのスペース'
-      : folders.find((f) => f.id === selectedSpaceId)?.name ?? 'スペース';
+      ? t('すべてのスペース')
+      : folders.find((f) => f.id === selectedSpaceId)?.name ?? t('スペース');
 
   const allSelected =
     filteredHistory.length > 0 && filteredHistory.every((h) => selectedIds.includes(h.id));
@@ -193,7 +196,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           <>
             <div className="chat-proposals-title">
               <AlertCircle size={13} strokeWidth={2} />
-              AI が提案した変更（内容を確認して承認してください）
+              {t('AI が提案した変更（内容を確認して承認してください）')}
             </div>
             {pending.map((proposal) => (
               <div key={proposal.id} className="chat-proposal-row">
@@ -211,7 +214,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     ) : (
                       <Check size={12} strokeWidth={2} />
                     )}
-                    承認
+                    {t('承認')}
                   </button>
                   <button
                     type="button"
@@ -221,7 +224,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                       setDismissedProposals((prev) => [...prev, proposal.id])
                     }
                   >
-                    却下
+                    {t('却下')}
                   </button>
                 </div>
               </div>
@@ -248,7 +251,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
         }}
       >
         <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
-          引用元のノート・該当箇所
+          {t('引用元のノート・該当箇所')}
         </span>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {citations.map((c, idx) => (
@@ -298,11 +301,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
       {/* Left Rail: Searchable Conversation History */}
       <aside className="chat-history-rail">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-          <strong style={{ fontSize: '14px', fontWeight: 600 }}>会話履歴 ({filteredHistory.length})</strong>
+          <strong style={{ fontSize: '14px', fontWeight: 600 }}>{t('会話履歴 ({0})', [filteredHistory.length])}</strong>
           <button
             type="button"
-            aria-label="チャット履歴を選択"
-            title={selectMode ? '選択を終了' : '複数選択して削除'}
+            aria-label={t('チャット履歴を選択')}
+            title={selectMode ? t('選択を終了') : t('複数選択して削除')}
             aria-pressed={selectMode}
             className={`btn btn-ghost ${selectMode ? 'active' : ''}`}
             style={{
@@ -345,7 +348,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 }
               }}
             >
-              {allSelected ? 'すべて解除' : 'すべて選択'}
+              {allSelected ? t('すべて解除') : t('すべて選択')}
             </button>
             <button
               type="button"
@@ -355,8 +358,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
               onClick={async () => {
                 if (selectedIds.length === 0) return;
                 const ok = await confirmDeleteDialog(
-                  `${selectedIds.length} 件のチャット履歴を削除しますか？`,
-                  '選択した会話履歴を削除します。この操作は取り消せません。'
+                  t('{0} 件のチャット履歴を削除しますか？', [selectedIds.length]),
+                  t('選択した会話履歴を削除します。この操作は取り消せません。')
                 );
                 if (!ok) return;
                 if (onDeleteHistoryItems) {
@@ -372,7 +375,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               }}
             >
               <Trash2 size={12} strokeWidth={1.5} />
-              削除 ({selectedIds.length})
+              {t('削除 ({0})', [selectedIds.length])}
             </button>
           </div>
         )}
@@ -390,10 +393,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
             }}
           />
           <input
-            aria-label="会話履歴を検索"
+            aria-label={t('会話履歴を検索')}
             className="input"
             style={{ height: '32px', paddingLeft: '32px', fontSize: '12px', backgroundColor: 'var(--bg-canvas)' }}
-            placeholder="履歴を検索..."
+            placeholder={t('履歴を検索...')}
             value={historyQuery}
             onChange={(e) => setHistoryQuery(e.target.value)}
           />
@@ -401,15 +404,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
         {filteredHistory.length === 0 && !busy ? (
           <div className="text-muted" style={{ paddingTop: '8px', fontSize: '13px' }}>
-            履歴はありません
+            {t('履歴はありません')}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {turns
-              .filter((t) => t.pending)
-              .map((t) => (
+              .filter((turn) => turn.pending)
+              .map((turn) => (
                 <div
-                  key={t.id}
+                  key={turn.id}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -422,9 +425,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   <Loader2 size={14} strokeWidth={1.75} className="spin" style={{ color: 'var(--accent)', flexShrink: 0 }} />
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: '13px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {t.question}
+                      {turn.question}
                     </div>
-                    <div className="text-muted" style={{ fontSize: '11px' }}>思考中...</div>
+                    <div className="text-muted" style={{ fontSize: '11px' }}>{t('思考中...')}</div>
                   </div>
                 </div>
               ))}
@@ -446,7 +449,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   {selectMode && (
                     <input
                       type="checkbox"
-                      aria-label={`${item.question}を選択`}
+                      aria-label={t('{0}を選択', [item.question])}
                       checked={isChecked}
                       onChange={(e) => {
                         if (e.target.checked) {
@@ -512,7 +515,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               className={`chip-filter ${selectedSpaceId === 'all' ? 'active' : ''}`}
               onClick={() => setSelectedSpaceId('all')}
             >
-              すべて
+              {t('すべて')}
             </button>
             {folders.map((f) => (
               <button
@@ -529,8 +532,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
           <button
             type="button"
             className="btn btn-secondary"
-            aria-label="新しいチャットを作成"
-            title="新しいチャットを作成"
+            aria-label={t('新しいチャットを作成')}
+            title={t('新しいチャットを作成')}
             style={{ height: '32px', padding: '0 12px' }}
             onClick={() => {
               setSelectedHistoryId(null);
@@ -540,7 +543,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             }}
           >
             <Plus size={15} strokeWidth={1.75} />
-            <span>新規チャット</span>
+            <span>{t('新規チャット')}</span>
           </button>
         </div>
 
@@ -560,10 +563,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <AlertCircle size={16} strokeWidth={1.5} style={{ color: 'var(--warning)' }} />
-              <span>AIプロバイダが未設定のため、ローカル検索ベースで回答します。</span>
+              <span>{t('AIプロバイダが未設定のため、ローカル検索ベースで回答します。')}</span>
             </div>
             <button type="button" className="btn btn-secondary" style={{ height: '28px', fontSize: '12px' }} onClick={onGoSettings}>
-              設定へ
+              {t('設定へ')}
             </button>
           </div>
         )}
@@ -616,8 +619,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
             </div>
           ) : turns.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {turns.map((t) => (
-                <div key={t.id} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {turns.map((turn) => (
+                <div key={turn.id} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div
                     style={{
                       alignSelf: 'flex-end',
@@ -630,7 +633,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                       lineHeight: 1.5,
                     }}
                   >
-                    {t.question}
+                    {turn.question}
                   </div>
                   <div
                     style={{
@@ -645,25 +648,25 @@ export const ChatView: React.FC<ChatViewProps> = ({
                       gap: '8px',
                     }}
                   >
-                    {t.pending ? (
+                    {turn.pending ? (
                       <StreamingMarkdownArticle
                         content={streamingText}
                         isGenerating={!streamingText}
                         animateOnChange={false}
                       />
-                    ) : t.answer ? (
+                    ) : turn.answer ? (
                       <>
                         <StreamingMarkdownArticle
-                          content={t.answer.answer}
+                          content={turn.answer.answer}
                           isGenerating={false}
                           animateOnChange
-                          citations={t.answer.citations}
-                          thinking={t.answer.thinking}
+                          citations={turn.answer.citations}
+                          thinking={turn.answer.thinking}
                           onCitationClick={(c) => void handleCitationNavigate(c)}
                         />
-                        {renderActions(t.answer.actions)}
-                        {renderProposals(t.answer.proposed_actions)}
-                        {renderCitations(t.answer.citations)}
+                        {renderActions(turn.answer.actions)}
+                        {renderProposals(turn.answer.proposed_actions)}
+                        {renderCitations(turn.answer.citations)}
                       </>
                     ) : null}
                   </div>
@@ -672,7 +675,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             </div>
           ) : (
             <div style={{ padding: '24px 0', color: 'var(--text-muted)' }}>
-              下の入力欄から「{activeSpaceName}」について何でも質問するか、左側の履歴から過去の会話を引き継げます。
+              {t('下の入力欄から「{0}」について何でも質問するか、左側の履歴から過去の会話を引き継げます。', [activeSpaceName])}
             </div>
           )}
         </div>
@@ -681,10 +684,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
         <div className="note-composer-wrap" style={{ flexShrink: 0 }}>
           <div className="note-composer-box">
             <textarea
-              aria-label="全ノートへの質問"
+              aria-label={t('全ノートへの質問')}
               className="note-composer-input"
               rows={1}
-              placeholder={`${activeSpaceName}について何でも質問`}
+              placeholder={t('{0}について何でも質問', [activeSpaceName])}
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               disabled={busy}
@@ -698,7 +701,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             <button
               type="button"
               className="note-send-btn"
-              aria-label="質問を送信"
+              aria-label={t('質問を送信')}
               disabled={busy || !question.trim()}
               onClick={() => void handleAsk()}
             >

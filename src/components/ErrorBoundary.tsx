@@ -1,4 +1,5 @@
 import React from 'react';
+import { t } from '../i18n';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -51,7 +52,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
           }}
         >
           <strong style={{ fontSize: '15px' }}>
-            {this.props.fallbackTitle || '画面の表示中にエラーが発生しました'}
+            {this.props.fallbackTitle || t('画面の表示中にエラーが発生しました')}
           </strong>
           {this.state.message && (
             <div
@@ -63,7 +64,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
           )}
           <div style={{ display: 'flex', gap: '8px' }}>
             <button type="button" className="btn btn-primary" onClick={this.handleReset}>
-              再試行
+              {t('再試行')}
             </button>
           </div>
         </div>

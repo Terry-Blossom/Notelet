@@ -5,6 +5,7 @@ import { GranolaImportFileInput, GranolaImportParseResult, parseGranolaImportFil
 import { formatDateTime } from '../lib/format';
 import { unzipTextFiles } from '../lib/zip';
 import { apiFetchGranolaNotes, isTauriRuntime } from '../lib/tauri';
+import { t } from '../i18n';
 
 interface GranolaImportCardProps {
   folders: Folder[];
@@ -112,16 +113,16 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
         <div>
           <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <FileSpreadsheet size={16} strokeWidth={1.5} color="var(--accent)" />
-            Granola からインポート
+            {t('Granola からインポート')}
           </h3>
           <p className="text-muted" style={{ margin: '4px 0 0' }}>
-            Granola のエクスポートファイル（CSV / JSON / Markdown / ZIP）またはローカルキャッシュ（<code>cache-v3.json</code>）を読み込みます。
+            {t('Granola のエクスポートファイル（CSV / JSON / Markdown / ZIP）またはローカルキャッシュ（')}<code>cache-v3.json</code>{t('）を読み込みます。')}
           </p>
         </div>
         {folders.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <label className="text-muted" htmlFor="granola-target-folder">
-              保存先:
+              {t('保存先:')}
             </label>
             <select
               id="granola-target-folder"
@@ -175,11 +176,11 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
         <Upload size={20} strokeWidth={1.5} color="var(--accent)" />
         <div style={{ fontWeight: 600, fontSize: '14px' }}>
           {fileNames.length > 0
-            ? `${fileNames.length} 件のソースを選択中: ${fileNames.join(', ')}`
-            : 'CSV / JSON / Markdown / ZIP ファイルを選択またはドロップ（複数選択可）'}
+            ? t('{0} 件のソースを選択中: {1}', [fileNames.length, fileNames.join(', ')])
+            : t('CSV / JSON / Markdown / ZIP ファイルを選択またはドロップ（複数選択可）')}
         </div>
         <div className="text-muted" style={{ fontSize: '12px' }}>
-          Granola: Settings ＞ Profile ＞ Generate CSV、または <code>cache-v3.json</code>（macOS: ~/Library/Application Support/Granola/ / Windows: %APPDATA%\Granola\）
+          {t('Granola: Settings ＞ Profile ＞ Generate CSV、または ')}<code>cache-v3.json</code>{t('（macOS: ~/Library/Application Support/Granola/ / Windows: %APPDATA%\\Granola\\）')}
         </div>
         <input
           type="file"
@@ -201,7 +202,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
             type="password"
             className="input"
             style={{ flex: '1 1 200px' }}
-            placeholder="Granola API キー（保存済みなら空欄で取得可）"
+            placeholder={t('Granola API キー（保存済みなら空欄で取得可）')}
             value={granolaApiKey}
             onChange={(e) => setGranolaApiKey(e.target.value)}
           />
@@ -212,7 +213,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
             onClick={handleFetchApi}
           >
             <CloudDownload size={14} strokeWidth={1.5} />
-            API から取得
+            {t('API から取得')}
           </button>
         </div>
       )}
@@ -220,7 +221,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
       {importedCount !== null && (
         <div className="status-chip ok" style={{ alignSelf: 'flex-start' }}>
           <Check size={14} strokeWidth={1.5} />
-          Granola から {importedCount} 件のノートをインポートしました
+          {t('Granola から {0} 件のノートをインポートしました', [importedCount])}
         </div>
       )}
 
@@ -234,10 +235,10 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
         <div className="surface-subtle" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             <div style={{ fontSize: '13px', fontWeight: 600 }}>
-              取り込みプレビュー: 新規 {parseResult.notes.length} 件
+              {t('取り込みプレビュー: 新規 {0} 件', [parseResult.notes.length])}
               {parseResult.skippedDuplicates > 0 && (
                 <span className="text-muted" style={{ fontWeight: 400, marginLeft: '8px' }}>
-                  （重複スキップ {parseResult.skippedDuplicates} 件）
+                  {t('（重複スキップ {0} 件）', [parseResult.skippedDuplicates])}
                 </span>
               )}
             </div>
@@ -251,7 +252,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
                   setFileNames([]);
                 }}
               >
-                クリア
+                {t('クリア')}
               </button>
               <button
                 type="button"
@@ -260,7 +261,7 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
                 onClick={handleConfirmImport}
               >
                 {importing ? <Loader2 size={14} strokeWidth={1.5} className="spin" /> : <Check size={14} strokeWidth={1.5} />}
-                {importing ? 'インポート中...' : `${parseResult.notes.length} 件をインポート`}
+                {importing ? t('インポート中...') : t('{0} 件をインポート', [parseResult.notes.length])}
               </button>
             </div>
           </div>
@@ -301,14 +302,14 @@ export const GranolaImportCard: React.FC<GranolaImportCardProps> = ({
                   </div>
                   <div className="text-muted mono-num" style={{ fontSize: '12px', flexShrink: 0 }}>
                     {formatDateTime(note.created_at)}
-                    {note.segments.length > 0 ? ` · ${note.segments.length}発話` : ''}
-                    {note.summary ? ' · 要約あり' : ''}
+                    {note.segments.length > 0 ? t(' · {0}発話', [note.segments.length]) : ''}
+                    {note.summary ? t(' · 要約あり') : ''}
                   </div>
                 </div>
               ))}
               {parseResult.notes.length > 30 && (
                 <div className="text-muted" style={{ fontSize: '12px', textAlign: 'center' }}>
-                  ほか {parseResult.notes.length - 30} 件...
+                  {t('ほか {0} 件...', [parseResult.notes.length - 30])}
                 </div>
               )}
             </div>

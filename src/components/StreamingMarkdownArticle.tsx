@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChatCitation } from '../types';
 import { openWikipediaWithConfirm, splitTextWithWikiTerms } from '../lib/wikiTerms';
+import { t } from '../i18n';
 
 interface StreamingMarkdownArticleProps {
   content: string;
@@ -31,8 +32,8 @@ function renderTextWithWiki(
         key={`${keyPrefix}-w-${i}`}
         type="button"
         className="wiki-term-btn"
-        title={`「${term}」を Wikipedia で調べる`}
-        aria-label={`用語「${term}」を Wikipedia で調べる`}
+        title={t('「{0}」を Wikipedia で調べる', [term])}
+        aria-label={t('用語「{0}」を Wikipedia で調べる', [term])}
         onClick={(e) => {
           e.stopPropagation();
           void openWikipediaWithConfirm(term);
@@ -75,7 +76,7 @@ function renderInlineMarkdown(
             type="button"
             className="inline-citation-badge"
             title={tooltip}
-            aria-label={`引用 ${num}: ${citation.note_title}`}
+            aria-label={t('引用 {0}: {1}', [num, citation.note_title])}
             onClick={(e) => {
               e.stopPropagation();
               onCitationClick?.(citation);
@@ -279,7 +280,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
       <div className="md-stream-skeleton" aria-live="polite">
         <div className="md-stream-status">
           <span className="md-stream-pulse" />
-          <span>思考中...</span>
+          <span>{t('思考中...')}</span>
         </div>
         <div className="md-shimmer-line" style={{ width: '88%' }} />
         <div className="md-shimmer-line" style={{ width: '72%' }} />
@@ -313,7 +314,7 @@ export const StreamingMarkdownArticle: React.FC<StreamingMarkdownArticleProps> =
             whiteSpace: 'pre-wrap',
           }}
         >
-          <div style={{ fontWeight: 600, marginBottom: '2px', fontSize: '11px' }}>思考プロセス</div>
+          <div style={{ fontWeight: 600, marginBottom: '2px', fontSize: '11px' }}>{t('思考プロセス')}</div>
           {thinking}
         </div>
       )}

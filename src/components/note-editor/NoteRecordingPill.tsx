@@ -3,6 +3,7 @@ import { Mic, Pause, Play } from 'lucide-react';
 import { NoteWaveform } from '../NoteWaveform';
 import { formatNoteTimer } from '../../lib/format';
 import { NotePhase } from '../NoteEditorView';
+import { t } from '../../i18n';
 
 interface NoteRecordingPillProps {
   phase: NotePhase;
@@ -43,7 +44,7 @@ export const NoteRecordingPill: React.FC<NoteRecordingPillProps> = React.memo(
             type="button"
             className={`note-rec-btn ${phase === 'recording' ? 'recording' : ''}`}
             aria-pressed={phase === 'recording'}
-            aria-label={phase === 'recording' ? '録音を停止' : '録音を開始'}
+            aria-label={phase === 'recording' ? t('録音を停止') : t('録音を開始')}
             onClick={onRecordButtonClick}
           >
             {phase === 'recording' ? (
@@ -73,7 +74,7 @@ export const NoteRecordingPill: React.FC<NoteRecordingPillProps> = React.memo(
       return (
         <div className="note-rec-pill">
           <NoteWaveform mode="processing" />
-          <span className="note-status-label">文字起こし中…</span>
+          <span className="note-status-label">{t('文字起こし中…')}</span>
         </div>
       );
     }
@@ -84,7 +85,7 @@ export const NoteRecordingPill: React.FC<NoteRecordingPillProps> = React.memo(
           <button
             type="button"
             className="note-play-btn"
-            aria-label={isPlaying ? '再生を一時停止' : '録音を再生'}
+            aria-label={isPlaying ? t('再生を一時停止') : t('録音を再生')}
             onClick={onTogglePlayback}
           >
             {isPlaying ? (
@@ -96,8 +97,8 @@ export const NoteRecordingPill: React.FC<NoteRecordingPillProps> = React.memo(
           <button
             type="button"
             className="chip-filter mono-num"
-            aria-label="5秒戻る"
-            title="5秒戻る (←)"
+            aria-label={t('5秒戻る')}
+            title={t('5秒戻る (←)')}
             style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
             onClick={() => onSkipAudioBy(-5000)}
           >
@@ -106,8 +107,8 @@ export const NoteRecordingPill: React.FC<NoteRecordingPillProps> = React.memo(
           <button
             type="button"
             className="chip-filter mono-num"
-            aria-label="5秒進む"
-            title="5秒進む (→)"
+            aria-label={t('5秒進む')}
+            title={t('5秒進む (→)')}
             style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
             onClick={() => onSkipAudioBy(5000)}
           >
@@ -123,8 +124,8 @@ export const NoteRecordingPill: React.FC<NoteRecordingPillProps> = React.memo(
           <button
             type="button"
             className="chip-filter mono-num"
-            aria-label="再生速度を切り替え"
-            title="再生速度を切り替え (1.0x / 1.25x / 1.5x / 2.0x)"
+            aria-label={t('再生速度を切り替え')}
+            title={t('再生速度を切り替え (1.0x / 1.25x / 1.5x / 2.0x)')}
             style={{ height: '24px', padding: '0 8px', fontSize: '12px', fontWeight: 600 }}
             onClick={onCyclePlaybackRate}
           >
@@ -134,7 +135,7 @@ export const NoteRecordingPill: React.FC<NoteRecordingPillProps> = React.memo(
           <button
             type="button"
             className="note-rerecord-btn"
-            aria-label="再録音"
+            aria-label={t('再録音')}
             onClick={onRecordButtonClick}
           >
             <Mic size={12} strokeWidth={1.75} />
@@ -148,7 +149,7 @@ export const NoteRecordingPill: React.FC<NoteRecordingPillProps> = React.memo(
         <button
           type="button"
           className="note-rec-btn"
-          aria-label="録音を開始"
+          aria-label={t('録音を開始')}
           onClick={onRecordButtonClick}
         >
           <span className="note-rec-btn-dot" />

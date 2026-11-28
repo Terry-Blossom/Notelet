@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { ActionItem, Note, TranscriptSegment } from '../types';
 
 export interface GranolaImportFileInput {
@@ -166,7 +167,7 @@ function parseTranscriptTextToSegments(raw: string): TranscriptSegment[] {
         id: makeId('seg'),
         start_ms: ms,
         end_ms: ms + 4000,
-        speaker: tsSpeakerMatch[2].trim() || '話者',
+        speaker: tsSpeakerMatch[2].trim() || t('話者'),
         text: tsSpeakerMatch[3].trim(),
       });
       cursorMs = ms + 4000;
@@ -180,7 +181,7 @@ function parseTranscriptTextToSegments(raw: string): TranscriptSegment[] {
         id: makeId('seg'),
         start_ms: ms,
         end_ms: ms + 4000,
-        speaker: '話者',
+        speaker: t('話者'),
         text: tsOnlyMatch[2].trim(),
       });
       cursorMs = ms + 4000;
@@ -204,7 +205,7 @@ function parseTranscriptTextToSegments(raw: string): TranscriptSegment[] {
       id: makeId('seg'),
       start_ms: cursorMs,
       end_ms: cursorMs + 4000,
-      speaker: '話者',
+      speaker: t('話者'),
       text: line,
     });
     cursorMs += 4000;
@@ -356,7 +357,7 @@ function buildNote(params: {
 
   return {
     id: makeId('note'),
-    title: params.title.trim() || '無題のノート（Granola）',
+    title: params.title.trim() || t('無題のノート（Granola）'),
     created_at: createdAt,
     updated_at: updatedAt,
     duration_sec: durationSec,
@@ -370,9 +371,11 @@ function buildNote(params: {
     action_items: actionItems,
     follow_up_draft: '',
     asr_model_id: 'granola-import',
-    asr_provider_label: 'Granola インポート',
+    asr_provider_label: t('Granola インポート'),
     language: 'auto',
-    diarization_supported: params.segments.some((s) => s.speaker && s.speaker !== '話者'),
+    diarization_supported: params.segments.some(
+      (s) => s.speaker && s.speaker !== t('話者')
+    ),
     notion_sync: {
       page_id: null,
       page_url: null,
@@ -441,7 +444,7 @@ function parseCsvRows(text: string): string[][] {
 function parseGranolaCsv(content: string, folderId: string): { notes: Note[]; warnings: string[] } {
   const rows = parseCsvRows(content);
   if (rows.length < 2) {
-    return { notes: [], warnings: ['CSV にデータ行が含まれていません。'] };
+    return { notes: [], warnings: [t('CSV にデータ行が含まれていません。')] };
   }
 
   const headers = rows[0].map((h) =>
@@ -482,7 +485,7 @@ function parseGranolaCsv(content: string, folderId: string): { notes: Note[]; wa
     const r = rows[i];
     const get = (idx: number) => (idx >= 0 && idx < r.length ? r[idx].trim() : '');
 
-    const title = get(titleIdx) || `Granola ノート #${i}`;
+    const title = get(titleIdx) || t('Granola ノート #{0}', [i]);
     const summary = get(summaryIdx);
     const manualNotes = get(manualIdx);
     const transcriptRaw = get(transcriptIdx);
@@ -563,11 +566,16 @@ function parseTranscriptArray(rawArr: unknown[], baseCreatedAt?: string): Transc
       }
     }
 
-    let speaker = '話者';
+    let speaker = t('話者');
     if (typeof obj.speaker === 'string' && obj.speaker.trim()) {
       speaker = obj.speaker.trim();
     } else if (typeof obj.source === 'string') {
-      speaker = obj.source === 'microphone' ? '自分' : obj.source === 'system' ? '相手' : obj.source;
+      speaker =
+        obj.source === 'microphone'
+          ? t('自分')
+          : obj.source === 'system'
+            ? t('相手')
+            : obj.source;
     }
 
     segments.push({
@@ -624,7 +632,11 @@ function parseGranolaJson(content: string, folderId: string): { notes: Note[]; w
   } catch (err) {
     return {
       notes: [],
-      warnings: [`JSON の解析に失敗しました: ${err instanceof Error ? err.message : String(err)}`],
+      warnings: [
+        t('JSON の解析に失敗しました: {0}', [
+          err instanceof Error ? err.message : String(err),
+        ]),
+      ],
     };
   }
 
@@ -635,7 +647,9 @@ function parseGranolaJson(content: string, folderId: string): { notes: Note[]; w
     const rootObj = root as Record<string, unknown>;
     if (rootObj.encrypted === true || (typeof rootObj.ciphertext === 'string' && !rootObj.documents)) {
       warnings.push(
-        'この Granola ファイルは暗号化されているため直接読み込めません。Granola の Settings > Profile > Generate CSV から CSV をエクスポートしてインポートしてください。'
+        t(
+          'この Granola ファイルは暗号化されているため直接読み込めません。Granola の Settings > Profile > Generate CSV から CSV をエクスポートしてインポートしてください。'
+        )
       );
       return { notes: [], warnings };
     }
@@ -678,7 +692,7 @@ function parseGranolaJson(content: string, folderId: string): { notes: Note[]; w
       typeof (doc.google_calendar_event as Record<string, unknown>).summary === 'string'
         ? ((doc.google_calendar_event as Record<string, unknown>).summary as string)
         : '') ||
-      '無題のノート（Granola）';
+      t('無題のノート（Granola）');
 
     const createdAt =
       (doc.created_at as string | number | undefined) ||
@@ -753,7 +767,7 @@ function parseGranolaJson(content: string, folderId: string): { notes: Note[]; w
   }
 
   if (notes.length === 0 && warnings.length === 0) {
-    warnings.push('JSON 内にインポート可能な Granola ノートが見つかりませんでした。');
+    warnings.push(t('JSON 内にインポート可能な Granola ノートが見つかりませんでした。'));
   }
 
   return { notes, warnings };
@@ -836,7 +850,7 @@ function parseGranolaMarkdown(fileName: string, content: string, folderId: strin
   }
 
   if (!title) {
-    title = fileName.replace(/\.(md|markdown|txt)$/i, '').replace(/[_-]+/g, ' ').trim() || '無題のノート';
+    title = fileName.replace(/\.(md|markdown|txt)$/i, '').replace(/[_-]+/g, ' ').trim() || t('無題のノート');
   }
 
   const summary = summaryLines.join('\n').trim();
@@ -891,7 +905,7 @@ export function parseGranolaImportFiles(
     const lowerName = file.name.toLowerCase();
     const trimmed = file.content.replace(/^\uFEFF/, '').trim();
     if (!trimmed) {
-      warnings.push(`${file.name}: ファイルが空です。`);
+      warnings.push(t('{0}: ファイルが空です。', [file.name]));
       continue;
     }
 

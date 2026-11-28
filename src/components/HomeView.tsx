@@ -13,6 +13,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { AppSettings, ChatAnswer, Folder, Note } from '../types';
+import { t } from '../i18n';
 import { findNoteSearchMatches, formatDateTime, formatMs } from '../lib/format';
 import { NotionSyncBadge } from './NotionSyncBadge';
 import { confirmDeleteDialog } from './ConfirmDialog';
@@ -132,8 +133,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   const activeSpaceName =
     selectedSpaceId === 'all'
-      ? 'すべてのスペース'
-      : folders.find((f) => f.id === selectedSpaceId)?.name ?? 'スペース';
+      ? t('すべてのスペース')
+      : t(folders.find((f) => f.id === selectedSpaceId)?.name ?? 'スペース');
 
   return (
     <div className="page-container">
@@ -157,7 +158,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <input
                   className="input"
                   style={{ paddingLeft: '36px', borderRadius: '999px', backgroundColor: 'var(--bg-subtle)' }}
-                  placeholder="ノートを検索（タイトル・要約・メモ・文字起こし）"
+                  placeholder={t('ノートを検索（タイトル・要約・メモ・文字起こし）')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -183,7 +184,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <Upload size={14} strokeWidth={1.5} />
-                    音声インポート
+                    {t('音声インポート')}
                   </button>
                 </>
               )}
@@ -193,7 +194,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 onClick={() => onCreateManualNote(selectedSpaceId === 'all' ? 'personal' : selectedSpaceId)}
               >
                 <Plus size={14} strokeWidth={1.5} />
-                メモを作成
+                {t('メモを作成')}
               </button>
             </div>
 
@@ -203,7 +204,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 className={`chip-filter ${selectedSpaceId === 'all' ? 'active' : ''}`}
                 onClick={() => setSelectedSpaceId('all')}
               >
-                すべて ({notes.length})
+                {t('すべて ({0})', [notes.length])}
               </button>
               {folders.map((f) => {
                 const count = notes.filter((n) => n.folder_id === f.id).length;
@@ -214,7 +215,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     className={`chip-filter ${selectedSpaceId === f.id ? 'active' : ''}`}
                     onClick={() => setSelectedSpaceId(f.id)}
                   >
-                    {f.name} ({count})
+                    {t(f.name)} ({count})
                   </button>
                 );
               })}
@@ -235,10 +236,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 className="section-title">
                 {searchQuery.trim()
-                  ? `検索結果 (${filteredNotes.length})`
+                  ? t('検索結果 ({0})', [filteredNotes.length])
                   : selectedDateKey
-                  ? `${selectedDateKey} のノート (${filteredNotes.length})`
-                  : `最近のノート (${filteredNotes.length})`}
+                  ? t('{0} のノート ({1})', [selectedDateKey, filteredNotes.length])
+                  : t('最近のノート ({0})', [filteredNotes.length])}
               </h2>
               <span className="text-muted">{activeSpaceName}</span>
             </div>
@@ -246,13 +247,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
             {filteredNotes.length === 0 ? (
               <div style={{ padding: '24px 0', borderTop: '1px solid var(--border-subtle)' }}>
                 <p className="text-muted" style={{ margin: '0px' }}>
-                  該当するノートはありません。
+                  {t('該当するノートはありません。')}
                 </p>
               </div>
             ) : (
               <div className="flat-list">
                 {filteredNotes.map((note) => {
-                  const spaceName = folders.find((f) => f.id === note.folder_id)?.name ?? '個人';
+                  const spaceName = t(folders.find((f) => f.id === note.folder_id)?.name ?? '個人');
                   const matches = deferredSearchQuery.trim() ? findNoteSearchMatches(note, deferredSearchQuery) : [];
                   return (
                     <button
@@ -271,7 +272,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                             <Pin size={12} strokeWidth={2} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                           )}
                           <strong style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
-                            {note.title.trim() || '無題のノート'}
+                            {note.title.trim() || t('無題のノート')}
                           </strong>
                           {(note.tags ?? []).slice(0, 3).map((tag) => (
                             <span
@@ -338,7 +339,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <CheckSquare size={15} strokeWidth={1.75} style={{ color: 'var(--accent)' }} />
-                  未完了アクションアイテム ({openActionItems.length})
+                  {t('未完了アクションアイテム ({0})', [openActionItems.length])}
                 </h2>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -384,7 +385,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       style={{ fontSize: '11px', padding: '2px 8px', flexShrink: 0 }}
                       onClick={() => onOpenNote(note.id)}
                     >
-                      {note.title.trim() || '無題'}
+                      {note.title.trim() || t('無題')}
                     </button>
                   </div>
                 ))}
@@ -398,12 +399,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <section className="surface-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <strong className="mono-num">
-                {calYear}年 {calMonth + 1}月
+                {t('{0}年 {1}月', [calYear, calMonth + 1])}
               </strong>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <button
                   type="button"
-                  aria-label="前月"
+                  aria-label={t('前月')}
                   className="btn btn-ghost"
                   style={{ width: '28px', height: '28px', padding: 0 }}
                   onClick={() => shiftMonth(-1)}
@@ -412,7 +413,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  aria-label="翌月"
+                  aria-label={t('翌月')}
                   className="btn btn-ghost"
                   style={{ width: '28px', height: '28px', padding: 0 }}
                   onClick={() => shiftMonth(1)}
@@ -433,7 +434,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     paddingBottom: '4px',
                   }}
                 >
-                  {w}
+                  {t(w)}
                 </div>
               ))}
               {calendarCells.map((day, idx) => {
@@ -462,7 +463,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 style={{ height: '28px', fontSize: '12px', alignSelf: 'flex-start', padding: '0 8px' }}
                 onClick={() => setSelectedDateKey('')}
               >
-                すべての日付を表示
+                {t('すべての日付を表示')}
               </button>
             )}
           </section>
@@ -471,7 +472,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Cpu size={14} strokeWidth={1.5} />
-                <strong style={{ fontSize: '12px' }}>エンジン</strong>
+                <strong style={{ fontSize: '12px' }}>{t('エンジン')}</strong>
               </div>
               <button
                 type="button"
@@ -480,7 +481,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 onClick={onGoSettings}
               >
                 <Settings size={12} strokeWidth={1.5} />
-                変更
+                {t('変更')}
               </button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
@@ -488,7 +489,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <span className="text-muted" style={{ flexShrink: 0 }}>ASR</span>
                 <span
                   className="mono-num"
-                  title={settings.active_asr_model_id || 'モデル未選択'}
+                  title={settings.active_asr_model_id || t('モデル未選択')}
                   style={{
                     fontWeight: 500,
                     maxWidth: '160px',
@@ -498,7 +499,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     textAlign: 'right',
                   }}
                 >
-                  {settings.active_asr_model_id || 'モデル未選択'}
+                  {settings.active_asr_model_id || t('モデル未選択')}
                 </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
@@ -506,7 +507,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 {(() => {
                   const rawLlm =
                     settings.llm_provider === 'none'
-                      ? '未設定'
+                      ? t('未設定')
                       : settings.llm_model || settings.llm_provider;
                   const shortLlm = rawLlm.includes('/') ? rawLlm.split('/').pop() || rawLlm : rawLlm;
                   return (
@@ -550,7 +551,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             }}
           >
             <FileText size={14} strokeWidth={1.5} />
-            <span>開く</span>
+            <span>{t('開く')}</span>
           </button>
           {onDeleteNote && (
             <button
@@ -561,15 +562,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 const id = contextMenu.noteId;
                 setContextMenu(null);
                 const ok = await confirmDeleteDialog(
-                  'このノートを削除しますか？',
-                  '削除したノートは元に戻せません。'
+                  t('このノートを削除しますか？'),
+                  t('削除したノートは元に戻せません。')
                 );
                 if (!ok) return;
                 await onDeleteNote(id);
               }}
             >
               <Trash2 size={14} strokeWidth={1.5} />
-              <span>削除</span>
+              <span>{t('削除')}</span>
             </button>
           )}
         </div>

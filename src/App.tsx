@@ -88,6 +88,7 @@ import {
 } from './lib/tauri';
 import { createEmptyNote, findNoteSearchMatches, formatMs } from './lib/format';
 import { isAndroidRuntime, useMobileLayout } from './lib/platform';
+import { setLocale, t } from './i18n';
 import { useTauriEvent } from './lib/tauriEvents';
 import { exportNotesAsObsidianZip, mergeNoteletBackupJson } from './lib/noteExportImport';
 import { HomeView } from './components/HomeView';
@@ -117,6 +118,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   active_asr_model_id: '',
   active_asr_provider: 'local_whisper',
   language: 'ja',
+  ui_language: 'ja',
   allow_cloud_asr: false,
   llm_provider: 'none',
   llm_model: 'gpt-4o-mini',
@@ -352,8 +354,8 @@ const RecordingOverlay: React.FC = () => {
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
         <button
           type="button"
-          aria-label={isPaused ? '再開' : '一時停止'}
-          title={isPaused ? '再開' : '一時停止'}
+          aria-label={isPaused ? t('再開') : t('一時停止')}
+          title={isPaused ? t('再開') : t('一時停止')}
           onClick={async () => {
             if (!isTauriRuntime()) return;
             const st = isPaused ? await apiResumeRecording() : await apiPauseRecording();
@@ -376,8 +378,8 @@ const RecordingOverlay: React.FC = () => {
         </button>
         <button
           type="button"
-          aria-label="録音を停止"
-          title="録音を停止"
+          aria-label={t('録音を停止')}
+          title={t('録音を停止')}
           onClick={async () => {
             if (isTauriRuntime()) {
               const { emit } = await import('@tauri-apps/api/event');
@@ -407,7 +409,7 @@ const RecordingOverlay: React.FC = () => {
 const MeetingNotifyOverlay: React.FC = () => {
   useTransparentWindowBackground();
   const [meetingTitle, setMeetingTitle] = useState(
-    (typeof window !== 'undefined' && window.__NOTELET_MEETING_TITLE__) || 'オンライン会議'
+    (typeof window !== 'undefined' && window.__NOTELET_MEETING_TITLE__) || t('オンライン会議')
   );
 
   useEffect(() => {
@@ -468,10 +470,10 @@ const MeetingNotifyOverlay: React.FC = () => {
         </div>
         <div data-tauri-drag-region style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
           <span style={{ fontSize: '12px', fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {meetingTitle} を検出
+            {t('{0} を検出', [meetingTitle])}
           </span>
           <span style={{ fontSize: '11px', color: '#A1A1AA' }}>
-            Notelet で録音・文字起こし
+            {t('Notelet で録音・文字起こし')}
           </span>
         </div>
       </div>
@@ -502,11 +504,11 @@ const MeetingNotifyOverlay: React.FC = () => {
           }}
         >
           <Mic size={12} strokeWidth={2} />
-          <span>録音開始</span>
+          <span>{t('録音開始')}</span>
         </button>
         <button
           type="button"
-          aria-label="閉じる"
+          aria-label={t('閉じる')}
           onClick={() => void closeSelf()}
           style={{
             width: '24px',
@@ -1067,6 +1069,14 @@ const MainApp: React.FC = () => {
     if (status && status.state) setRecStatus(status);
   }, []);
 
+  const uiLanguage = snapshot.settings.ui_language === 'en' ? 'en' : 'ja';
+  setLocale(uiLanguage);
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = uiLanguage;
+    }
+  }, [uiLanguage]);
+
   const ensureRecordingAsrReady = () => {
     if (!isTauriRuntime()) return true;
 
@@ -1074,17 +1084,17 @@ const MainApp: React.FC = () => {
     const model = models.find((item) => item.id === modelId);
     let error: string | null = null;
     if (!modelId) {
-      error = 'ASRモデルが選択されていません。設定画面でモデルを選択してください。';
+      error = t('ASRモデルが選択されていません。設定画面でモデルを選択してください。');
     } else if (!model) {
-      error = '選択中のASRモデルを確認できません。設定画面でモデルを選択してください。';
+      error = t('選択中のASRモデルを確認できません。設定画面でモデルを選択してください。');
     } else if (model.is_local && !model.is_compatible) {
-      error = model.compatibility_reason || 'ASRランタイムが利用できません。設定画面を確認してください。';
+      error = model.compatibility_reason || t('ASRランタイムが利用できません。設定画面を確認してください。');
     } else if (model.is_local && !model.installed) {
-      error = '選択中のASRモデルが未導入です。設定画面からモデルをダウンロードしてください。';
+      error = t('選択中のASRモデルが未導入です。設定画面からモデルをダウンロードしてください。');
     } else if (!model.is_local && !model.is_compatible) {
-      error = model.compatibility_reason || 'クラウドASRのAPIキーが未設定です。設定画面を確認してください。';
+      error = model.compatibility_reason || t('クラウドASRのAPIキーが未設定です。設定画面を確認してください。');
     } else if (!model.is_local && !snapshot.settings.allow_cloud_asr) {
-      error = 'クラウドASRが許可されていません。設定画面で利用を許可してください。';
+      error = t('クラウドASRが許可されていません。設定画面で利用を許可してください。');
     }
 
     setRecordingStartError(error);
@@ -1153,7 +1163,7 @@ const MainApp: React.FC = () => {
     const targetNote: Note = existing
       ? {
           ...existing,
-          title: existing.title.trim() ? existing.title : `録音ノート ${nowStr}`,
+          title: existing.title.trim() ? existing.title : t('録音ノート {0}', [nowStr]),
           duration_sec: existing.duration_sec + Math.round(finalStatus.elapsed_ms / 1000),
           manual_notes: liveManualNotes
             ? [existing.manual_notes, liveManualNotes].filter(Boolean).join('\n')
@@ -1213,7 +1223,7 @@ const MainApp: React.FC = () => {
               const hint = await apiCopyAndPreparePaste(text);
               setBannerMessage(hint);
             } else {
-              setBannerMessage('発話が検出されませんでした。');
+              setBannerMessage(t('発話が検出されませんでした。'));
             }
             voiceTypingRef.current = false;
           }
@@ -1284,7 +1294,7 @@ const MainApp: React.FC = () => {
 
   const handleUploadAndTranscribe = async (file: File) => {
     const newNote = createEmptyNote();
-    newNote.title = file.name.replace(/\.[^/.]+$/, '') || 'アップロード録音';
+    newNote.title = file.name.replace(/\.[^/.]+$/, '') || t('アップロード録音');
     newNote.language = snapshot.settings.language;
     setTranscribeError(null);
 
@@ -1318,7 +1328,7 @@ const MainApp: React.FC = () => {
 
   const handleUploadUrlAndTranscribe = async (url: string) => {
     const newNote = createEmptyNote(recordingSpaceId);
-    newNote.title = url.split('/').pop()?.split('?')[0] || '動画リンク録音';
+    newNote.title = url.split('/').pop()?.split('?')[0] || t('動画リンク録音');
     newNote.language = snapshot.settings.language;
     setTranscribeError(null);
 
@@ -1451,12 +1461,12 @@ const MainApp: React.FC = () => {
   const isRecordingActive = recStatus.state === 'recording' || recStatus.state === 'paused';
 
   const navItems: { id: NavView; label: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number }> }[] = [
-    { id: 'home', label: 'ホーム', icon: Home },
-    { id: 'chat', label: 'チャット', icon: MessageSquare },
-    { id: 'notes', label: 'ノート', icon: FileText },
-    { id: 'upload', label: 'アップロード', icon: Upload },
-    { id: 'dictionary', label: '辞書', icon: BookOpen },
-    { id: 'integrations', label: '連携', icon: Link2 },
+    { id: 'home', label: t('ホーム'), icon: Home },
+    { id: 'chat', label: t('チャット'), icon: MessageSquare },
+    { id: 'notes', label: t('ノート'), icon: FileText },
+    { id: 'upload', label: t('アップロード'), icon: Upload },
+    { id: 'dictionary', label: t('辞書'), icon: BookOpen },
+    { id: 'integrations', label: t('連携'), icon: Link2 },
   ];
 
   const handleSaveFolder = async (folder: { id: string; name: string; is_shared: boolean; permission: 'owner' | 'editor' | 'viewer' }) => {
@@ -1492,7 +1502,7 @@ const MainApp: React.FC = () => {
       className="settings-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="設定"
+      aria-label={t('設定')}
       onClick={(e) => {
         if (e.target === e.currentTarget) setSettingsOpen(false);
       }}
@@ -1505,7 +1515,7 @@ const MainApp: React.FC = () => {
         )}
         <button
           type="button"
-          aria-label="設定を閉じる"
+          aria-label={t('設定を閉じる')}
           className="btn btn-ghost settings-close-btn"
           onClick={() => setSettingsOpen(false)}
         >
@@ -1537,7 +1547,7 @@ const MainApp: React.FC = () => {
             try {
               await apiInstallAsrRuntime(kind);
               await refreshAll();
-              setBannerMessage(`${kind === 'whisper' ? 'whisper.cpp' : 'sherpa-onnx-offline'} をインストールしました`);
+              setBannerMessage(t('{0} をインストールしました', [kind === 'whisper' ? 'whisper.cpp' : 'sherpa-onnx-offline']));
             } catch (e) {
               setBannerMessage(String(e));
             }
@@ -1647,16 +1657,16 @@ const MainApp: React.FC = () => {
         >
           <Upload size={32} strokeWidth={1.75} />
           <strong style={{ fontSize: '16px' }}>
-            音声・動画ファイルをドロップして新規ノートを作成＆文字起こし
+            {t('音声・動画ファイルをドロップして新規ノートを作成＆文字起こし')}
           </strong>
           <span style={{ fontSize: '12px', color: '#E4E4E7' }}>
-            対応形式: WAV / MP3 / M4A / MP4 / MOV / WebM / OGG / FLAC
+            {t('対応形式: WAV / MP3 / M4A / MP4 / MOV / WebM / OGG / FLAC')}
           </span>
         </div>
       )}
       {!mobile && (
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-        <nav className="nav-list" aria-label="メインメニュー" style={{ marginTop: '8px' }}>
+        <nav className="nav-list" aria-label={t('メインメニュー')} style={{ marginTop: '8px' }}>
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive =
@@ -1682,19 +1692,19 @@ const MainApp: React.FC = () => {
             <div
               className="record-options-popover"
               role="dialog"
-              aria-label="録音設定"
+              aria-label={t('録音設定')}
               onClick={(e) => e.stopPropagation()}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
-                  録音ソース
+                  {t('録音ソース')}
                 </span>
                 <div style={{ display: 'flex', gap: '4px' }}>
                   {(
                     [
-                      { id: 'mic', label: 'マイク' },
-                      { id: 'system', label: '本体音声' },
-                      { id: 'both', label: '両方' },
+                      { id: 'mic', label: t('マイク') },
+                      { id: 'system', label: t('本体音声') },
+                      { id: 'both', label: t('両方') },
                     ] as const
                   )
                     .filter((opt) => !android || opt.id === 'mic')
@@ -1723,10 +1733,10 @@ const MainApp: React.FC = () => {
               {sourceMode !== 'system' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
-                    マイク
+                    {t('マイク')}
                   </span>
                   <select
-                    aria-label="使用するマイク"
+                    aria-label={t('使用するマイク')}
                     className="input"
                     style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
                     value={selectedDeviceId}
@@ -1746,7 +1756,7 @@ const MainApp: React.FC = () => {
                       }
                     }}
                   >
-                    <option value="">既定のマイク (自動)</option>
+                    <option value="">{t('既定のマイク (自動)')}</option>
                     {devices
                       .filter((d) => d.kind === 'input')
                       .map((d) => (
@@ -1761,16 +1771,16 @@ const MainApp: React.FC = () => {
               {sourceMode === 'system' && devices.some((d) => d.kind === 'loopback') && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
-                    システム音声
+                    {t('システム音声')}
                   </span>
                   <select
-                    aria-label="使用するシステム音声入力"
+                    aria-label={t('使用するシステム音声入力')}
                     className="input"
                     style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
                     value={selectedDeviceId}
                     onChange={(e) => setSelectedDeviceId(e.target.value)}
                   >
-                    <option value="">既定のシステム音声入力 (自動)</option>
+                    <option value="">{t('既定のシステム音声入力 (自動)')}</option>
                     {devices
                       .filter((d) => d.kind === 'loopback')
                       .map((d) => (
@@ -1784,10 +1794,10 @@ const MainApp: React.FC = () => {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)' }}>
-                  保存先スペース
+                  {t('保存先スペース')}
                 </span>
                 <select
-                  aria-label="録音先のスペース"
+                  aria-label={t('録音先のスペース')}
                   className="input"
                   style={{ height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
                   value={recordingSpaceId}
@@ -1805,8 +1815,8 @@ const MainApp: React.FC = () => {
 
           <button
             type="button"
-            aria-label="設定"
-            title="設定"
+            aria-label={t('設定')}
+            title={t('設定')}
             className={`btn-icon-circle ${settingsOpen ? 'active' : ''}`}
             onClick={() => setSettingsOpen(true)}
           >
@@ -1828,12 +1838,12 @@ const MainApp: React.FC = () => {
                 }}
               >
                 {isRecordingActive ? <Square size={14} strokeWidth={1.5} /> : <Mic size={14} strokeWidth={1.5} />}
-                <span>{isRecordingActive ? '停止' : '録音'}</span>
+                <span>{isRecordingActive ? t('停止') : t('録音')}</span>
               </button>
               <button
                 type="button"
                 className="record-split-chevron"
-                aria-label="録音オプション"
+                aria-label={t('録音オプション')}
                 aria-expanded={recordOptionsOpen}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1855,7 +1865,7 @@ const MainApp: React.FC = () => {
               {!mobile && (
                 <button
                   type="button"
-                  aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
+                  aria-label={sidebarCollapsed ? t('サイドバーを開く') : t('サイドバーを閉じる')}
                   className="btn btn-ghost"
                   style={{ width: '32px', height: '32px', padding: 0 }}
                   onClick={() => setSidebarCollapsed((v) => !v)}
@@ -1865,24 +1875,24 @@ const MainApp: React.FC = () => {
               )}
               <h1 className="topbar-title">
                 {view === 'editor'
-                  ? 'ノート'
+                  ? t('ノート')
                   : view === 'recording'
-                  ? '録音'
-                  : navItems.find((n) => n.id === view)?.label ?? 'ホーム'}
+                  ? t('録音')
+                  : navItems.find((n) => n.id === view)?.label ?? t('ホーム')}
               </h1>
             </div>
 
             <button
               type="button"
               className="topbar-search"
-              aria-label="ノートや会話を検索"
+              aria-label={t('ノートや会話を検索')}
               onClick={() => {
                 setCommandQuery('');
                 setCommandSearchOpen(true);
               }}
             >
               <Search size={14} strokeWidth={1.5} />
-              <span>ノートや会話を検索...</span>
+              <span>{t('ノートや会話を検索...')}</span>
             </button>
 
             <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1899,10 +1909,10 @@ const MainApp: React.FC = () => {
                     type="button"
                     className="status-chip warn"
                     style={{ height: '28px', cursor: 'pointer', border: 'none' }}
-                    title="未同期・再試行待ちのノートを今すぐ同期"
+                    title={t('未同期・再試行待ちのノートを今すぐ同期')}
                     onClick={() => void retryPendingNotionSyncs(true)}
                   >
-                    同期待ち {pendingSyncCount}件
+                    {t('同期待ち {0}件', [pendingSyncCount])}
                   </button>
                 );
               })()}
@@ -1911,7 +1921,7 @@ const MainApp: React.FC = () => {
                   type="button"
                   className="btn btn-ghost"
                   style={{ height: '30px', padding: '0 8px', fontSize: '12px' }}
-                  title="キーボードショートカット (?)"
+                  title={t('キーボードショートカット (?)')}
                   onClick={() => setShortcutsOpen(true)}
                 >
                   ?
@@ -1920,12 +1930,12 @@ const MainApp: React.FC = () => {
               <button
                 type="button"
                 className="btn btn-secondary"
-                aria-label="新規ノート"
+                aria-label={t('新規ノート')}
                 style={mobile ? { height: '32px', width: '32px', padding: 0, justifyContent: 'center' } : { height: '30px', padding: '0 12px', fontSize: '12px' }}
                 onClick={() => handleCreateManualNote(recordingSpaceId)}
               >
                 <Plus size={14} strokeWidth={1.5} />
-                {!mobile && '新規ノート'}
+                {!mobile && t('新規ノート')}
               </button>
             </div>
           </header>
@@ -1945,7 +1955,7 @@ const MainApp: React.FC = () => {
             }}
           >
             <span>
-              インポート文字起こし中 ({uploadQueueStatus.current}/{uploadQueueStatus.total}):{' '}
+              {t('インポート文字起こし中 ({0}/{1}):', [uploadQueueStatus.current, uploadQueueStatus.total])}{' '}
               <strong>{uploadQueueStatus.fileName}</strong>
             </span>
           </div>
@@ -1963,7 +1973,7 @@ const MainApp: React.FC = () => {
             }}
           >
             <span>
-              まもなく予定が開始されます: <strong>{meetingReminder.title}</strong>
+              {t('まもなく予定が開始されます:')} <strong>{meetingReminder.title}</strong>
             </span>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
@@ -1985,10 +1995,10 @@ const MainApp: React.FC = () => {
                   await handleStartRecording();
                 }}
               >
-                録音を開始
+                {t('録音を開始')}
               </button>
               <button type="button" className="btn btn-ghost" onClick={() => setMeetingReminder(null)}>
-                閉じる
+                {t('閉じる')}
               </button>
             </div>
           </div>
@@ -2006,7 +2016,7 @@ const MainApp: React.FC = () => {
           >
             <span>{bannerMessage}</span>
             <button type="button" className="btn btn-ghost" onClick={() => setBannerMessage(null)}>
-              閉じる
+              {t('閉じる')}
             </button>
           </div>
         )}
@@ -2189,7 +2199,7 @@ const MainApp: React.FC = () => {
               if (!isTauriRuntime()) return;
               const snap = await apiNotionPullNotes();
               setSnapshot(snap);
-              setBannerMessage('Notionからノートとスペースを同期しました');
+              setBannerMessage(t('Notionからノートとスペースを同期しました'));
             }}
           />
         )}
@@ -2225,9 +2235,9 @@ const MainApp: React.FC = () => {
           <div className="page-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '16px', textAlign: 'center' }}>
             <FileText size={32} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <strong style={{ fontSize: '16px' }}>ノートがありません</strong>
+              <strong style={{ fontSize: '16px' }}>{t('ノートがありません')}</strong>
               <span className="text-muted" style={{ fontSize: '13px' }}>
-                新しいノートを作成するか、録音を開始してください。
+                {t('新しいノートを作成するか、録音を開始してください。')}
               </span>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
@@ -2237,7 +2247,7 @@ const MainApp: React.FC = () => {
                 onClick={() => handleCreateManualNote(recordingSpaceId)}
               >
                 <Plus size={14} strokeWidth={1.5} />
-                新規ノートを作成
+                {t('新規ノートを作成')}
               </button>
               <button
                 type="button"
@@ -2245,14 +2255,14 @@ const MainApp: React.FC = () => {
                 onClick={() => void handleStartRecording()}
               >
                 <Mic size={14} strokeWidth={1.5} />
-                録音を開始
+                {t('録音を開始')}
               </button>
             </div>
           </div>
         )}
 
         {(view === 'editor' || view === 'notes') && activeNote && (
-          <ErrorBoundary fallbackTitle="ノート画面の表示中にエラーが発生しました">
+          <ErrorBoundary fallbackTitle={t('ノート画面の表示中にエラーが発生しました')}>
           <NoteEditorView
             note={activeNote}
             allNotes={snapshot.notes}
@@ -2321,7 +2331,7 @@ const MainApp: React.FC = () => {
                 setBannerMessage(hint);
               } else {
                 await navigator.clipboard.writeText(text);
-                setBannerMessage('クリップボードにコピーしました。貼り付け先で Ctrl+V / Cmd+V を押してください。');
+                setBannerMessage(t('クリップボードにコピーしました。貼り付け先で Ctrl+V / Cmd+V を押してください。'));
               }
             }}
             onSaveToNotion={async (noteId) => {
@@ -2401,14 +2411,14 @@ const MainApp: React.FC = () => {
         </div>
       </main>
       {mobile && (
-        <nav className="mobile-tabbar" aria-label="メインメニュー">
+        <nav className="mobile-tabbar" aria-label={t('メインメニュー')}>
           <button
             type="button"
             className={`mobile-tab ${view === 'home' || view === 'recording' ? 'active' : ''}`}
             onClick={() => setView('home')}
           >
             <Home size={20} strokeWidth={1.5} />
-            <span>ホーム</span>
+            <span>{t('ホーム')}</span>
           </button>
           <button
             type="button"
@@ -2416,12 +2426,12 @@ const MainApp: React.FC = () => {
             onClick={() => setView('notes')}
           >
             <FileText size={20} strokeWidth={1.5} />
-            <span>ノート</span>
+            <span>{t('ノート')}</span>
           </button>
           <button
             type="button"
             className={`mobile-record ${isRecordingActive ? 'recording' : ''}`}
-            aria-label={isRecordingActive ? '録音を停止' : '録音を開始'}
+            aria-label={isRecordingActive ? t('録音を停止') : t('録音を開始')}
             onClick={() => {
               setMoreSheetOpen(false);
               if (isRecordingActive) {
@@ -2439,7 +2449,7 @@ const MainApp: React.FC = () => {
             onClick={() => setView('chat')}
           >
             <MessageSquare size={20} strokeWidth={1.5} />
-            <span>チャット</span>
+            <span>{t('チャット')}</span>
           </button>
           <button
             type="button"
@@ -2448,7 +2458,7 @@ const MainApp: React.FC = () => {
             onClick={() => setMoreSheetOpen((o) => !o)}
           >
             <Menu size={20} strokeWidth={1.5} />
-            <span>その他</span>
+            <span>{t('その他')}</span>
           </button>
         </nav>
       )}
@@ -2457,15 +2467,15 @@ const MainApp: React.FC = () => {
           <div
             className="mobile-more-sheet"
             role="dialog"
-            aria-label="その他のメニュー"
+            aria-label={t('その他のメニュー')}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mobile-more-grid">
               {(
                 [
-                  { id: 'upload', label: 'アップロード', icon: Upload },
-                  { id: 'dictionary', label: '辞書', icon: BookOpen },
-                  { id: 'integrations', label: '連携', icon: Link2 },
+                  { id: 'upload', label: t('アップロード'), icon: Upload },
+                  { id: 'dictionary', label: t('辞書'), icon: BookOpen },
+                  { id: 'integrations', label: t('連携'), icon: Link2 },
                 ] as const
               ).map((item) => {
                 const Icon = item.icon;
@@ -2493,13 +2503,13 @@ const MainApp: React.FC = () => {
                 }}
               >
                 <Settings size={20} strokeWidth={1.5} />
-                <span>設定</span>
+                <span>{t('設定')}</span>
               </button>
             </div>
             <div className="mobile-more-row">
-              <span className="mobile-more-label">保存先スペース</span>
+              <span className="mobile-more-label">{t('保存先スペース')}</span>
               <select
-                aria-label="録音先のスペース"
+                aria-label={t('録音先のスペース')}
                 className="input"
                 value={recordingSpaceId}
                 onChange={(e) => setRecordingSpaceId(e.target.value)}
@@ -2513,13 +2523,13 @@ const MainApp: React.FC = () => {
             </div>
             {!android && (
               <div className="mobile-more-row">
-                <span className="mobile-more-label">録音ソース</span>
+                <span className="mobile-more-label">{t('録音ソース')}</span>
                 <div style={{ display: 'flex', gap: '4px' }}>
                   {(
                     [
-                      { id: 'mic', label: 'マイク' },
-                      { id: 'system', label: '本体音声' },
-                      { id: 'both', label: '両方' },
+                      { id: 'mic', label: t('マイク') },
+                      { id: 'system', label: t('本体音声') },
+                      { id: 'both', label: t('両方') },
                     ] as const
                   ).map((opt) => (
                     <button
@@ -2549,7 +2559,7 @@ const MainApp: React.FC = () => {
           className="settings-modal-backdrop"
           role="dialog"
           aria-modal="true"
-          aria-label="クイック検索"
+          aria-label={t('クイック検索')}
           onClick={(e) => {
             if (e.target === e.currentTarget) setCommandSearchOpen(false);
           }}
@@ -2561,7 +2571,7 @@ const MainApp: React.FC = () => {
                 type="text"
                 className="input"
                 style={{ border: 'none', height: '32px', padding: 0 }}
-                placeholder="ノート名、本文、文字起こしを検索..."
+                placeholder={t('ノート名、本文、文字起こしを検索...')}
                 value={commandQuery}
                 onChange={(e) => setCommandQuery(e.target.value)}
                 autoFocus
@@ -2572,7 +2582,7 @@ const MainApp: React.FC = () => {
                 style={{ height: '28px', padding: '0 8px', fontSize: '12px' }}
                 onClick={() => setCommandSearchOpen(false)}
               >
-                閉じる
+                {t('閉じる')}
               </button>
             </div>
             <div style={{ overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '360px' }}>
@@ -2587,7 +2597,7 @@ const MainApp: React.FC = () => {
                 })
                 .slice(0, 12)
                 .map((n) => {
-                  const sp = snapshot.folders.find((f) => f.id === n.folder_id)?.name ?? '個人';
+                  const sp = snapshot.folders.find((f) => f.id === n.folder_id)?.name ?? t('個人');
                   const matches = deferredCommandQuery.trim() ? findNoteSearchMatches(n, deferredCommandQuery) : [];
                   return (
                     <button
@@ -2606,7 +2616,7 @@ const MainApp: React.FC = () => {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                           <FileText size={14} strokeWidth={1.5} style={{ flexShrink: 0 }} />
-                          <span style={{ fontWeight: 500 }}>{n.title.trim() || '無題のノート'}</span>
+                          <span style={{ fontWeight: 500 }}>{n.title.trim() || t('無題のノート')}</span>
                         </div>
                         {matches.length > 0 && (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '20px' }}>
@@ -2662,25 +2672,25 @@ const MainApp: React.FC = () => {
           <div
             className="command-palette"
             role="dialog"
-            aria-label="キーボードショートカット一覧"
+            aria-label={t('キーボードショートカット一覧')}
             style={{ maxWidth: '480px', padding: '20px' }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <strong style={{ fontSize: '15px' }}>キーボードショートカット</strong>
+              <strong style={{ fontSize: '15px' }}>{t('キーボードショートカット')}</strong>
               <button type="button" className="btn btn-ghost" onClick={() => setShortcutsOpen(false)}>
-                閉じる
+                {t('閉じる')}
               </button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', fontSize: '13px', gap: '8px' }}>
               {[
-                ['グローバル録音 開始/停止', snapshot.settings.record_shortcut || 'Ctrl+Shift+R'],
-                ['音声入力（Voice Typing）', snapshot.settings.voice_typing_shortcut || 'Ctrl+Shift+V'],
-                ['ノート・会話の全体検索', 'Ctrl / Cmd + K'],
-                ['再生 / 一時停止（文字起こし）', 'Space'],
-                ['5秒戻る / 5秒進む', '← / →'],
-                ['ノート内検索（次へ / 前へ）', 'Enter / Shift + Enter'],
-                ['ショートカット一覧を表示', '? または Ctrl + /'],
+                [t('グローバル録音 開始/停止'), snapshot.settings.record_shortcut || 'Ctrl+Shift+R'],
+                [t('音声入力（Voice Typing）'), snapshot.settings.voice_typing_shortcut || 'Ctrl+Shift+V'],
+                [t('ノート・会話の全体検索'), 'Ctrl / Cmd + K'],
+                [t('再生 / 一時停止（文字起こし）'), 'Space'],
+                [t('5秒戻る / 5秒進む'), '← / →'],
+                [t('ノート内検索（次へ / 前へ）'), 'Enter / Shift + Enter'],
+                [t('ショートカット一覧を表示'), t('? または Ctrl + /')],
               ].map(([label, key]) => (
                 <div
                   key={label}

@@ -1,91 +1,95 @@
+[English](README.md) | [日本語](README.ja.md)
+
 # Notelet
 
-**Notelet** は、録音・文字起こしから AI 要約、根拠付きチャットによるノート横断検索・直接編集、Notion 双方向同期、各種外部ツール連携までを最短で行う**ローカルファースト**のデスクトップノートアプリです。
+**Notelet** is a **local-first** desktop note app that takes you from recording and transcription to AI summaries, evidence-backed chat across your notes, direct editing, two-way Notion sync, and integrations with other external tools in the shortest path possible.
 
-会議へ Bot として自動参加する方式は採用せず、PC 上の音声やマイク入力をローカルで安全に記録・処理します。
+It does not join meetings as a bot. Audio and microphone input on your PC are recorded and processed locally and safely.
 
----
-
-## 目次
-
-- [スクリーンショット](#スクリーンショット)
-- [対応 OS](#対応-os)
-- [主な機能](#主な機能)
-  - [1. 録音・会議検出・保護機能](#1-録音会議検出保護機能)
-  - [2. ローカルファースト文字起こし](#2-ローカルファースト文字起こし)
-  - [3. ノート編集・再生・エクスポート](#3-ノート編集再生エクスポート)
-  - [4. AI 要約・カスタムプリセット・ライブアシスタンス](#4-ai-要約カスタムプリセットライブアシスタンス)
-  - [5. AI チャットエージェント＆インライン引用](#5-ai-チャットエージェントインライン引用)
-  - [6. データ移行（Granola インポート / Obsidian・JSON バックアップ）](#6-データ移行granola-インポート--obsidianjson-バックアップ)
-  - [7. 外部サービス＆MCP 連携](#7-外部サービスmcp-連携)
-- [対応音声認識（ASR）モデル](#対応音声認識asrモデル)
-- [セットアップと使い方](#セットアップと使い方)
-- [プライバシーとセキュリティ](#プライバシーとセキュリティ)
-- [アーキテクチャ・ディレクトリ構成](#アーキテクチャディレクトリ構成)
-- [開発・テスト・ビルド](#開発テストビルド)
-- [既知の制限](#既知の制限)
-- [クレジット](#クレジット)
+The app UI ships in both English and Japanese; English is the default language. You can switch languages at any time in the app settings.
 
 ---
 
-## スクリーンショット
+## Table of Contents
 
-### ホーム画面（ノート一覧・スペース・カレンダー）
-最近のノートやスペースごとの整理、カレンダーでの日付絞り込み、横断検索を一画面で行えます。
-
-![ホーム画面](docs/screenshots/home.png)
-
-### ノート詳細（AI 要約・アクション項目・文字起こし）
-録音・文字起こしの結果から AI 要約や決定事項、アクション項目を自動整理します。テンプレート（要約プリセット）の切り替えや Notion 同期もワンクリックです。
-
-![ノート詳細画面](docs/screenshots/note-summary.png)
-
-### ノート内チャットポップアップ（検索範囲の切り替え）
-ノート下部のチャットバーから、「このノート」「スペース全体」「アプリ全体」を切り替えて即座に質問できます。
-
-![ノート内チャットポップアップ](docs/screenshots/note-chat-popup.png)
-
-### 横断 AI チャット＆インライン引用
-蓄積されたノート全体を横断して質問し、根拠となるノート・タイムスタンプへのクリック可能な引用バッジ付きで回答を得られます。
-
-![横断AIチャット画面](docs/screenshots/chat.png)
-
-### AI 設定（カスタムプロンプト事前設定・要約プリセット編集）
-AI プロバイダーの設定前でもカスタムプロンプトを事前保存でき、要約プリセットの作成・編集・既定設定を自由に行えます。
-
-![AI設定・要約プリセット画面](docs/screenshots/settings-llm.png)
+- [Screenshots](#screenshots)
+- [Supported Platforms](#supported-platforms)
+- [Key Features](#key-features)
+  - [1. Recording, Meeting Detection and Safeguards](#1-recording-meeting-detection-and-safeguards)
+  - [2. Local-First Transcription](#2-local-first-transcription)
+  - [3. Note Editing, Playback and Export](#3-note-editing-playback-and-export)
+  - [4. AI Summaries, Custom Presets and Live Assistance](#4-ai-summaries-custom-presets-and-live-assistance)
+  - [5. AI Chat Agent and Inline Citations](#5-ai-chat-agent-and-inline-citations)
+  - [6. Data Migration: Granola Import, Obsidian and JSON Backup](#6-data-migration-granola-import-obsidian-and-json-backup)
+  - [7. External Services and MCP Integration](#7-external-services-and-mcp-integration)
+- [Supported Speech Recognition (ASR) Models](#supported-speech-recognition-asr-models)
+- [Setup and Usage](#setup-and-usage)
+- [Privacy and Security](#privacy-and-security)
+- [Architecture and Directory Layout](#architecture-and-directory-layout)
+- [Development, Testing and Build](#development-testing-and-build)
+- [Known Limitations](#known-limitations)
+- [Credits](#credits)
 
 ---
 
-## 対応 OS
+## Screenshots
 
-| OS | アーキテクチャ | 音声キャプチャ方式 | 備考 |
+### Home (note list, spaces, calendar)
+Review recent notes, organize them by space, filter by date on the calendar, and run cross-note search from a single screen.
+
+![Home screen](docs/screenshots/home.png)
+
+### Note detail (AI summary, action items, transcript)
+Recordings and transcripts are automatically turned into AI summaries, decisions, and action items. Switching summary presets or syncing to Notion takes a single click.
+
+![Note detail screen](docs/screenshots/note-summary.png)
+
+### In-note chat popup (switchable search scope)
+From the chat bar at the bottom of a note, switch between "This note", "Entire space", and "Entire app" to ask questions immediately.
+
+![In-note chat popup](docs/screenshots/note-chat-popup.png)
+
+### Cross-note AI chat with inline citations
+Ask questions across all of your accumulated notes and get answers with clickable citation badges pointing to the source notes and timestamps.
+
+![Cross-note AI chat screen](docs/screenshots/chat.png)
+
+### AI settings (pre-configured custom prompts, summary preset editing)
+You can save custom prompts before configuring an AI provider, and freely create, edit, and set defaults for summary presets.
+
+![AI settings and summary presets screen](docs/screenshots/settings-llm.png)
+
+---
+
+## Supported Platforms
+
+| OS | Architecture | Audio capture | Notes |
 |---|---|---|---|
-| **Windows 10 / 11** | x64 | Windows WASAPI（マイク／システム音声ループバック／両方） | インストーラー（NSIS / MSI）配布 |
-| **macOS** | Apple Silicon（arm64） / Intel（x64） | CoreAudio（マイク／仮想デバイス経由システム音声／両方） | DMG / App バンドル配布 |
-| **Linux** | x64 | マイク（ALSA / PulseAudio / PipeWire）、列挙できるモニター入力経由のシステム音声 | AppImage / deb / rpm 配布 |
-| **Linux** | x86（32bit） | マイク（ALSA / PulseAudio / PipeWire）、列挙できるモニター入力経由のシステム音声 | AppImage 配布（i386版 GTK3 / WebKitGTK 4.1 が必要） |
-| **Android** | arm64 / armv7 / x86_64（universal APK） | マイク（AAudio） | APK 配布。縦画面はモバイルUI、横画面はデスクトップUI |
+| **Windows 10 / 11** | x64 | Windows WASAPI (microphone / system audio loopback / both) | Installer distribution (NSIS / MSI) |
+| **macOS** | Apple Silicon (arm64) / Intel (x64) | CoreAudio (microphone / system audio via a virtual device / both) | DMG / app bundle distribution |
+| **Linux** | x64 | Microphone (ALSA / PulseAudio / PipeWire), system audio via enumerable monitor inputs | AppImage / deb / rpm distribution |
+| **Linux** | x86 (32-bit) | Microphone (ALSA / PulseAudio / PipeWire), system audio via enumerable monitor inputs | AppImage distribution (requires i386 GTK3 / WebKitGTK 4.1) |
+| **Android** | arm64 / armv7 / x86_64 (universal APK) | Microphone (AAudio) | APK distribution. Portrait uses the mobile UI, landscape uses the desktop UI |
 
 ---
 
-### Linux 音声入力の確認
+### Checking Linux audio input
 
-1. PulseAudio / PipeWire を使用する場合は、オーディオ設定で録音元に「Monitor of ...」の入力が存在することを確認します。ALSA では利用可能な入力デバイスを確認してください。
-2. Notelet の録音設定でマイクを選び、マイクテスト中に発話して入力レベルが変化することを確認します。
-3. システム音声を録音する場合は「本体音声」を選び、表示されたモニター入力を選択して音声再生中の波形と録音結果を確認します。
-4. 入力が列挙されない場合は PipeWire / PulseAudio / ALSA の入力設定を確認します。録音ログにはホスト、デバイス設定、受信サンプル数が出力されます。マイクテストは入力レベルを継続表示し、レベルが動かない場合はデバイス／権限の設定を確認してください。
+1. When using PulseAudio / PipeWire, confirm that an input named "Monitor of ..." exists as a recording source in your audio settings. On ALSA, check the available input devices.
+2. Select a microphone in Notelet's recording settings and speak during the microphone test to confirm the input level changes.
+3. To record system audio, choose "System audio", select the monitor input that appears, and check the waveform and the recording result while audio is playing.
+4. If no inputs are enumerated, check your PipeWire / PulseAudio / ALSA input configuration. The recording log reports the host, device configuration, and number of samples received. The microphone test continuously displays the input level; if the level does not move, check the device and permission settings.
 
-### Android 版の使い方
+### Using the Android build
 
-1. Releases から `Notelet_<VERSION>_android.apk` をダウンロードし、端末にインストールします（提供元不明のアプリのインストール許可が必要です）。
-2. 初回起動時にマイク権限を求められるので許可します。Android ではマイク録音のみに対応し、システム音声の録音はできません。
-3. 縦画面ではモバイルUI（下部タブ＋録音ボタン）に切り替わり、横画面では従来のデスクトップUIで動作します。
-4. ローカル実行の文字起こしエンジン（whisper.cpp など）は Android では利用できません。設定 → 音声認識で「クラウド API」を選び、API キーを登録してください。
+1. Download `Notelet_<VERSION>_android.apk` from Releases and install it on your device (you must allow installing apps from unknown sources).
+2. Grant the microphone permission requested on first launch. Android supports microphone recording only; system audio cannot be recorded.
+3. In portrait orientation the app switches to a mobile UI (bottom tabs plus a record button); in landscape it runs the familiar desktop UI.
+4. Locally executed transcription engines (such as whisper.cpp) are not available on Android. Go to Settings → Speech Recognition, choose "Cloud API", and register an API key.
 
-### Chromebook / Linux の AppImage ランチャー登録
+### Registering the AppImage launcher on Chromebook / Linux
 
-シェルフへ手動登録する場合は、`~/.local/share/applications/notelet.desktop` などに次のエントリーを作成し、`Exec` と `Icon` を実際のパスに置き換えてください。`StartupWMClass=notelet` がウィンドウとランチャーを紐付けます。
+To add the app to your shelf manually, create an entry such as `~/.local/share/applications/notelet.desktop` and replace `Exec` and `Icon` with the actual paths. `StartupWMClass=notelet` links the window to the launcher entry.
 
 ```ini
 [Desktop Entry]
@@ -98,95 +102,95 @@ Terminal=false
 Categories=Office;
 ```
 
-## 主な機能
+## Key Features
 
-### 1. 録音・会議検出・保護機能
-- **ワンクリック＆グローバルショートカット録音**: 画面上の録音ボタン、またはグローバルショートカット（既定: `CommandOrControl+Shift+R`）から即座に録音を開始できます。
-- **柔軟な入力ソース選択**: マイク単体、PC システム音声単体、または「マイク＋システム音声」の同時録音に対応。外部 Bot を会議に招き入れる必要がありません。
-- **会議アプリ検出**: Zoom / Microsoft Teams / Google Meet などの起動を検知して通知します。
-- **録音中の安全設計**: 経過時間、入力デバイス、リアルタイム波形、無音検知、フローティングオーバーレイを表示。一時停止・再開に対応し、デバイス切断や権限エラー発生時も途中までの WAV 録音をローカルに保持します。
+### 1. Recording, Meeting Detection and Safeguards
+- **One-click and global-shortcut recording**: Start recording instantly from the on-screen record button or a global shortcut (default: `CommandOrControl+Shift+R`).
+- **Flexible input source selection**: Record the microphone alone, PC system audio alone, or both at the same time. No need to invite an external bot into your meetings.
+- **Meeting app detection**: Detects when apps such as Zoom, Microsoft Teams, or Google Meet are launched and notifies you.
+- **Safety while recording**: Shows elapsed time, the input device, a live waveform, silence detection, and a floating overlay. Supports pause and resume, and keeps the partial WAV recording locally if a device disconnects or a permission error occurs.
 
-### 2. ローカルファースト文字起こし
-- **完全ローカル ASR（既定）**:
-  - **Whisper（`whisper.cpp`）** を標準搭載し、設定画面から Hugging Face の量子化モデル（Base / Small / Large v3 Turbo）をワンクリックでダウンロード可能。
-  - **NVIDIA Parakeet（`sherpa-onnx` / TDT・CTC）** および **Qwen ASR** にも対応。
-- **明示選択型のクラウド ASR（BYOK）**: OpenAI / Deepgram / Groq の各 API に対応。ユーザーが API キーを登録して明示的に選択した場合のみ送信し、**ローカルからクラウドへの自動フォールバックは一切行いません**。
-- **音声ファイルのドラッグ＆ドロップ文字起こし**: 既存の録音ファイル（WAV / MP3 / M4A 等）をドロップして文字起こし・ノート化できます。
+### 2. Local-First Transcription
+- **Fully local ASR (default)**:
+  - **Whisper (`whisper.cpp`)** ships built in, and quantized Hugging Face models (Base / Small / Large v3 Turbo) can be downloaded from the settings screen with one click.
+  - Also supports **NVIDIA Parakeet (`sherpa-onnx` / TDT and CTC)** and **Qwen ASR**.
+- **Explicitly opt-in cloud ASR (BYOK)**: Supports the OpenAI, Deepgram, and Groq APIs. Audio is sent only when you register an API key and explicitly select the service; there is **no automatic fallback from local to cloud**.
+- **Drag-and-drop transcription of audio files**: Drop an existing recording (WAV / MP3 / M4A, etc.) to transcribe it and turn it into a note.
 
-### 3. ノート編集・再生・エクスポート
-- **構造化ノートエディタ**: 手入力メモ、AI 要約、決定事項、アクション項目、文字起こしタイムラインを統合管理。
-- **音声同期再生**: セグメント単位の再生、アクティブ区間のハイライト、再生速度変更、無音スキップ機能を搭載。
-- **一括編集・辞書**: タイトル自動生成、専門用語や固有名詞を補正するユーザー辞書に対応。
-- **多彩なコピー・出力**: Markdown / プレーンテキスト / Slack / LINE 形式でのワンクリックコピー、OS 権限案内付きの貼り付け支援に対応。
+### 3. Note Editing, Playback and Export
+- **Structured note editor**: Manage handwritten memos, AI summaries, decisions, action items, and the transcript timeline in one place.
+- **Synced audio playback**: Segment-by-segment playback, highlighting of the active segment, playback speed control, and silence skipping.
+- **Bulk editing and dictionaries**: Automatic title generation and a user dictionary that corrects technical terms and proper nouns.
+- **Versatile copy and export**: One-click copy as Markdown / plain text / Slack / LINE, plus paste assistance with OS permission guidance.
 
-### 4. AI 要約・カスタムプリセット・ライブアシスタンス
-- **多様な LLM プロバイダ対応**: OpenAI / Anthropic / Gemini / Groq / OpenRouter / **Ollama（ローカル LLM）** に対応。
-- **要約プリセットの自由な作成・編集**: 標準議事録、1on1・面談、講義・セミナー、ブレスト等のプリセットに加え、設定画面から独自の要約プリセットを作成・編集・既定設定できます。
-- **カスタムプロンプトの事前設定**: AI プロバイダー設定前でも独自ルール・カスタムプロンプトを事前に保存でき、要約・チャット時に毎回適用されます。
-- **リアルタイム AI アシスト**: 録音・会議中の文脈をもとにリアルタイムで論点や質問候補を補助します。
+### 4. AI Summaries, Custom Presets and Live Assistance
+- **Support for many LLM providers**: OpenAI / Anthropic / Gemini / Groq / OpenRouter / **Ollama (local LLM)**.
+- **Freely create and edit summary presets**: In addition to presets for standard meeting minutes, 1-on-1s and interviews, lectures and seminars, and brainstorming, you can create, edit, and set defaults for your own summary presets in the settings screen.
+- **Pre-configured custom prompts**: Save your own rules and custom prompts even before configuring an AI provider; they are applied to every summary and chat request.
+- **Real-time AI assistance**: Helps surface talking points and candidate questions in real time based on the context of the recording or meeting.
 
-### 5. AI チャットエージェント＆インライン引用
-- **柔軟な検索範囲（「このノート」「スペース全体」「アプリ全体」）**: `Ctrl+K` による高速検索に加え、ノート下部のチャットバーやチャットタブから「このノート」「スペース全体」「アプリ全体」を切り替えて対話形式で質問できます。
-- **クリック可能なインライン引用バッジ**: 回答内の各主張の根拠となった引用元ノート・タイムスタンプに対し、文末へ番号バッジ（`[1]`, `[2]`）を自動付与。ホバーで抜粋プレビュー、クリックで該当ノートへ直接ジャンプできます。
-- **チャットからの直接データ操作**: 自然言語の指示だけで以下の操作を自動実行します（ローカルフォールバック操作にも対応）。
-  - ノートのタイトル変更・新規作成・削除
-  - スペース（カテゴリ）の作成・名前変更・削除・ノートのスペース移動
-  - タグの追加・削除
-  - 要約・手入力メモの書き換え
-  - アクション項目の追加
+### 5. AI Chat Agent and Inline Citations
+- **Flexible search scope ("This note", "Entire space", "Entire app")**: In addition to fast search with `Ctrl+K`, switch between "This note", "Entire space", and "Entire app" from the chat bar at the bottom of a note or from the chat tab to ask questions conversationally.
+- **Clickable inline citation badges**: Every claim in an answer automatically gets a numbered badge (`[1]`, `[2]`) at the end of the sentence for the source note and timestamp it is based on. Hover for an excerpt preview, or click to jump straight to the note.
+- **Direct data operations from chat**: Natural-language instructions alone trigger the following operations (local fallback actions are also supported):
+  - Rename, create, and delete notes
+  - Create, rename, and delete spaces (categories), and move notes between spaces
+  - Add and remove tags
+  - Rewrite summaries and handwritten memos
+  - Add action items
 
-### 6. データ移行（Granola インポート / Obsidian・JSON バックアップ）
-- **Granola からのシームレスな移行**:
-  - Granola 公式 CSV エクスポート
-  - ローカルキャッシュ（`cache-v3.json` 自動読み込み・二重 JSON / ProseMirror 変換対応）
-  - Markdown（`.md`）および ZIP アーカイブ（`.zip`）
-  - Granola API からの直接インポート
-  - ※ すべて重複自動スキップ（デデュプリケーション）に対応しています。
-- **Obsidian / Markdown 一括エクスポート**: 全ノートを YAML frontmatter 付きの Markdown ファイル群（ZIP）として出力できます。
-- **JSON バックアップ＆復元**: アプリ全体のデータを JSON でエクスポートし、別環境への復元・マージが可能です。
+### 6. Data Migration: Granola Import, Obsidian and JSON Backup
+- **Seamless migration from Granola**:
+  - Granola's official CSV export
+  - Local cache (`cache-v3.json` is loaded automatically; double-encoded JSON and ProseMirror conversion are supported)
+  - Markdown (`.md`) and ZIP archives (`.zip`)
+  - Direct import from the Granola API
+  - ※ All import paths support automatic duplicate skipping (deduplication).
+- **Bulk Obsidian / Markdown export**: Export all notes as a set of Markdown files with YAML frontmatter (ZIP).
+- **JSON backup and restore**: Export all app data as JSON and restore or merge it into another environment.
 
-### 7. 外部サービス＆MCP 連携
-- **Notion 双方向同期**:
-  - OAuth 2.0 または Internal Integration Token で接続し、保存先データベース／ページおよびプロパティ（タイトル・要約・日時等）をマッピング。
-  - 既存ページ ID を保持して重複作成を防止し、Notion 側からの取り込み（Pull）にも対応。
-- **カレンダー連携（ICS URL）**: Google Calendar や Outlook の非公開 ICS URL を購読し、会議予定・参加者を自動取得してノートと紐付けます。
-- **Issue / タスク起票**: ノート内のアクション項目から **GitHub Issues / Linear / Jira** へワンクリックで Issue を起票できます。
-- **Slack / 汎用 Webhook**: 要約やアクション項目を明示操作でチャネルへ共有します。
-- **MCP サーバー同梱（`mcp-server/index.mjs`）**: Node.js 18+ で動作する標準入出力（stdio）ベースの読み取り専用 MCP サーバーを同梱。Claude Desktop や Cursor などの AI クライアントからローカルの Notelet ノートを検索・一覧取得・全文参照できます。
+### 7. External Services and MCP Integration
+- **Two-way Notion sync**:
+  - Connect via OAuth 2.0 or an Internal Integration Token, then map the destination database or page and its properties (title, summary, date and time, etc.).
+  - Keeps existing page IDs to prevent duplicate creation, and also supports pulling changes from Notion.
+- **Calendar integration (ICS URL)**: Subscribe to a private ICS URL from Google Calendar or Outlook to automatically fetch meeting events and attendees and link them to notes.
+- **Issue and task filing**: File issues to **GitHub Issues / Linear / Jira** from action items in a note with one click.
+- **Slack and generic webhooks**: Share summaries and action items to a channel through an explicit action.
+- **Bundled MCP server (`mcp-server/index.mjs`)**: A read-only, stdio-based MCP server that runs on Node.js 18+ ships with the app. AI clients such as Claude Desktop and Cursor can search, list, and read the full text of local Notelet notes.
 
 ---
 
-## 対応音声認識（ASR）モデル
+## Supported Speech Recognition (ASR) Models
 
-| モデル / ランタイム | 言語 | 必要メモリ目安 | モデルサイズ目安 | ライセンス | 処理方式 |
+| Model / runtime | Languages | Typical memory | Typical model size | License | Processing mode |
 |---|---|---|---|---|---|
-| **Whisper Base** (`ggml-base.bin`) | 日本語・英語・多言語 | 約 500 MB | 142 MB | MIT (`whisper.cpp` / OpenAI Whisper) | 録音後処理 |
-| **Whisper Small Q5_1** (`ggml-small-q5_1.bin`) | 日本語・英語・多言語 | 約 850 MB | 181 MB | MIT | 録音後処理 |
-| **Whisper Large v3 Turbo Q5_0** | 日本語・英語・多言語 | 約 1.8 GB | 547 MB | MIT | 録音後処理 |
-| **NVIDIA Parakeet TDT/CTC 0.6B 日本語** | 日本語（句読点対応） | 約 2.4 GB | 640 MB | CC-BY-4.0 (NVIDIA) / Apache-2.0 (`sherpa-onnx`) | 録音後処理 |
-| **NVIDIA Parakeet TDT 0.6B v3** | 英語・欧州 25 言語 | 約 2.4 GB | 640 MB | CC-BY-4.0 / Apache-2.0 | 録音後処理 |
-| **Qwen ASR** | 日本語・英語・多言語 | 環境依存 | モデル依存 | Apache-2.0 等 | 録音後処理 |
-| **OpenAI / Groq / Deepgram Nova-2**（クラウド・BYOK） | 日本語・英語・多言語 | - | - | 商用 API | 録音後処理 |
+| **Whisper Base** (`ggml-base.bin`) | Japanese, English, multilingual | ~500 MB | 142 MB | MIT (`whisper.cpp` / OpenAI Whisper) | Post-recording |
+| **Whisper Small Q5_1** (`ggml-small-q5_1.bin`) | Japanese, English, multilingual | ~850 MB | 181 MB | MIT | Post-recording |
+| **Whisper Large v3 Turbo Q5_0** | Japanese, English, multilingual | ~1.8 GB | 547 MB | MIT | Post-recording |
+| **NVIDIA Parakeet TDT/CTC 0.6B Japanese** | Japanese (punctuation aware) | ~2.4 GB | 640 MB | CC-BY-4.0 (NVIDIA) / Apache-2.0 (`sherpa-onnx`) | Post-recording |
+| **NVIDIA Parakeet TDT 0.6B v3** | English and 25 European languages | ~2.4 GB | 640 MB | CC-BY-4.0 / Apache-2.0 | Post-recording |
+| **Qwen ASR** | Japanese, English, multilingual | Depends on setup | Depends on model | Apache-2.0, etc. | Post-recording |
+| **OpenAI / Groq / Deepgram Nova-2** (cloud, BYOK) | Japanese, English, multilingual | - | - | Commercial API | Post-recording |
 
 ---
 
-## セットアップと使い方
+## Setup and Usage
 
-### 1. ローカル音声認識ランタイムの準備
-- **Whisper（推奨）**:
-  1. `whisper.cpp` の `whisper-cli`（Windows では `whisper-cli.exe`）を `PATH` に通すか、アプリ内の **設定 ＞ ASRモデル** で実行ファイルのパスを指定します。
-  2. 同画面から使いたいモデル（`ggml-base.bin` 等）をワンクリックでダウンロードします。
+### 1. Preparing the local speech recognition runtime
+- **Whisper (recommended)**:
+  1. Put `whisper-cli` from `whisper.cpp` (on Windows, `whisper-cli.exe`) on your `PATH`, or specify the executable path under **Settings > ASR Models** in the app.
+  2. Download the model you want to use (`ggml-base.bin`, etc.) from the same screen with one click.
 - **Parakeet**:
-  1. `sherpa-onnx-offline` を導入してパスを指定します。
-  2. `nvidia/parakeet-tdt_ctc-0.6b-ja` などの ONNX エクスポート済みモデルディレクトリをローカルモデルフォルダに配置します。
+  1. Install `sherpa-onnx-offline` and specify its path.
+  2. Place an ONNX-exported model directory such as `nvidia/parakeet-tdt_ctc-0.6b-ja` in your local model folder.
 
-### 2. Notion 連携の設定
-1. **設定 ＞ Notion・連携・MCP** を開きます。
-2. Internal Integration Token を直接保存するか、OAuth 2.0（Client ID / Client Secret / Redirect URI）で認可してトークンを取得します。
-3. 「保存先を検索」から保存先のデータベースまたはページを選択し、プロパティマッピング（タイトル・要約・日時等）を確認します。
+### 2. Configuring the Notion integration
+1. Open **Settings > Notion, Integrations, MCP**.
+2. Either save an Internal Integration Token directly, or authorize with OAuth 2.0 (Client ID / Client Secret / Redirect URI) to obtain a token.
+3. Use "Search destinations" to select the destination database or page, then confirm the property mapping (title, summary, date and time, etc.).
 
-### 3. MCP サーバーの設定（Claude Desktop / Cursor 等）
-アプリ内の **設定 ＞ Notion・連携・MCP** から設定用 JSON をワンクリックで生成・コピーできます。手動設定する場合は以下のように `mcp-server/index.mjs` を指定します（Node.js 18 以上が必要）。
+### 3. Configuring the MCP server (Claude Desktop, Cursor, etc.)
+You can generate and copy the configuration JSON with one click from **Settings > Notion, Integrations, MCP** in the app. To configure it manually, point to `mcp-server/index.mjs` as shown below (requires Node.js 18 or later).
 
 ```json
 {
@@ -201,85 +205,85 @@ Categories=Office;
   }
 }
 ```
-※ `NOTELET_DATA_PATH` を省略した場合、OS 標準のアプリケーションデータディレクトリ配下にある `notelet_data.json` を自動検出します。アプリ本体の保存先を変更する場合は `NOTELET_DATA_DIR` を指定してください。旧バージョンのデータは初回起動時に自動で `Notelet` 配下へ移行されます。
+※ If `NOTELET_DATA_PATH` is omitted, `notelet_data.json` is detected automatically inside the OS's standard application data directory. To change where the app itself stores data, set `NOTELET_DATA_DIR`. Data from older versions is migrated automatically into the `Notelet` directory on first launch.
 
 ---
 
-## プライバシーとセキュリティ
+## Privacy and Security
 
-- **ローカルファースト設計**: 文字起こし本文・手入力メモ・設定データはローカルの `notelet_data.json` に保存され、監査ログや解析イベントに本文を含めません。
-- **資格情報の安全な保管**: API キーや OAuth トークンは OS 標準の資格情報ストア（Windows 資格情報マネージャ / macOS Keychain）および AES-256-GCM 暗号化ボールトに保存します。
-- **録音データの暗号化と圧縮**: 保持する音声ファイルは **AES-256-GCM** で暗号化して保存でき、ストレージ節約のための再エンコード圧縮（16kHz モノラル）にも対応しています。
-- **外部通信の透明性**: クラウド ASR を選択した場合は音声ファイルのみを、クラウド LLM を選択した場合はテキストデータ（文字起こし・メモ）のみを送信します。
-- **コンプライアンス表記**: HIPAA、SOC 2、DPA 等の第三者認証・契約は取得していないため、準拠済みとは表示しません。
+- **Local-first design**: Transcripts, handwritten memos, and settings are stored in the local `notelet_data.json`, and their contents are never included in audit logs or analytics events.
+- **Secure credential storage**: API keys and OAuth tokens are stored in the OS's native credential store (Windows Credential Manager / macOS Keychain) and in an AES-256-GCM encrypted vault.
+- **Encryption and compression of recordings**: Retained audio files can be stored encrypted with **AES-256-GCM**, and re-encoding compression (16 kHz mono) is available to save storage.
+- **Transparent external communication**: If you choose cloud ASR, only the audio file is sent; if you choose a cloud LLM, only text data (transcripts and memos) is sent.
+- **Compliance statements**: Third-party certifications and agreements such as HIPAA, SOC 2, and DPAs have not been obtained, so the app does not claim compliance with them.
 
 ---
 
-## アーキテクチャ・ディレクトリ構成
+## Architecture and Directory Layout
 
-フロントエンドは **React 19 + TypeScript + Vite**、デスクトップバックエンドは **Tauri v2（Rust）** で構成されています。
+The frontend is built with **React 19 + TypeScript + Vite**, and the desktop backend with **Tauri v2 (Rust)**.
 
 ```text
 Notelet/
-├── src/                        # React フロントエンド (UI / 状態管理 / インポート・エクスポート)
-│   ├── components/             # 画面コンポーネント (録音 / エディタ / チャット / 設定 / 連携)
-│   ├── lib/                    # Tauri IPC ラッパー, Granola 変換, ZIP / Markdown 出力
-│   ├── styles/                 # Base Design System 準拠の CSS トークン・スタイル
-│   └── test/                   # Vitest + React Testing Library テストスイート
-├── src-tauri/                  # Tauri v2 / Rust バックエンド
+├── src/                        # React frontend (UI / state management / import & export)
+│   ├── components/             # Screen components (recording / editor / chat / settings / integrations)
+│   ├── lib/                    # Tauri IPC wrappers, Granola conversion, ZIP / Markdown output
+│   ├── styles/                 # CSS tokens and styles following the Base Design System
+│   └── test/                   # Vitest + React Testing Library test suite
+├── src-tauri/                  # Tauri v2 / Rust backend
 │   ├── src/
-│   │   ├── asr.rs              # Whisper / Parakeet / Qwen / クラウド ASR 実行エンジン
-│   │   ├── audio.rs            # WASAPI / CoreAudio 録音・波形・暗号化・圧縮処理
-│   │   ├── llm.rs              # 各種 LLM 呼び出し・要約・チャットエージェント・インライン引用
-│   │   ├── notion.rs           # Notion OAuth / DB マッピング / 双方向同期
-│   │   ├── integrations.rs     # ICS カレンダー / GitHub・Linear・Jira 起票 / Webhook
-│   │   ├── secrets.rs          # OS Keychain / 資格情報マネージャ・暗号化ボールト
-│   │   ├── storage.rs          # ローカル JSON 永続化・監査ログ
-│   │   └── updater.rs          # GitHub Releases ベースのアプリ更新確認
-│   └── tauri.conf.json         # Tauri ビルド・ウィンドウ・バンドル設定
+│   │   ├── asr.rs              # Whisper / Parakeet / Qwen / cloud ASR execution engines
+│   │   ├── audio.rs            # WASAPI / CoreAudio recording, waveform, encryption, compression
+│   │   ├── llm.rs              # LLM calls, summaries, chat agent, inline citations
+│   │   ├── notion.rs           # Notion OAuth / DB mapping / two-way sync
+│   │   ├── integrations.rs     # ICS calendar / GitHub, Linear, Jira filing / webhooks
+│   │   ├── secrets.rs          # OS Keychain / Credential Manager and encrypted vault
+│   │   ├── storage.rs          # Local JSON persistence and audit logging
+│   │   └── updater.rs          # Update checks based on GitHub Releases
+│   └── tauri.conf.json         # Tauri build, window, and bundle configuration
 ├── mcp-server/
-│   └── index.mjs               # Node.js 製 stdio MCP サーバー (読み取り専用ツール群)
-└── .github/workflows/          # CI テスト (build.yml) & マルチプラットフォームリリース (release.yml)
+│   └── index.mjs               # Node.js stdio MCP server (read-only tools)
+└── .github/workflows/          # CI tests (build.yml) and multi-platform releases (release.yml)
 ```
 
 ---
 
-## 開発・テスト・ビルド
+## Development, Testing and Build
 
-### 前提条件
-- **Node.js**: 18 以上（CI では Node 24 を使用）
-- **Rust**: stable ツールチェーン
-- **OS 別ビルドツール**:
-  - **Windows**: Visual Studio Build Tools（「C++ によるデスクトップ開発」ワークロード）
+### Prerequisites
+- **Node.js**: 18 or later (CI uses Node 24)
+- **Rust**: stable toolchain
+- **OS-specific build tools**:
+  - **Windows**: Visual Studio Build Tools (the "Desktop development with C++" workload)
   - **macOS**: Xcode Command Line Tools
   - **Linux (Debian/Ubuntu)**: `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libssl-dev libsecret-1-dev`
 
-### コマンド一覧
+### Command reference
 
 ```bash
-# 依存パッケージのインストール
+# Install dependencies
 npm install
 
-# フロントエンドのビルド（TypeScript 型チェック + Vite バンドル）
+# Build the frontend (TypeScript type check + Vite bundle)
 npm run build
 
-# ユニット・コンポーネントテスト実行（音声・外部 API はモック）
+# Run unit and component tests (audio and external APIs are mocked)
 npm test -- --run
 
-# Rust バックエンドのテスト実行
+# Run the Rust backend tests
 cargo test --manifest-path src-tauri/Cargo.toml
 
-# Tauri デスクトップアプリの開発モード起動
+# Start the Tauri desktop app in development mode
 npm run tauri dev
 
-# リリース用インストーラー / パッケージのビルド
+# Build release installers / packages
 npm run tauri build
 
-# Android APK のビルド（要 Android SDK / NDK / JDK 17+）
+# Build the Android APK (requires Android SDK / NDK / JDK 17+)
 npx tauri android build --apk
 ```
 
-### MCP サーバー単体動作確認
+### Verifying the MCP server on its own
 
 ```bash
 printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' | node mcp-server/index.mjs
@@ -287,15 +291,15 @@ printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n{"jsonrpc":"
 
 ---
 
-## 既知の制限
+## Known Limitations
 
-- **macOS でのシステム音声録音**: macOS の仕様上、PC のシステム音声単体またはマイクとの同時録音を行うには、BlackHole などの仮想オーディオデバイスの導入と複数出力装置の設定が必要です。
-- **Android の音声認識**: ローカル実行エンジンを同梱していないため、録音の文字起こしにはクラウド ASR の API キーが必要です。システム音声の録音には対応しません。
-- **エンタープライズ向け中央管理機能**: SSO（SAML / OIDC）、SCIM プロビジョニング、集中監査 API、一元請求サーバーなどのサーバーサイド基盤は未実装です（ローカルファースト設計のため）。
-- **旧ブランド（KoeNote）互換フォールバックの廃止予定**: `KOENOTE_DATA_DIR` / `KOENOTE_MCP_SCOPE` 環境変数および `koenote_data.json` / 旧キーチェーンサービス名の移行フォールバックは **v1.0.0** で削除予定です。
+- **System audio recording on macOS**: Due to macOS restrictions, recording PC system audio alone or together with the microphone requires installing a virtual audio device such as BlackHole and configuring a multi-output device.
+- **Speech recognition on Android**: Because no local execution engine is bundled, transcribing recordings requires a cloud ASR API key. System audio recording is not supported.
+- **Enterprise central management features**: Server-side infrastructure such as SSO (SAML / OIDC), SCIM provisioning, a centralized audit API, and a billing server is not implemented, by design as a local-first app.
+- **Deprecation of the legacy brand (KoeNote) compatibility fallback**: The `KOENOTE_DATA_DIR` / `KOENOTE_MCP_SCOPE` environment variables and the migration fallbacks for `koenote_data.json` and the old keychain service name are scheduled for removal in **v1.0.0**.
 
 ---
 
-## クレジット
+## Credits
 
-- UI デザインの構成およびデザイントークン設計は、Uber Design による Figma コミュニティファイル「[Base Gallery](https://www.figma.com/community)」(CC BY 4.0) および Base Design System を参照しています。
+- The UI design structure and design token design reference the Figma community file "[Base Gallery](https://www.figma.com/community)" by Uber Design (CC BY 4.0) and the Base Design System.

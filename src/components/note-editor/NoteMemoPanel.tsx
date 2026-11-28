@@ -1,4 +1,5 @@
 import React from 'react';
+import { t } from '../../i18n';
 
 interface NoteMemoPanelProps {
   memoEditorRef: React.RefObject<HTMLDivElement | null>;
@@ -15,7 +16,7 @@ export const NoteMemoPanel: React.FC<NoteMemoPanelProps> = React.memo(({
 }) => (
   <div className="note-notes-tab">
     <section className="note-card" style={{ padding: 0 }}>
-      <div className="rich-memo-toolbar" role="toolbar" aria-label="メモ書式ツールバー">
+      <div className="rich-memo-toolbar" role="toolbar" aria-label={t('メモ書式ツールバー')}>
         <button
           type="button"
           className="rich-memo-tool-btn"
@@ -54,7 +55,7 @@ export const NoteMemoPanel: React.FC<NoteMemoPanelProps> = React.memo(({
             applyMemoCommand('bold');
           }}
         >
-          <strong>太字</strong>
+          <strong>{t('太字')}</strong>
         </button>
         <button
           type="button"
@@ -64,7 +65,7 @@ export const NoteMemoPanel: React.FC<NoteMemoPanelProps> = React.memo(({
             applyMemoCommand('underline');
           }}
         >
-          <u>下線</u>
+          <u>{t('下線')}</u>
         </button>
         <button
           type="button"
@@ -74,13 +75,13 @@ export const NoteMemoPanel: React.FC<NoteMemoPanelProps> = React.memo(({
             applyMemoCommand('insertUnorderedList');
           }}
         >
-          箇条書き
+          {t('箇条書き')}
         </button>
       </div>
       <div
         ref={memoEditorRef}
         role="textbox"
-        aria-label="自由メモ帳"
+        aria-label={t('自由メモ帳')}
         aria-multiline="true"
         contentEditable
         suppressContentEditableWarning

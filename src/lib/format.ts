@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { Note } from '../types';
 
 export function formatMs(ms: number): string {
@@ -23,10 +24,10 @@ export function formatNoteTimer(ms: number): string {
 }
 
 export function formatMonthDay(iso: string): string {
-  if (!iso) return '11月20日';
+  if (!iso) return t('11月20日');
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '11月20日';
-  return `${d.getMonth() + 1}月${d.getDate()}日`;
+  if (Number.isNaN(d.getTime())) return t('11月20日');
+  return t('{0}月{1}日', [d.getMonth() + 1, d.getDate()]);
 }
 
 export function formatDateTime(iso: string): string {
@@ -46,92 +47,110 @@ export function formatNoteForCopy(
   note: Note,
   format: 'markdown' | 'plain' | 'slack' | 'line'
 ): string {
-  const title = note.title.trim() || '無題のノート';
+  const title = note.title.trim() || t('無題のノート');
   const dateStr = formatDateTime(note.created_at);
   const cleanMemo = note.manual_notes.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 
   if (format === 'slack') {
-    const lines: string[] = [`*【${title}】* (${dateStr})`];
+    const lines: string[] = [t('*【{0}】* ({1})', [title, dateStr])];
     if (note.participants.length > 0) {
-      lines.push(`参加者: ${note.participants.join(', ')}`);
+      lines.push(`${t('参加者')}: ${note.participants.join(', ')}`);
     }
     if (note.summary.trim()) {
-      lines.push('', '*■ 要約*', note.summary.trim().replace(/^#{1,3}\s+/gm, '• '));
+      lines.push(
+        '',
+        t('*■ {0}*', [t('要約')]),
+        note.summary.trim().replace(/^#{1,3}\s+/gm, '• ')
+      );
     }
     if (note.decisions.length > 0) {
-      lines.push('', '*■ 決定事項*', ...note.decisions.map((d) => `• ${d}`));
+      lines.push('', t('*■ {0}*', [t('決定事項')]), ...note.decisions.map((d) => `• ${d}`));
     }
     if (note.action_items.length > 0) {
       lines.push(
         '',
-        '*■ ネクストアクション*',
+        t('*■ {0}*', [t('ネクストアクション')]),
         ...note.action_items.map(
           (a) => `[${a.done ? 'x' : ' '}] ${a.text}${a.assignee ? ` (@${a.assignee})` : ''}`
         )
       );
     }
     if (cleanMemo) {
-      lines.push('', '*■ メモ*', cleanMemo);
+      lines.push('', t('*■ {0}*', [t('メモ')]), cleanMemo);
     }
     return lines.join('\n');
   }
 
   if (format === 'plain' || format === 'line') {
-    const lines: string[] = [`■ ${title}`, `日時: ${dateStr}`];
+    const lines: string[] = [t('■ {0}', [title]), `${t('日時')}: ${dateStr}`];
     if (note.participants.length > 0) {
-      lines.push(`参加者: ${note.participants.join('、')}`);
+      lines.push(`${t('参加者')}: ${note.participants.join('、')}`);
     }
     if (note.summary.trim()) {
-      lines.push('', '【要約】', note.summary.trim().replace(/^#{1,3}\s+/gm, '■ ').replace(/\*\*/g, ''));
+      lines.push(
+        '',
+        t('【{0}】', [t('要約')]),
+        note.summary.trim().replace(/^#{1,3}\s+/gm, '■ ').replace(/\*\*/g, '')
+      );
     }
     if (note.decisions.length > 0) {
-      lines.push('', '【決定事項】', ...note.decisions.map((d) => `・${d}`));
+      lines.push('', t('【{0}】', [t('決定事項')]), ...note.decisions.map((d) => `・${d}`));
     }
     if (note.action_items.length > 0) {
       lines.push(
         '',
-        '【アクション項目】',
-        ...note.action_items.map((a) => `[${a.done ? '済' : '未'}] ${a.text}${a.assignee ? `（${a.assignee}）` : ''}`)
+        t('【{0}】', [t('アクション項目')]),
+        ...note.action_items.map(
+          (a) =>
+            `[${a.done ? t('済') : t('未')}] ${a.text}${a.assignee ? `（${a.assignee}）` : ''}`
+        )
       );
     }
     if (cleanMemo) {
-      lines.push('', '【メモ】', cleanMemo);
+      lines.push('', t('【{0}】', [t('メモ')]), cleanMemo);
     }
     if (format === 'plain' && note.segments.length > 0) {
       lines.push(
         '',
-        '【文字起こし】',
-        ...note.segments.map((s) => `[${formatMs(s.start_ms)}] ${s.speaker || '発言'}: ${s.text}`)
+        t('【{0}】', [t('文字起こし')]),
+        ...note.segments.map(
+          (s) => `[${formatMs(s.start_ms)}] ${s.speaker || t('発言')}: ${s.text}`
+        )
       );
     }
     return lines.join('\n');
   }
 
-  const md: string[] = [`# ${title}`, `- 日時: ${dateStr}`];
+  const md: string[] = [`# ${title}`, `- ${t('日時')}: ${dateStr}`];
   if (note.participants.length > 0) {
-    md.push(`- 参加者: ${note.participants.join(', ')}`);
+    md.push(`- ${t('参加者')}: ${note.participants.join(', ')}`);
   }
   if (note.summary.trim()) {
-    md.push('', '## 要約', note.summary.trim());
+    md.push('', `## ${t('要約')}`, note.summary.trim());
   }
   if (note.decisions.length > 0) {
-    md.push('', '## 決定事項', ...note.decisions.map((d) => `- ${d}`));
+    md.push('', `## ${t('決定事項')}`, ...note.decisions.map((d) => `- ${d}`));
   }
   if (note.action_items.length > 0) {
     md.push(
       '',
-      '## アクション項目',
-      ...note.action_items.map((a) => `- [${a.done ? 'x' : ' '}] ${a.text}${a.assignee ? `（担当: ${a.assignee}）` : ''}`)
+      `## ${t('アクション項目')}`,
+      ...note.action_items.map(
+        (a) =>
+          `- [${a.done ? 'x' : ' '}] ${a.text}${a.assignee ? t('（担当: {0}）', [a.assignee]) : ''}`
+      )
     );
   }
   if (cleanMemo) {
-    md.push('', '## 手入力メモ', cleanMemo);
+    md.push('', `## ${t('手入力メモ')}`, cleanMemo);
   }
   if (note.segments.length > 0) {
     md.push(
       '',
-      '## 文字起こし',
-      ...note.segments.map((s) => `- \`${formatMs(s.start_ms)}\` **${s.speaker || '発言'}**: ${s.text}`)
+      `## ${t('文字起こし')}`,
+      ...note.segments.map(
+        (s) => `- \`${formatMs(s.start_ms)}\` **${s.speaker || t('発言')}**: ${s.text}`
+      )
     );
   }
   return md.join('\n');
@@ -147,7 +166,7 @@ export function createEmptyNote(folderId = 'personal'): Note {
   });
   return {
     id: crypto.randomUUID(),
-    title: `録音ノート ${label}`,
+    title: t('録音ノート {0}', [label]),
     created_at: now.toISOString(),
     updated_at: now.toISOString(),
     duration_sec: 0,
@@ -161,7 +180,7 @@ export function createEmptyNote(folderId = 'personal'): Note {
     action_items: [],
     follow_up_draft: '',
     asr_model_id: '',
-    asr_provider_label: '未文字起こし',
+    asr_provider_label: t('未文字起こし'),
     language: 'ja',
     diarization_supported: false,
     notion_sync: {
@@ -209,23 +228,26 @@ export function findNoteSearchMatches(note: Note, query: string): NoteSearchMatc
   if (!q) return [];
   const results: NoteSearchMatch[] = [];
 
-  const titleHit = buildSnippetAround(note.title || '無題のノート', q);
+  const titleHit = buildSnippetAround(note.title || t('無題のノート'), q);
   if (titleHit) {
-    results.push({ source: 'タイトル', ...titleHit });
+    results.push({ source: t('タイトル'), ...titleHit });
   }
   const summaryHit = buildSnippetAround(note.summary, q);
   if (summaryHit) {
-    results.push({ source: '要約', ...summaryHit });
+    results.push({ source: t('要約'), ...summaryHit });
   }
   const memoHit = buildSnippetAround(note.manual_notes, q);
   if (memoHit) {
-    results.push({ source: 'メモ', ...memoHit });
+    results.push({ source: t('メモ'), ...memoHit });
   }
   for (const seg of note.segments) {
     if (results.length >= 3) break;
     const segHit = buildSnippetAround(seg.text, q);
     if (segHit) {
-      results.push({ source: `文字起こし ${formatMs(seg.start_ms)}`, ...segHit });
+      results.push({
+        source: t('文字起こし {0}', [formatMs(seg.start_ms)]),
+        ...segHit,
+      });
     }
   }
   return results;
