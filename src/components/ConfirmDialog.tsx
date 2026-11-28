@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { t } from '../i18n';
 
 interface ConfirmRequest {
   title: string;
@@ -11,13 +12,13 @@ interface ConfirmRequest {
 let activeListener: ((req: ConfirmRequest) => void) | null = null;
 
 export function confirmDeleteDialog(title: string, detail?: string): Promise<boolean> {
-  return confirmActionDialog(title, detail, '削除する', true);
+  return confirmActionDialog(title, detail, t('削除する'), true);
 }
 
 export function confirmActionDialog(
   title: string,
   detail?: string,
-  confirmLabel = '開く',
+  confirmLabel = t('開く'),
   isDanger = false
 ): Promise<boolean> {
   if (activeListener) {
@@ -54,7 +55,7 @@ export const ConfirmDialogHost: React.FC = () => {
       className="settings-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="確認"
+      aria-label={t('確認')}
       style={{ zIndex: 300 }}
       onClick={(e) => {
         if (e.target === e.currentTarget) handleClose(false);
@@ -84,7 +85,7 @@ export const ConfirmDialogHost: React.FC = () => {
             className="btn btn-secondary"
             onClick={() => handleClose(false)}
           >
-            キャンセル
+            {t('キャンセル')}
           </button>
           <button
             type="button"

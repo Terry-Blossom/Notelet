@@ -3,6 +3,7 @@ import { ArrowDown, Check, FileText, History, Plus, X } from 'lucide-react';
 import { ChatCitation, ChatHistoryItem, PopupChatSession } from '../../types';
 import { formatDateTime } from '../../lib/format';
 import { StreamingMarkdownArticle } from '../StreamingMarkdownArticle';
+import { t } from '../../i18n';
 
 interface NoteChatPopupProps {
   open: boolean;
@@ -80,7 +81,7 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
   const session = allSortedSessions.find((s) => s.id === lastSessionByScope[scopeKey]) ?? null;
 
   return (
-    <div className="note-chat-popup" role="dialog" aria-label="チャット">
+    <div className="note-chat-popup" role="dialog" aria-label={t('チャット')}>
       <div className="note-chat-popup-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0, flexWrap: 'wrap' }}>
           {!isSpacePage ? (
@@ -91,7 +92,7 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
                 style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
                 onClick={() => onChangeChatScope('note')}
               >
-                このノート
+                {t('このノート')}
               </button>
               <button
                 type="button"
@@ -99,7 +100,7 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
                 style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
                 onClick={() => onChangeChatScope('space')}
               >
-                スペース全体
+                {t('スペース全体')}
               </button>
               <button
                 type="button"
@@ -107,20 +108,20 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
                 style={{ height: '28px', padding: '0 12px', fontSize: '12px' }}
                 onClick={() => onChangeChatScope('all')}
               >
-                アプリ全体
+                {t('アプリ全体')}
               </button>
             </>
           ) : (
             <span className="status-chip" style={{ fontSize: '12px' }}>
-              スペース全体
+              {t('スペース全体')}
             </span>
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
           <button
             type="button"
-            aria-label="新しいチャット"
-            title="新しいチャット"
+            aria-label={t('新しいチャット')}
+            title={t('新しいチャット')}
             className="btn btn-ghost"
             style={{ width: '28px', height: '28px', padding: 0 }}
             onClick={() => onNewChat(scopeKey)}
@@ -129,8 +130,8 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
           </button>
           <button
             type="button"
-            aria-label="チャット履歴"
-            title="チャット履歴"
+            aria-label={t('チャット履歴')}
+            title={t('チャット履歴')}
             aria-pressed={chatHistoryOpen}
             className={`btn btn-ghost ${chatHistoryOpen ? 'active' : ''}`}
             style={{
@@ -146,8 +147,8 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
           </button>
           <button
             type="button"
-            aria-label="チャットを閉じる"
-            title="閉じる"
+            aria-label={t('チャットを閉じる')}
+            title={t('閉じる')}
             className="btn btn-ghost"
             style={{ width: '28px', height: '28px', padding: 0 }}
             onClick={onClose}
@@ -161,7 +162,7 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
         {chatHistoryOpen ? (
           allSortedSessions.length === 0 ? (
             <div className="text-muted" style={{ fontSize: '13px' }}>
-              チャット履歴はまだありません。
+              {t('チャット履歴はまだありません。')}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -191,7 +192,7 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
                       {s.title}
                     </strong>
                     <span className="text-muted mono-num" style={{ fontSize: '11px' }}>
-                      {formatDateTime(s.updatedAt)} ・ {s.messages.length} 件のメッセージ
+                      {formatDateTime(s.updatedAt)} ・ {t('{0} 件のメッセージ', [s.messages.length])}
                     </span>
                   </div>
                 </button>
@@ -200,7 +201,7 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
           )
         ) : !session || session.messages.length === 0 ? (
           <div className="text-muted" style={{ fontSize: '13px' }}>
-            下の入力欄から何でも質問できます。過去のチャットは右上の履歴ボタンから呼び出せます。
+            {t('下の入力欄から何でも質問できます。過去のチャットは右上の履歴ボタンから呼び出せます。')}
           </div>
         ) : (
           <>
@@ -251,7 +252,7 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
                         }}
                       >
                         <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--ns-text-muted)' }}>
-                          引用元のノート・該当箇所
+                          {t('引用元のノート・該当箇所')}
                         </span>
                         {m.citations.map((c, cIdx) => (
                           <button
@@ -321,7 +322,7 @@ export const NoteChatPopup: React.FC<NoteChatPopupProps> = ({
               }}
             >
               <ArrowDown size={13} strokeWidth={1.75} aria-hidden="true" />
-              <span>最新↓</span>
+              <span>{t('最新↓')}</span>
             </button>
           </>
         )}

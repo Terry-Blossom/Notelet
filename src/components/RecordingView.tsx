@@ -3,6 +3,7 @@ import { Pause, Play, Square, AlertTriangle, Copy, Check } from 'lucide-react';
 import { AppSettings, RecordingStatus, TranscriptSegment } from '../types';
 import { formatMs } from '../lib/format';
 import { WaveformMeter } from './WaveformMeter';
+import { t } from '../i18n';
 
 interface RecordingViewProps {
   status: RecordingStatus;
@@ -45,7 +46,7 @@ export const RecordingView: React.FC<RecordingViewProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span className={`status-chip ${isError ? 'danger' : isPaused ? 'warn' : 'danger'}`}>
             <span className="status-dot" />
-            {isError ? '録音エラー（途中データを保護）' : isPaused ? '一時停止中' : '録音中'}
+            {isError ? t('録音エラー（途中データを保護）') : isPaused ? t('一時停止中') : t('録音中')}
           </span>
           <span className="mono-num" style={{ fontSize: '24px', fontWeight: 600 }}>
             {formatMs(status.elapsed_ms)}
@@ -57,18 +58,18 @@ export const RecordingView: React.FC<RecordingViewProps> = ({
             isPaused ? (
               <button type="button" className="btn btn-secondary" onClick={onResume}>
                 <Play size={16} strokeWidth={1.5} />
-                再開
+                {t('再開')}
               </button>
             ) : (
               <button type="button" className="btn btn-secondary" onClick={onPause}>
                 <Pause size={16} strokeWidth={1.5} />
-                一時停止
+                {t('一時停止')}
               </button>
             )
           )}
           <button type="button" className="btn btn-danger" onClick={onStopAndFinish}>
             <Square size={16} strokeWidth={1.5} />
-            {isError ? '途中までの録音を確認' : '録音を停止して文字起こし'}
+            {isError ? t('途中までの録音を確認') : t('録音を停止して文字起こし')}
           </button>
         </div>
       </div>
@@ -77,10 +78,10 @@ export const RecordingView: React.FC<RecordingViewProps> = ({
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-            入力デバイス: <strong style={{ color: 'var(--text-primary)' }}>{status.device_name || '既定デバイス'}</strong>
+            {t('入力デバイス: ')}<strong style={{ color: 'var(--text-primary)' }}>{status.device_name || t('既定デバイス')}</strong>
           </div>
           <div className="text-muted">
-            ローカルWAVへ逐次保存中
+            {t('ローカルWAVへ逐次保存中')}
           </div>
         </div>
 
@@ -104,7 +105,7 @@ export const RecordingView: React.FC<RecordingViewProps> = ({
           >
             <AlertTriangle size={16} strokeWidth={1.5} />
             <span style={{ fontSize: '14px' }}>
-              音声入力が検出されていません（無音状態）。マイクのミュートや入力デバイスの選択を確認してください。
+              {t('音声入力が検出されていません（無音状態）。マイクのミュートや入力デバイスの選択を確認してください。')}
             </span>
           </div>
         )}
@@ -134,13 +135,13 @@ export const RecordingView: React.FC<RecordingViewProps> = ({
         <section className="surface-subtle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div style={{ fontSize: '14px' }}>
             <div style={{ fontWeight: 600, marginBottom: '4px' }}>
-              参加者への案内文{settings.admin_enforced_notice ? '（管理者設定）' : ''}
+              {t('参加者への案内文')}{settings.admin_enforced_notice ? t('（管理者設定）') : ''}
             </div>
             <div className="text-secondary">{settings.participant_notice_text}</div>
           </div>
           <button type="button" className="btn btn-secondary" onClick={handleCopyNotice}>
             {noticeCopied ? <Check size={16} strokeWidth={1.5} /> : <Copy size={16} strokeWidth={1.5} />}
-            {noticeCopied ? 'コピー済み' : '案内文をコピー'}
+            {noticeCopied ? t('コピー済み') : t('案内文をコピー')}
           </button>
         </section>
       )}
@@ -148,15 +149,15 @@ export const RecordingView: React.FC<RecordingViewProps> = ({
       {/* Live Transcript */}
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 className="section-title">リアルタイム文字起こし</h2>
+          <h2 className="section-title">{t('リアルタイム文字起こし')}</h2>
           <span className={`status-chip ${realtimeSupported ? 'ok' : ''}`}>
-            {realtimeSupported ? 'リアルタイム対応' : '録音後に文字起こし'}
+            {realtimeSupported ? t('リアルタイム対応') : t('録音後に文字起こし')}
           </span>
         </div>
         {liveSegments.length === 0 ? (
           !realtimeSupported ? (
             <p className="text-muted" style={{ margin: 0 }}>
-              選択中のモデルは録音停止後に文字起こしを実行します
+              {t('選択中のモデルは録音停止後に文字起こしを実行します')}
             </p>
           ) : null
         ) : (
@@ -176,16 +177,16 @@ export const RecordingView: React.FC<RecordingViewProps> = ({
       {/* Manual Notes while Recording */}
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <label htmlFor="live-manual-notes" className="section-title">
-          録音中の手入力メモ
+          {t('録音中の手入力メモ')}
         </label>
         <p className="text-muted" style={{ margin: 0 }}>
-          話しながら気になった点やキーワードを残すと、文字起こしと合わせて整理できます
+          {t('話しながら気になった点やキーワードを残すと、文字起こしと合わせて整理できます')}
         </p>
         <textarea
           id="live-manual-notes"
           className="textarea"
           style={{ minHeight: '200px' }}
-          placeholder="議題、決定したこと、確認したい項目を入力"
+          placeholder={t('議題、決定したこと、確認したい項目を入力')}
           value={manualNotes}
           onChange={(e) => onChangeManualNotes(e.target.value)}
         />

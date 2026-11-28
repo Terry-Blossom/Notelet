@@ -55,6 +55,7 @@ import {
   formatNoteTimer,
 } from '../lib/format';
 import { sanitizeMemoHtml } from '../lib/sanitizeHtml';
+import { t } from '../i18n';
 import { useTauriEvent } from '../lib/tauriEvents';
 import { NoteChatPopup } from './note-editor/NoteChatPopup';
 import { NoteMemoPanel } from './note-editor/NoteMemoPanel';
@@ -143,7 +144,7 @@ interface NoteEditorViewProps {
 export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   note,
   allNotes,
-  folders = [{ id: 'personal', name: '一般', is_shared: false, permission: 'owner' }],
+  folders = [{ id: 'personal', name: t('一般'), is_shared: false, permission: 'owner' }],
   chatHistory = [],
   popupChatSessions,
   onSavePopupChatSessions,
@@ -567,11 +568,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     if (prevPhaseRef.current === phase) return;
     prevPhaseRef.current = phase;
     if (phase === 'recording') {
-      setLiveAnnouncement('録音を開始しました');
+      setLiveAnnouncement(t('録音を開始しました'));
     } else if (phase === 'processing') {
-      setLiveAnnouncement('文字起こし中です');
+      setLiveAnnouncement(t('文字起こし中です'));
     } else if (phase === 'completed') {
-      setLiveAnnouncement('文字起こしが完了しました');
+      setLiveAnnouncement(t('文字起こしが完了しました'));
     }
   }, [phase]);
 
@@ -651,7 +652,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const playNoteAudioFromMs = async (startMs?: number) => {
     if (isTauriRuntime()) {
       if (!note.audio_path) {
-        notify('このノートには保存された録音音声がありません');
+        notify(t('このノートには保存された録音音声がありません'));
         return;
       }
       try {
@@ -694,7 +695,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         await audioRef.current.play();
         setIsPlaying(true);
       } catch (err) {
-        notify(`音声の再生に失敗しました: ${String(err)}`);
+        notify(t('音声の再生に失敗しました: {0}', [String(err)]));
         setIsPlaying(false);
       }
     } else {
@@ -762,7 +763,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const exportTranscriptAs = (format: 'srt' | 'vtt' | 'txt' | 'md') => {
     const segs = displayedSegments;
     if (segs.length === 0) {
-      notify('エクスポートする文字起こしがありません');
+      notify(t('エクスポートする文字起こしがありません'));
       return;
     }
     const baseName = (note.title.trim() || 'transcript').replace(/[\\/:*?"<>|]/g, '_');
@@ -778,7 +779,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           .map((s) => `${formatSrtTime(s.start_ms, '.')} --> ${formatSrtTime(Math.max(s.end_ms, s.start_ms + 1000), '.')}\n${s.text.trim()}\n`)
           .join('\n');
     } else if (format === 'md') {
-      content = `# ${note.title.trim() || '無題のノート'}\n\n${note.summary ? `## 要約\n\n${note.summary}\n\n` : ''}## 文字起こし\n\n${segs
+      content = `# ${note.title.trim() || t('無題のノート')}\n\n${note.summary ? `## ${t('要約')}\n\n${note.summary}\n\n` : ''}## ${t('文字起こし')}\n\n${segs
         .map((s) => `- **[${formatNoteTimer(s.start_ms)}]** ${s.text.trim()}`)
         .join('\n')}\n`;
     } else {
@@ -791,7 +792,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     a.download = `${baseName}.${format}`;
     a.click();
     URL.revokeObjectURL(url);
-    notify(`${format.toUpperCase()} でエクスポートしました`);
+    notify(t('{0} でエクスポートしました', [format.toUpperCase()]));
   };
 
   const dictionaryCandidates = useMemo(() => {
@@ -966,8 +967,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 id: crypto.randomUUID(),
                 start_ms: baseOffsetMs,
                 end_ms: baseOffsetMs + Math.max(2000, elapsedSec * 1000),
-                speaker: 'あなた',
-                text: '本日の議題と次のアクションを確認しましょう。',
+                speaker: t('あなた'),
+                text: t('本日の議題と次のアクションを確認しましょう。'),
               },
             ];
 
@@ -1053,7 +1054,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       const newSession: PopupChatSession = {
         id: newId,
         scopeKey,
-        title: userText.slice(0, 28) || '新しいチャット',
+        title: userText.slice(0, 28) || t('新しいチャット'),
         updatedAt: now,
         messages: userText ? [{ role: 'user', text: userText, createdAt: now }] : [],
       };
@@ -1067,9 +1068,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
   const handleCitationNavigate = async (c: ChatCitation) => {
     const ok = await confirmActionDialog(
-      `「${c.note_title}」に移動しますか？`,
-      c.excerpt ? `該当箇所 [${c.timestamp}]: ${c.excerpt}` : `該当箇所: ${c.timestamp}`,
-      'ノートを開く'
+      t('「{0}」に移動しますか？', [c.note_title]),
+      c.excerpt
+        ? t('該当箇所 [{0}]: {1}', [c.timestamp, c.excerpt])
+        : t('該当箇所: {0}', [c.timestamp]),
+      t('ノートを開く')
     );
     if (ok) {
       setViewingFolderId(null);
@@ -1174,8 +1177,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   const handleCopyMarkdown = async () => {
     try {
       const text = formatNoteForCopy(note, settings.copy_format || 'markdown');
-      await onCopyText(text, 'ノート');
-      notify('Markdown形式でコピーしました');
+      await onCopyText(text, t('ノート'));
+      notify(t('Markdown形式でコピーしました'));
       setShareOpen(false);
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err));
@@ -1186,7 +1189,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
     try {
       const text = formatNoteForCopy(note, fmt);
       await onCopyText(text, label);
-      notify(`${label}をコピーしました`);
+      notify(t('{0}をコピーしました', [label]));
       setShareOpen(false);
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err));
@@ -1199,7 +1202,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       await onSaveToNotion(note.id);
       setNotionPreviewOpen(false);
       setShareOpen(false);
-      notify('Notion に保存しました');
+      notify(t('Notion に保存しました'));
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1209,9 +1212,9 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
   const activeFolder =
     folders.find((f) => f.id === note.folder_id) ||
-    folders[0] || { id: 'personal', name: '個人', is_shared: false, permission: 'owner' as const };
+    folders[0] || { id: 'personal', name: t('個人'), is_shared: false, permission: 'owner' as const };
   const folderDisplayName =
-    activeFolder.id === 'personal' ? '個人' : activeFolder.name;
+    activeFolder.id === 'personal' ? t('個人') : activeFolder.name;
 
   // Smart Category Suggestion ("もしかして：授業" etc.)
   const suggestedCategory = useMemo((): { id: string | null; name: string } | null => {
@@ -1297,7 +1300,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         folder_id: suggestedCategory.id,
         updated_at: new Date().toISOString(),
       });
-      notify(`「${suggestedCategory.name}」に移動しました`);
+      notify(t('「{0}」に移動しました', [suggestedCategory.name]));
     } else if (onSaveFolder) {
       const created: Folder = {
         id: crypto.randomUUID(),
@@ -1311,7 +1314,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         folder_id: created.id,
         updated_at: new Date().toISOString(),
       });
-      notify(`「${created.name}」を作成して移動しました`);
+      notify(t('「{0}」を作成して移動しました', [created.name]));
     }
   };
 
@@ -1350,14 +1353,14 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
       {/* Sidebar (272px): Parent Folder (Space) -> Child File (Note) Tree */}
       <aside
         className={`note-sidebar ${drawerOpen ? 'drawer-open' : ''}`}
-        aria-label="スペース"
+        aria-label={t('スペース')}
       >
         <div className="note-sidebar-heading">
           <FolderIcon size={16} strokeWidth={1.75} aria-hidden="true" />
-          <span className="note-sidebar-heading-text">スペースとノート</span>
+          <span className="note-sidebar-heading-text">{t('スペースとノート')}</span>
         </div>
 
-        <nav className="note-sidebar-list" aria-label="スペース一覧">
+        <nav className="note-sidebar-list" aria-label={t('スペース一覧')}>
           {folders.map((f) => {
             const childNotes = notesList.filter((n) => n.folder_id === f.id);
             const isExpanded = expandedFolders[f.id] ?? true;
@@ -1386,7 +1389,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       textAlign: 'left',
                       fontWeight: 600,
                     }}
-                    title={`${f.name}（スペースを開く）`}
+                    title={t('{0}（スペースを開く）', [f.name])}
                   >
                     <ChevronDown
                       size={14}
@@ -1398,7 +1401,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       }}
                     />
                     <FolderIcon size={16} strokeWidth={1.75} aria-hidden="true" style={{ flexShrink: 0 }} />
-                    <span className="note-sidebar-item-label">{f.name}</span>
+                    <span className="note-sidebar-item-label">{t(f.name)}</span>
                     <span className="text-muted mono-num" style={{ marginLeft: 'auto' }}>
                       {childNotes.length}
                     </span>
@@ -1406,8 +1409,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   {onCreateNoteInFolder && (
                     <button
                       type="button"
-                      aria-label={`${f.name}に新規ノートを作成`}
-                      title={`${f.name}に新規ノートを作成`}
+                      aria-label={t('{0}に新規ノートを作成', [f.name])}
+                      title={t('{0}に新規ノートを作成', [f.name])}
                       className="btn btn-ghost"
                       style={{ width: '24px', height: '24px', padding: 0, flexShrink: 0 }}
                       onClick={() => {
@@ -1425,7 +1428,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '20px' }}>
                     {childNotes.length === 0 ? (
                       <div style={{ padding: '4px 8px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                        ノートなし
+                        {t('ノートなし')}
                       </div>
                     ) : (
                       childNotes.map((cn) => {
@@ -1447,16 +1450,16 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                               e.preventDefault();
                               setNoteContextMenu({ noteId: cn.id, x: e.clientX, y: e.clientY });
                             }}
-                            title={cn.title.trim() || '無題のノート'}
+                            title={cn.title.trim() || t('無題のノート')}
                           >
                             <FileText size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
                             <span className="note-sidebar-item-label" style={{ fontSize: '12px' }}>
-                              {cn.title.trim() || '無題のノート'}
+                              {cn.title.trim() || t('無題のノート')}
                             </span>
                             {isChildRecording && (
                               <span
-                                title="録音中"
-                                aria-label="録音中"
+                                title={t('録音中')}
+                                aria-label={t('録音中')}
                                 style={{
                                   display: 'inline-flex',
                                   alignItems: 'center',
@@ -1501,7 +1504,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               type="text"
               className="input"
               style={{ height: '32px' }}
-              placeholder="スペースを追加"
+              placeholder={t('スペースを追加')}
               value={newSpaceName}
               onChange={(e) => setNewSpaceName(e.target.value)}
             />
@@ -1519,7 +1522,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           <button
             type="button"
             className="note-meta-pill"
-            aria-label="サイドバーを開く"
+            aria-label={t('サイドバーを開く')}
             onClick={() => setDrawerOpen(true)}
           >
             <Menu size={16} strokeWidth={1.75} />
@@ -1555,8 +1558,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   return a.created_at.localeCompare(b.created_at);
                 }
                 if (spaceSortOrder === 'title') {
-                  return (a.title.trim() || '無題のノート').localeCompare(
-                    b.title.trim() || '無題のノート',
+                  return (a.title.trim() || t('無題のノート')).localeCompare(
+                    b.title.trim() || t('無題のノート'),
                     'ja'
                   );
                 }
@@ -1630,7 +1633,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             if (!spaceNameDraft.trim()) return;
                             await onSaveFolder({ ...targetFolder, name: spaceNameDraft.trim() });
                             setEditingSpaceName(false);
-                            notify('スペース名を変更しました');
+                            notify(t('スペース名を変更しました'));
                           }}
                           style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
                         >
@@ -1643,7 +1646,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             autoFocus
                           />
                           <button type="submit" className="btn btn-primary" style={{ height: '32px' }}>
-                            保存
+                            {t('保存')}
                           </button>
                           <button
                             type="button"
@@ -1651,7 +1654,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             style={{ height: '32px' }}
                             onClick={() => setEditingSpaceName(false)}
                           >
-                            キャンセル
+                            {t('キャンセル')}
                           </button>
                         </form>
                       ) : (
@@ -1660,8 +1663,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           {onSaveFolder && (
                             <button
                               type="button"
-                              aria-label="スペース名を変更"
-                              title="スペース名を変更"
+                              aria-label={t('スペース名を変更')}
+                              title={t('スペース名を変更')}
                               className="btn btn-ghost"
                               style={{ width: '28px', height: '28px', padding: 0 }}
                               onClick={() => {
@@ -1674,7 +1677,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           )}
                         </>
                       )}
-                      <span className="status-chip">{folderNotesRaw.length} 件のノート</span>
+                      <span className="status-chip">{t('{0} 件のノート', [folderNotesRaw.length])}</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       {otherFolders.length > 0 && onDeleteFolder && (
@@ -1684,7 +1687,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           onClick={() => setMergeOpen((v) => !v)}
                         >
                           <GitMerge size={14} strokeWidth={1.75} />
-                          スペースを結合
+                          {t('スペースを結合')}
                         </button>
                       )}
                       {onCreateNoteInFolder && (
@@ -1697,7 +1700,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           }}
                         >
                           <Plus size={14} strokeWidth={1.75} />
-                          新規ノート
+                          {t('新規ノート')}
                         </button>
                       )}
                       {onDeleteFolder && targetFolder.id !== 'personal' && (
@@ -1706,8 +1709,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           className="btn btn-ghost"
                           onClick={async () => {
                             const ok = await confirmDeleteDialog(
-                              `スペース「${targetFolder.name}」を削除しますか？`,
-                              'スペース内のノートは「一般」スペースへ移動されます。'
+                              t('スペース「{0}」を削除しますか？', [targetFolder.name]),
+                              t('スペース内のノートは「一般」スペースへ移動されます。')
                             );
                             if (!ok) return;
                             await onDeleteFolder(targetFolder.id);
@@ -1715,7 +1718,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           }}
                         >
                           <Trash2 size={14} strokeWidth={1.75} />
-                          スペースを削除
+                          {t('スペースを削除')}
                         </button>
                       )}
                     </div>
@@ -1735,11 +1738,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '13px', fontWeight: 500 }}>
                           {targetFolder.id === 'personal'
-                            ? 'このスペースに取り込むスペース:'
-                            : '結合先のスペース:'}
+                            ? t('このスペースに取り込むスペース:')
+                            : t('結合先のスペース:')}
                         </span>
                         <select
-                          aria-label="結合先スペース"
+                          aria-label={t('結合先スペース')}
                           className="input"
                           style={{ width: '180px', height: '32px', lineHeight: '1.2' }}
                           value={effectiveMergeTargetId}
@@ -1747,7 +1750,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         >
                           {otherFolders.map((f) => (
                             <option key={f.id} value={f.id}>
-                              {f.name}
+                              {t(f.name)}
                             </option>
                           ))}
                         </select>
@@ -1774,10 +1777,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             await onDeleteFolder(dropId);
                             setMergeOpen(false);
                             setViewingFolderId(keepId);
-                            notify('スペースを結合しました');
+                            notify(t('スペースを結合しました'));
                           }}
                         >
-                          結合を実行
+                          {t('結合を実行')}
                         </button>
                         <button
                           type="button"
@@ -1785,7 +1788,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           style={{ height: '32px' }}
                           onClick={() => setMergeOpen(false)}
                         >
-                          キャンセル
+                          {t('キャンセル')}
                         </button>
                       </div>
                     </div>
@@ -1809,13 +1812,13 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         type="text"
                         className="input"
                         style={{ height: '36px', paddingLeft: '36px' }}
-                        placeholder="このスペース内を検索..."
+                        placeholder={t('このスペース内を検索...')}
                         value={spaceSearchQuery}
                         onChange={(e) => setSpaceSearchQuery(e.target.value)}
                       />
                     </div>
                     <select
-                      aria-label="並び替え"
+                      aria-label={t('並び替え')}
                       className="input"
                       style={{ width: '132px', height: '36px', lineHeight: '1.2' }}
                       value={spaceSortOrder}
@@ -1823,9 +1826,9 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         setSpaceSortOrder(e.target.value as 'newest' | 'oldest' | 'title')
                       }
                     >
-                      <option value="newest">新しい順</option>
-                      <option value="oldest">古い順</option>
-                      <option value="title">タイトル順</option>
+                      <option value="newest">{t('新しい順')}</option>
+                      <option value="oldest">{t('古い順')}</option>
+                      <option value="title">{t('タイトル順')}</option>
                     </select>
                     <button
                       type="button"
@@ -1836,7 +1839,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         setSelectedNoteIds([]);
                       }}
                     >
-                      {spaceSelectMode ? '選択終了' : '複数選択'}
+                      {spaceSelectMode ? t('選択終了') : t('複数選択')}
                     </button>
                   </div>
 
@@ -1864,17 +1867,17 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             }
                           }}
                         >
-                          {allSelected ? 'すべて解除' : 'すべて選択'}
+                          {allSelected ? t('すべて解除') : t('すべて選択')}
                         </button>
                         <span className="text-muted" style={{ fontSize: '12px' }}>
-                          {selectedNoteIds.length} 件選択中
+                          {t('{0} 件選択中', [selectedNoteIds.length])}
                         </span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         {otherFolders.length > 0 && (
                           <>
                             <select
-                              aria-label="一括移動先のスペース"
+                              aria-label={t('一括移動先のスペース')}
                               className="input"
                               style={{ width: '150px', height: '32px', lineHeight: '1.2' }}
                               value={effectiveMoveTargetId}
@@ -1882,7 +1885,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             >
                               {otherFolders.map((f) => (
                                 <option key={f.id} value={f.id}>
-                                  {f.name}
+                                  {t(f.name)}
                                 </option>
                               ))}
                             </select>
@@ -1902,10 +1905,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                                 }
                                 setSelectedNoteIds([]);
                                 setSpaceSelectMode(false);
-                                notify(`${targets.length} 件を移動しました`);
+                                notify(t('{0} 件を移動しました', [targets.length]));
                               }}
                             >
-                              スペース移動
+                              {t('スペース移動')}
                             </button>
                           </>
                         )}
@@ -1918,8 +1921,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             onClick={async () => {
                               const ids = [...selectedNoteIds];
                               const ok = await confirmDeleteDialog(
-                                `${ids.length} 件のノートを削除しますか？`,
-                                '選択したノートをすべて削除します。この操作は取り消せません。'
+                                t('{0} 件のノートを削除しますか？', [ids.length]),
+                                t('選択したノートをすべて削除します。この操作は取り消せません。')
                               );
                               if (!ok) return;
                               for (const id of ids) {
@@ -1927,11 +1930,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                               }
                               setSelectedNoteIds([]);
                               setSpaceSelectMode(false);
-                              notify(`${ids.length} 件を削除しました`);
+                              notify(t('{0} 件を削除しました', [ids.length]));
                             }}
                           >
                             <Trash2 size={14} strokeWidth={1.5} />
-                            一括削除
+                            {t('一括削除')}
                           </button>
                         )}
                       </div>
@@ -1942,8 +1945,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     <div style={{ padding: '24px 0', borderTop: '1px solid var(--border-subtle)' }}>
                       <p className="text-secondary" style={{ margin: '0px' }}>
                         {spaceSearchQuery.trim()
-                          ? '検索条件に一致するノートがありません。'
-                          : 'このスペースにはまだノートがありません。'}
+                          ? t('検索条件に一致するノートがありません。')
+                          : t('このスペースにはまだノートがありません。')}
                       </p>
                     </div>
                   ) : (
@@ -1951,7 +1954,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       {folderNotes.map((fn) => {
                         const isFnRecording =
                           recordingNoteId === fn.id || (fn.id === note.id && isRecording);
-                        const fnTitle = fn.title.trim() || '無題のノート';
+                        const fnTitle = fn.title.trim() || t('無題のノート');
                         const isChecked = selectedNoteIds.includes(fn.id);
                         return (
                           <div
@@ -1965,7 +1968,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             {spaceSelectMode && (
                               <input
                                 type="checkbox"
-                                aria-label={`${fnTitle}を選択`}
+                                aria-label={t('{0}を選択', [fnTitle])}
                                 checked={isChecked}
                                 onChange={(e) => {
                                   if (e.target.checked) {
@@ -2006,12 +2009,12 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                                 {isFnRecording && (
                                   <span className="status-chip danger" style={{ gap: '4px' }}>
                                     <Loader2 size={12} strokeWidth={2} className="spin" />
-                                    録音中
+                                    {t('録音中')}
                                   </span>
                                 )}
                               </div>
                               <span className="text-muted mono-num">
-                                {formatDateTime(fn.created_at)} ・ {fn.segments.length} セグメント
+                                {formatDateTime(fn.created_at)} ・ {t('{0} セグメント', [fn.segments.length])}
                               </span>
                               {spaceSearchQuery.trim() && (() => {
                                 const matches = findNoteSearchMatches(fn, spaceSearchQuery);
@@ -2070,10 +2073,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     {renderChatPopup(`space:${targetFolder.id}`, spaceChatBusy, true)}
                     <div className={`note-composer-box ${chatPopupOpen ? 'popup-open' : ''}`}>
                       <textarea
-                        aria-label={`${targetFolder.name}について何でも質問`}
+                        aria-label={t('{0}について何でも質問', [targetFolder.name])}
                         className="note-composer-input"
                         rows={1}
-                        placeholder={`${targetFolder.name}について何でも質問`}
+                        placeholder={t('{0}について何でも質問', [targetFolder.name])}
                         value={spaceChatQuestion}
                         onClick={() => setChatPopupOpen(true)}
                         onFocus={() => setChatPopupOpen(true)}
@@ -2088,7 +2091,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       <button
                         type="button"
                         className="note-send-btn"
-                        aria-label="質問を送信"
+                        aria-label={t('質問を送信')}
                         disabled={!spaceChatQuestion.trim() || spaceChatBusy}
                         onClick={() => void handleSpaceAsk()}
                       >
@@ -2107,10 +2110,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           <input
             ref={titleInputRef}
             type="text"
-            aria-label="ノートタイトル"
+            aria-label={t('ノートタイトル')}
             className="note-title-input"
             value={titleDraft}
-            placeholder="無題のノート"
+            placeholder={t('無題のノート')}
             onFocus={() => {
               titleSnapshotRef.current = titleDraft;
             }}
@@ -2147,18 +2150,18 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             <label
               className="note-meta-pill"
               style={{ cursor: 'pointer', position: 'relative' }}
-              title="日付を変更"
+              title={t('日付を変更')}
               onClick={() => {
                 (dateInputRef.current as (HTMLInputElement & { showPicker?: () => void }) | null)?.showPicker?.();
               }}
             >
               <Calendar size={15} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
-              <span>{note.created_at ? note.created_at.slice(0, 10).replace(/-/g, '/') : '日付を選択'}</span>
+              <span>{note.created_at ? note.created_at.slice(0, 10).replace(/-/g, '/') : t('日付を選択')}</span>
               <input
                 ref={dateInputRef}
                 type="date"
                 className="note-date-input"
-                aria-label="ノートの日付"
+                aria-label={t('ノートの日付')}
                 style={{
                   position: 'absolute',
                   opacity: 0,
@@ -2193,7 +2196,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               </button>
 
               {folderMenuOpen && folders.length > 0 && (
-                <div className="note-popover" role="menu" aria-label="フォルダ選択" style={{ minWidth: '210px' }}>
+                <div className="note-popover" role="menu" aria-label={t('フォルダ選択')} style={{ minWidth: '210px' }}>
                   {folders.map((f) => (
                     <button
                       key={f.id}
@@ -2209,7 +2212,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       }}
                     >
                       <FolderIcon size={15} strokeWidth={1.75} />
-                      <span>{f.id === 'personal' ? '個人' : f.name}</span>
+                      <span>{f.id === 'personal' ? t('個人') : t(f.name)}</span>
                     </button>
                   ))}
                   {onSaveFolder && (
@@ -2226,7 +2229,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         type="text"
                         className="input"
                         style={{ height: '28px', fontSize: '12px', flex: 1, minWidth: 0 }}
-                        placeholder="新しいスペース名"
+                        placeholder={t('新しいスペース名')}
                         value={dropdownNewSpaceName}
                         onChange={(e) => setDropdownNewSpaceName(e.target.value)}
                         onKeyDown={async (e) => {
@@ -2246,7 +2249,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             });
                             setDropdownNewSpaceName('');
                             setFolderMenuOpen(false);
-                            notify(`スペース「${created.name}」を作成しました`);
+                            notify(t('スペース「{0}」を作成しました', [created.name]));
                           }
                         }}
                       />
@@ -2271,7 +2274,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                           });
                           setDropdownNewSpaceName('');
                           setFolderMenuOpen(false);
-                          notify(`スペース「${created.name}」を作成しました`);
+                          notify(t('スペース「{0}」を作成しました', [created.name]));
                         }}
                       >
                         <Plus size={12} strokeWidth={2} />
@@ -2287,7 +2290,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               type="button"
               className="note-meta-pill"
               aria-pressed={Boolean(note.pinned)}
-              title={note.pinned ? 'ピン留め解除' : 'ノートをピン留め'}
+              title={note.pinned ? t('ピン留め解除') : t('ノートをピン留め')}
               style={{
                 borderColor: note.pinned ? 'var(--accent)' : undefined,
                 color: note.pinned ? 'var(--accent)' : undefined,
@@ -2301,7 +2304,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               }
             >
               <Pin size={14} strokeWidth={1.75} aria-hidden="true" />
-              <span>{note.pinned ? 'ピン留め中' : 'ピン留め'}</span>
+              <span>{note.pinned ? t('ピン留め中') : t('ピン留め')}</span>
             </button>
 
             {/* Tags Pill */}
@@ -2315,7 +2318,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 <span>#{tag}</span>
                 <button
                   type="button"
-                  aria-label={`タグ ${tag} を削除`}
+                  aria-label={t('タグ {0} を削除', [tag])}
                   style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'inline-flex', color: 'inherit' }}
                   onClick={() =>
                     onUpdateNote({
@@ -2350,7 +2353,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   type="text"
                   className="input"
                   autoFocus
-                  placeholder="タグ名..."
+                  placeholder={t('タグ名...')}
                   value={tagDraft}
                   onChange={(e) => setTagDraft(e.target.value)}
                   onBlur={() => setTagInputOpen(false)}
@@ -2361,11 +2364,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               <button
                 type="button"
                 className="note-meta-pill"
-                title="タグを追加"
+                title={t('タグを追加')}
                 onClick={() => setTagInputOpen(true)}
               >
                 <Tag size={13} strokeWidth={1.75} aria-hidden="true" />
-                <span>+ タグ</span>
+                <span>{t('+ タグ')}</span>
               </button>
             )}
 
@@ -2375,7 +2378,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 type="button"
                 className="note-meta-pill"
                 style={{ padding: '0 12px' }}
-                title="カレンダー予定からタイトル・参加者を設定"
+                title={t('カレンダー予定からタイトル・参加者を設定')}
                 aria-expanded={calendarMenuOpen}
                 onClick={async () => {
                   const nextOpen = !calendarMenuOpen;
@@ -2395,22 +2398,22 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 }}
               >
                 <Calendar size={14} strokeWidth={1.75} color="#5F5F5F" aria-hidden="true" />
-                <span>予定紐付け</span>
+                <span>{t('予定紐付け')}</span>
               </button>
 
               {calendarMenuOpen && (
                 <div
                   className="note-popover"
                   role="menu"
-                  aria-label="カレンダー予定を選択"
+                  aria-label={t('カレンダー予定を選択')}
                   style={{ minWidth: '256px' }}
                 >
                   <div style={{ padding: '4px 8px', fontSize: '12px', fontWeight: 600, color: 'var(--ns-text-muted)' }}>
-                    現在の会議・予定から自動セット
+                    {t('現在の会議・予定から自動セット')}
                   </div>
                   {calendarEvents.length === 0 ? (
                     <div className="text-muted" style={{ padding: '8px', fontSize: '12px' }}>
-                      表示できる予定はありません（連携設定から ICS URL を登録できます）
+                      {t('表示できる予定はありません（連携設定から ICS URL を登録できます）')}
                     </div>
                   ) : (
                     calendarEvents.map((ev) => (
@@ -2429,7 +2432,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             updated_at: new Date().toISOString(),
                           });
                           setCalendarMenuOpen(false);
-                          notify(`予定「${ev.title}」を紐付けました`);
+                          notify(t('予定「{0}」を紐付けました', [ev.title]));
                         }}
                       >
                         <strong style={{ fontSize: '12px', fontWeight: 600 }}>{ev.title}</strong>
@@ -2457,11 +2460,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   }}
                 >
                   <Sparkles size={13} strokeWidth={1.75} />
-                  <span>もしかして：{suggestedCategory.name}</span>
+                  <span>{t('もしかして：{0}', [suggestedCategory.name])}</span>
                 </button>
                 <button
                   type="button"
-                  aria-label="カテゴリ提案を閉じる"
+                  aria-label={t('カテゴリ提案を閉じる')}
                   onClick={() =>
                     setDismissedSuggestByNote((prev) => ({ ...prev, [note.id]: true }))
                   }
@@ -2476,7 +2479,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           {inNoteSearchOpen && (
             <div
               role="search"
-              aria-label="ページ内検索"
+              aria-label={t('ページ内検索')}
               style={{
                 marginTop: '10px',
                 display: 'flex',
@@ -2495,7 +2498,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 type="text"
                 className="input"
                 style={{ height: '28px', fontSize: '13px', flex: 1, backgroundColor: 'var(--bg-canvas)' }}
-                placeholder="このノート内を検索 (Ctrl+F)..."
+                placeholder={t('このノート内を検索 (Ctrl+F)...')}
                 value={inNoteSearchQuery}
                 onChange={(e) => {
                   setInNoteSearchQuery(e.target.value);
@@ -2511,11 +2514,16 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               {inNoteSearchQuery.trim() && (
                 <>
                   <span className="text-muted mono-num" style={{ fontSize: '11px', flexShrink: 0 }}>
-                    {searchMatches.length > 0 ? `${(searchMatchIdx % searchMatches.length) + 1}/${searchMatches.length}件` : '0件'}
+                    {searchMatches.length > 0
+                      ? t('{0}/{1}件', [
+                          (searchMatchIdx % searchMatches.length) + 1,
+                          searchMatches.length,
+                        ])
+                      : t('0件')}
                   </span>
                   <button
                     type="button"
-                    aria-label="前の一致へ"
+                    aria-label={t('前の一致へ')}
                     className="btn btn-ghost"
                     style={{ width: '24px', height: '24px', padding: 0 }}
                     disabled={searchMatches.length === 0}
@@ -2525,7 +2533,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   </button>
                   <button
                     type="button"
-                    aria-label="次の一致へ"
+                    aria-label={t('次の一致へ')}
                     className="btn btn-ghost"
                     style={{ width: '24px', height: '24px', padding: 0 }}
                     disabled={searchMatches.length === 0}
@@ -2537,7 +2545,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               )}
               <button
                 type="button"
-                aria-label="ページ内検索を閉じる"
+                aria-label={t('ページ内検索を閉じる')}
                 className="btn btn-ghost"
                 style={{ width: '24px', height: '24px', padding: 0 }}
                 onClick={() => {
@@ -2553,7 +2561,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
         {/* Toolbar */}
         <div className="note-toolbar">
-          <div className="note-tablist" role="tablist" aria-label="ノート表示切り替え">
+          <div className="note-tablist" role="tablist" aria-label={t('ノート表示切り替え')}>
             <button
               ref={transcriptTabRef}
               type="button"
@@ -2567,9 +2575,9 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               onKeyDown={(e) => handleTabKeyDown(e, 'transcript')}
             >
               <AudioLines size={15} strokeWidth={1.75} aria-hidden="true" />
-              <span>文字起こし</span>
+              <span>{t('文字起こし')}</span>
               {hasUnreadTranscript && (
-                <span className="note-tab-unread-dot" aria-label="未読の文字起こし" />
+                <span className="note-tab-unread-dot" aria-label={t('未読の文字起こし')} />
               )}
             </button>
 
@@ -2583,7 +2591,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               onKeyDown={(e) => handleTabKeyDown(e, 'summary')}
             >
               <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
-              <span>要約</span>
+              <span>{t('要約')}</span>
             </button>
 
             <button
@@ -2596,7 +2604,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               onKeyDown={(e) => handleTabKeyDown(e, 'memo')}
             >
               <List size={15} strokeWidth={1.75} aria-hidden="true" />
-              <span>メモ</span>
+              <span>{t('メモ')}</span>
             </button>
           </div>
 
@@ -2627,8 +2635,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   type="button"
                   className="note-share-action"
                   aria-expanded={shareOpen}
-                  aria-label="共有"
-                  title="共有"
+                  aria-label={t('共有')}
+                  title={t('共有')}
                   onClick={() => setShareOpen((o) => !o)}
                 >
                   <Upload size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -2636,30 +2644,30 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               </div>
 
               {shareOpen && (
-                <div className="note-popover right" role="dialog" aria-label="共有オプション">
+                <div className="note-popover right" role="dialog" aria-label={t('共有オプション')}>
                   <button
                     type="button"
                     className="note-sidebar-item"
                     onClick={handleCopyMarkdown}
                   >
                     <Copy size={15} strokeWidth={1.75} />
-                    <span>Markdown形式でコピー</span>
+                    <span>{t('Markdown形式でコピー')}</span>
                   </button>
                   <button
                     type="button"
                     className="note-sidebar-item"
-                    onClick={() => void handleCopyFormat('slack', 'Slack共有フォーマット')}
+                    onClick={() => void handleCopyFormat('slack', t('Slack共有フォーマット'))}
                   >
                     <Copy size={15} strokeWidth={1.75} />
-                    <span>Slack投稿形式でコピー</span>
+                    <span>{t('Slack投稿形式でコピー')}</span>
                   </button>
                   <button
                     type="button"
                     className="note-sidebar-item"
-                    onClick={() => void handleCopyFormat('line', 'LINE・メール用テキスト')}
+                    onClick={() => void handleCopyFormat('line', t('LINE・メール用テキスト'))}
                   >
                     <Copy size={15} strokeWidth={1.75} />
-                    <span>LINE・メール用でコピー</span>
+                    <span>{t('LINE・メール用でコピー')}</span>
                   </button>
                   <button
                     type="button"
@@ -2674,7 +2682,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     }}
                   >
                     <ClipboardPaste size={15} strokeWidth={1.75} />
-                    <span>貼り付け準備</span>
+                    <span>{t('貼り付け準備')}</span>
                   </button>
                   <button
                     type="button"
@@ -2684,10 +2692,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     <UploadCloud size={15} strokeWidth={1.75} />
                     <span>
                       {note.notion_sync.status === 'synced'
-                        ? 'Notion を更新'
+                        ? t('Notion を更新')
                         : note.notion_sync.status === 'failed'
-                          ? 'Notion 再試行'
-                          : 'Notion に保存'}
+                          ? t('Notion 再試行')
+                          : t('Notion に保存')}
                     </span>
                   </button>
                   <button
@@ -2697,12 +2705,12 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       const toNotionOnly = note.storage_mode !== 'notion_only';
                       const ok = await confirmActionDialog(
                         toNotionOnly
-                          ? 'このノートを「Notionのみ（ローカル削除）」にしますか？'
-                          : 'このノートをローカルにも保存しますか？',
+                          ? t('このノートを「Notionのみ（ローカル削除）」にしますか？')
+                          : t('このノートをローカルにも保存しますか？'),
                         toNotionOnly
-                          ? 'Notion に同期したうえでローカルの音声・本文データを削除し、オンラインビュワーとして閲覧します。'
-                          : 'Notion から本文を取得してローカルに保存します。',
-                        toNotionOnly ? 'Notionのみにする' : 'ローカルに保存'
+                          ? t('Notion に同期したうえでローカルの音声・本文データを削除し、オンラインビュワーとして閲覧します。')
+                          : t('Notion から本文を取得してローカルに保存します。'),
+                        toNotionOnly ? t('Notionのみにする') : t('ローカルに保存')
                       );
                       if (!ok) return;
                       try {
@@ -2714,8 +2722,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         }
                         notify(
                           toNotionOnly
-                            ? 'Notionのみ（オンラインビュワー）に切り替えました'
-                            : 'ローカルに保存しました'
+                            ? t('Notionのみ（オンラインビュワー）に切り替えました')
+                            : t('ローカルに保存しました')
                         );
                         setShareOpen(false);
                       } catch (err) {
@@ -2726,8 +2734,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     <Cloud size={15} strokeWidth={1.75} />
                     <span>
                       {note.storage_mode === 'notion_only'
-                        ? 'ローカルにダウンロード'
-                        : 'Notionのみにする（ローカル削除）'}
+                        ? t('ローカルにダウンロード')
+                        : t('Notionのみにする（ローカル削除）')}
                     </span>
                   </button>
                   <button
@@ -2736,7 +2744,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     onClick={async () => {
                       try {
                         await onShareSlack(note.id);
-                        notify('Slack に送信しました');
+                        notify(t('Slack に送信しました'));
                         setShareOpen(false);
                       } catch (err) {
                         notify(err instanceof Error ? err.message : String(err));
@@ -2744,7 +2752,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     }}
                   >
                     <Send size={15} strokeWidth={1.75} />
-                    <span>Slack に共有</span>
+                    <span>{t('Slack に共有')}</span>
                   </button>
                   <button
                     type="button"
@@ -2752,7 +2760,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     onClick={async () => {
                       try {
                         await onSendWebhook(note.id);
-                        notify('Webhook を送信しました');
+                        notify(t('Webhook を送信しました'));
                         setShareOpen(false);
                       } catch (err) {
                         notify(err instanceof Error ? err.message : String(err));
@@ -2760,7 +2768,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     }}
                   >
                     <Link2 size={15} strokeWidth={1.75} />
-                    <span>Webhook 送信</span>
+                    <span>{t('Webhook 送信')}</span>
                   </button>
                   {isTauriRuntime() && (
                     <>
@@ -2779,18 +2787,18 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                               try {
                                 const firstAction = note.action_items[0]?.text;
                                 const issueTitle = firstAction
-                                  ? `[${note.title || '会議'}] ${firstAction}`
-                                  : note.title || '無題のノート';
+                                  ? `[${note.title || t('会議')}] ${firstAction}`
+                                  : note.title || t('無題のノート');
                                 const issueBody = [
-                                  note.summary ? `## 要約\n${note.summary}` : '',
+                                  note.summary ? `## ${t('要約')}\n${note.summary}` : '',
                                   note.action_items.length > 0
-                                    ? `## アクション項目\n${note.action_items.map((a) => `- [${a.done ? 'x' : ' '}] ${a.text}`).join('\n')}`
+                                    ? `## ${t('アクション項目')}\n${note.action_items.map((a) => `- [${a.done ? 'x' : ' '}] ${a.text}`).join('\n')}`
                                     : '',
                                 ]
                                   .filter(Boolean)
                                   .join('\n\n');
                                 const res = await apiCreateIssueFromAction(provider, issueTitle, issueBody);
-                                notify(`${res.provider.toUpperCase()} Issue ${res.key} を起票しました`);
+                                notify(t('{0} Issue {1} を起票しました', [res.provider.toUpperCase(), res.key]));
                                 setShareOpen(false);
                               } catch (e) {
                                 notify(e instanceof Error ? e.message : String(e));
@@ -2798,7 +2806,13 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                             }}
                           >
                             <GitMerge size={15} strokeWidth={1.75} />
-                            <span>{provider === 'github' ? 'GitHub Issue 起票' : provider === 'linear' ? 'Linear Issue 起票' : 'Jira Task 起票'}</span>
+                            <span>
+                              {provider === 'github'
+                                ? t('GitHub Issue 起票')
+                                : provider === 'linear'
+                                  ? t('Linear Issue 起票')
+                                  : t('Jira Task 起票')}
+                            </span>
                           </button>
                         ))}
                     </>
@@ -2812,7 +2826,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               type="button"
               className="note-meta-pill"
               style={{ padding: '0 12px', fontSize: '12px', color: 'var(--ns-text-secondary)' }}
-              title="使用中の音声認識 (ASR) モデル（クリックで設定を開く）"
+              title={t('使用中の音声認識 (ASR) モデル（クリックで設定を開く）')}
               onClick={onGoSettings}
             >
               <Mic size={13} strokeWidth={1.75} aria-hidden="true" />
@@ -2825,7 +2839,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   if (id === 'groq-whisper-large-v3-turbo') return 'Groq Whisper';
                   if (id === 'openai-whisper-1') return 'OpenAI Whisper';
                   if (id === 'deepgram-nova-2') return 'Deepgram Nova-2';
-                  return id || 'モデル未選択';
+                  return id || t('モデル未選択');
                 })()}
               </span>
             </button>
@@ -2850,7 +2864,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               alignSelf: 'flex-start',
             }}
           >
-            音声が入力されていません（マイクまたは録音ソースを確認してください）
+            {t('音声が入力されていません（マイクまたは録音ソースを確認してください）')}
           </div>
         )}
 
@@ -2889,9 +2903,11 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
               <Cloud size={14} strokeWidth={1.75} />
-              <strong>オンライン閲覧中（Notionのみ）</strong>
-              {viewerLoading && <span>— Notion から読み込み中...</span>}
-              {viewerError && <span style={{ color: 'var(--danger)' }}>— 読み込み失敗: {viewerError}</span>}
+              <strong>{t('オンライン閲覧中（Notionのみ）')}</strong>
+              {viewerLoading && <span>{t('— Notion から読み込み中...')}</span>}
+              {viewerError && (
+                <span style={{ color: 'var(--danger)' }}>{t('— 読み込み失敗: {0}', [viewerError])}</span>
+              )}
             </span>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
               <button
@@ -2901,7 +2917,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 disabled={viewerLoading}
                 onClick={() => void reloadNotionViewer()}
               >
-                最新を読み込む
+                {t('最新を読み込む')}
               </button>
               <button
                 type="button"
@@ -2914,10 +2930,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   } else {
                     onUpdateNote({ ...note, storage_mode: 'local' });
                   }
-                  notify('ローカルに保存しました');
+                  notify(t('ローカルに保存しました'));
                 }}
               >
-                ローカルに保存
+                {t('ローカルに保存')}
               </button>
             </div>
           </div>
@@ -2942,7 +2958,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 <Loader2 size={14} strokeWidth={2} className="spin" />
                 {transcribeProgress && transcribeProgress.note_id === note.id
                   ? transcribeProgress.label
-                  : '文字起こし処理中...'}
+                  : t('文字起こし処理中...')}
               </span>
               {transcribeProgress && transcribeProgress.note_id === note.id && (
                 <span className="mono-num text-muted">{transcribeProgress.progress}%</span>
@@ -2994,7 +3010,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   style={{ height: '28px', fontSize: '12px' }}
                   onClick={() => void onRetranscribeNote(note.id)}
                 >
-                  再文字起こし
+                  {t('再文字起こし')}
                 </button>
               )}
               <button
@@ -3003,7 +3019,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 style={{ height: '28px', fontSize: '12px' }}
                 onClick={onGoSettings}
               >
-                設定を開く
+                {t('設定を開く')}
               </button>
             </div>
           </div>
@@ -3023,23 +3039,23 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       {isRecording && (
                         <span className="status-chip" style={{ fontSize: '11px', color: 'var(--accent)', borderColor: 'var(--accent-border)' }}>
-                          暫定ライブ文字起こし（録音停止後に確定・整形）
+                          {t('暫定ライブ文字起こし（録音停止後に確定・整形）')}
                         </span>
                       )}
                       {dictionaryCandidates.length > 0 && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                          <span className="text-muted" style={{ fontSize: '11px' }}>辞書候補:</span>
+                          <span className="text-muted" style={{ fontSize: '11px' }}>{t('辞書候補:')}</span>
                           {dictionaryCandidates.map((term) => (
                             <button
                               key={term}
                               type="button"
                               className="chip-filter"
                               style={{ fontSize: '11px', height: '22px', padding: '0 8px' }}
-                              title={`「${term}」を辞書に追加`}
+                              title={t('「{0}」を辞書に追加', [term])}
                               onClick={async () => {
                                 await onAddDictionaryTerm(term);
                                 setDismissedCandidates((prev) => ({ ...prev, [term]: true }));
-                                notify(`「${term}」を辞書に追加しました`);
+                                notify(t('「{0}」を辞書に追加しました', [term]));
                               }}
                             >
                               + {term}
@@ -3069,7 +3085,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
                 {displayedSegments.length === 0 ? (
                   <div className="note-empty-state" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                    <span>{isProcessing ? '文字起こし処理中...' : 'まだ文字起こしがありません'}</span>
+                    <span>{isProcessing ? t('文字起こし処理中...') : t('まだ文字起こしがありません')}</span>
                     {!isRecording && !isProcessing && note.audio_path && onRetranscribeNote && (
                       <button
                         type="button"
@@ -3077,7 +3093,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                         style={{ height: '32px', fontSize: '13px' }}
                         onClick={() => void onRetranscribeNote(note.id)}
                       >
-                        録音音声から文字起こしを実行
+                        {t('録音音声から文字起こしを実行')}
                       </button>
                     )}
                   </div>
@@ -3155,7 +3171,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               onClick={scrollToLatest}
             >
               <ArrowDown size={13} strokeWidth={1.75} aria-hidden="true" />
-              <span>最新↓</span>
+              <span>{t('最新↓')}</span>
             </button>
           )}
         </div>
@@ -3184,7 +3200,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 {showSummarizeBtn && (
                   <div className="note-summary-popup-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <select
-                      aria-label="要約テンプレート選択"
+                      aria-label={t('要約テンプレート選択')}
                       className="input"
                       style={{ width: '148px', height: '32px', fontSize: '12px', padding: '0 8px', lineHeight: '1.2' }}
                       value={selectedTemplateId}
@@ -3203,7 +3219,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                       onClick={handleRunSummarize}
                     >
                       <Sparkles size={14} strokeWidth={1.75} />
-                      {isSummarizingThisNote ? '要約を生成中...' : '要約を生成'}
+                      {isSummarizingThisNote ? t('要約を生成中...') : t('要約を生成')}
                     </button>
                   </div>
                 )}
@@ -3214,10 +3230,10 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             {renderChatPopup(`note:${note.id}`, isAskingThisNote, false)}
             <div className={`note-composer-box ${chatPopupOpen ? 'popup-open' : ''}`}>
               <textarea
-                aria-label="ノートについて何でも質問"
+                aria-label={t('ノートについて何でも質問')}
                 className="note-composer-input"
                 rows={1}
-                placeholder="ノートについて何でも質問"
+                placeholder={t('ノートについて何でも質問')}
                 value={question}
                 onClick={() => setChatPopupOpen(true)}
                 onFocus={() => setChatPopupOpen(true)}
@@ -3227,7 +3243,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
               <button
                 type="button"
                 className="note-send-btn"
-                aria-label="質問を送信"
+                aria-label={t('質問を送信')}
                 disabled={!question.trim() || isAskingThisNote}
                 onClick={handleAskQuestion}
               >
@@ -3238,7 +3254,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
 
           <div className="note-consent-note">
             <Shield size={13} strokeWidth={1.75} aria-hidden="true" />
-            <span>他の人を録音するときは必ず同意を得てください</span>
+            <span>{t('他の人を録音するときは必ず同意を得てください')}</span>
           </div>
         </div>
         </>
@@ -3255,16 +3271,16 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
         >
           <div className="note-dialog">
             <h2 id="notion-dialog-title" className="section-title">
-              Notion 保存前の確認
+              {t('Notion 保存前の確認')}
             </h2>
             <p style={{ margin: 0, color: 'var(--ns-text-secondary)' }}>
               {note.notion_sync.page_id
-                ? '既存ページを更新（重複ページを作成しません）'
-                : '新規ページを作成'}
+                ? t('既存ページを更新（重複ページを作成しません）')
+                : t('新規ページを作成')}
             </p>
             {!notionReady && (
               <p style={{ margin: 0, color: 'var(--danger)' }}>
-                Notion 連携が未設定です。連携設定からトークンと保存先を設定してください。
+                {t('Notion 連携が未設定です。連携設定からトークンと保存先を設定してください。')}
               </p>
             )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
@@ -3273,7 +3289,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 className="btn btn-secondary"
                 onClick={() => setNotionPreviewOpen(false)}
               >
-                キャンセル
+                {t('キャンセル')}
               </button>
               <button
                 type="button"
@@ -3281,7 +3297,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 disabled={!notionReady || notionBusy}
                 onClick={handleConfirmNotionSave}
               >
-                {notionBusy ? '保存中...' : '保存を実行'}
+                {notionBusy ? t('保存中...') : t('保存を実行')}
               </button>
             </div>
           </div>
@@ -3306,7 +3322,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
             }}
           >
             <FileText size={14} strokeWidth={1.5} />
-            <span>開く</span>
+            <span>{t('開く')}</span>
           </button>
           {onDeleteNote && (
             <button
@@ -3317,15 +3333,15 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 const id = noteContextMenu.noteId;
                 setNoteContextMenu(null);
                 const ok = await confirmDeleteDialog(
-                  'このノートを削除しますか？',
-                  '削除したノートは元に戻せません。'
+                  t('このノートを削除しますか？'),
+                  t('削除したノートは元に戻せません。')
                 );
                 if (!ok) return;
                 await onDeleteNote(id);
               }}
             >
               <Trash2 size={14} strokeWidth={1.5} />
-              <span>削除</span>
+              <span>{t('削除')}</span>
             </button>
           )}
         </div>

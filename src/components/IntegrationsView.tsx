@@ -8,6 +8,7 @@ import {
   SecretStatus,
 } from '../types';
 import { isAndroidRuntime } from '../lib/platform';
+import { t } from '../i18n';
 
 interface IntegrationsViewProps {
   settings: AppSettings;
@@ -64,12 +65,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
   const saveKey = async (keyName: string) => {
     const val = (secretInputs[keyName] || '').trim();
     if (!val) {
-      flash('設定を保存しました');
+      flash(t('設定を保存しました'));
       return;
     }
     await onSetSecret(keyName, val);
     setSecretInputs((p) => ({ ...p, [keyName]: '' }));
-    flash('トークンを暗号化して保存しました');
+    flash(t('トークンを暗号化して保存しました'));
   };
 
   return (
@@ -85,13 +86,13 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div>
-            <h2 className="section-title">Notion 同期</h2>
+            <h2 className="section-title">{t('Notion 同期')}</h2>
             <p className="text-muted" style={{ margin: '4px 0 0' }}>
-              文字起こし・要約・メモを Notion データベースまたはページへ同期します。
+              {t('文字起こし・要約・メモを Notion データベースまたはページへ同期します。')}
             </p>
           </div>
           <span className={`status-chip ${secretStatus?.notion_access_token ? 'ok' : 'warn'}`}>
-            {secretStatus?.notion_access_token ? 'トークン保存済み' : 'トークン未設定'}
+            {secretStatus?.notion_access_token ? t('トークン保存済み') : t('トークン未設定')}
           </span>
         </div>
 
@@ -101,7 +102,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
             className="input"
             placeholder={
               secretStatus?.notion_access_token
-                ? 'Notion Integration Token（保存済み・更新する場合のみ入力）'
+                ? t('Notion Integration Token（保存済み・更新する場合のみ入力）')
                 : 'Notion Integration Token (secret_... / ntn_...)'
             }
             value={secretInputs['notion_access_token'] || ''}
@@ -114,16 +115,16 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
           />
           <button type="button" className="btn btn-primary" onClick={() => saveKey('notion_access_token')}>
             <Key size={14} strokeWidth={1.5} />
-            保存
+            {t('保存')}
           </button>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <label className="text-muted">同期先データベース / ページ</label>
+            <label className="text-muted">{t('同期先データベース / ページ')}</label>
             {settings.notion_target_name && (
               <span className="status-chip accent">
-                現在: {settings.notion_target_name} ({settings.notion_target_type})
+                {t('現在: {0} ({1})', [settings.notion_target_name, settings.notion_target_type])}
               </span>
             )}
           </div>
@@ -144,7 +145,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                 type="text"
                 className="input"
                 style={{ paddingLeft: '36px' }}
-                placeholder="データベース名またはページ名で検索（空欄で一覧取得）"
+                placeholder={t('データベース名またはページ名で検索（空欄で一覧取得）')}
                 value={notionQuery}
                 onChange={(e) => setNotionQuery(e.target.value)}
               />
@@ -164,7 +165,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
               }}
             >
               {notionFetching && <Loader2 size={15} strokeWidth={1.5} className="spin" />}
-              {notionFetching ? '取得中' : '同期先を検索'}
+              {notionFetching ? t('取得中') : t('同期先を検索')}
             </button>
             {onNotionPullNotes && (
               <button
@@ -181,7 +182,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                 }}
               >
                 {notionPulling && <Loader2 size={15} strokeWidth={1.5} className="spin" />}
-                {notionPulling ? '同期中...' : 'Notionから今すぐ同期'}
+                {notionPulling ? t('同期中...') : t('Notionから今すぐ同期')}
               </button>
             )}
           </div>
@@ -190,17 +191,17 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
         {notionFetching && (
           <div className="surface-subtle" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Loader2 size={16} strokeWidth={1.5} className="spin" />
-            <span>Notion から同期先候補を取得中...</span>
+            <span>{t('Notion から同期先候補を取得中...')}</span>
           </div>
         )}
 
         {notionTargets.length > 0 && (
           <div className="flat-list">
-            {notionTargets.map((t) => {
-              const isSelected = settings.notion_target_id === t.id;
+            {notionTargets.map((target) => {
+              const isSelected = settings.notion_target_id === target.id;
               return (
                 <button
-                  key={t.id}
+                  key={target.id}
                   type="button"
                   className="flat-row"
                   style={{
@@ -208,17 +209,17 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                   }}
                   onClick={() => {
                     update({
-                      notion_target_id: t.id,
-                      notion_target_type: t.object_type,
-                      notion_target_name: t.title,
+                      notion_target_id: target.id,
+                      notion_target_type: target.object_type,
+                      notion_target_name: target.title,
                     });
-                    flash(`保存先を「${t.title}」に設定しました`);
+                    flash(t('保存先を「{0}」に設定しました', [target.title]));
                   }}
                 >
                   <span style={{ fontWeight: isSelected ? 600 : 400 }}>
-                    {t.title}（{t.object_type}）
+                    {t('{0}（{1}）', [target.title, target.object_type])}
                   </span>
-                  <span className="text-muted mono-num">{isSelected ? '選択中' : t.id.slice(0, 8)}</span>
+                  <span className="text-muted mono-num">{isSelected ? t('選択中') : target.id.slice(0, 8)}</span>
                 </button>
               );
             })}
@@ -227,12 +228,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
 
         <details style={{ fontSize: '12px' }}>
           <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 500 }}>
-            プロパティ名のマッピング設定・OAuth 2.0 接続
+            {t('プロパティ名のマッピング設定・OAuth 2.0 接続')}
           </summary>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '8px' }}>
               <div>
-                <label className="text-muted">タイトルプロパティ</label>
+                <label className="text-muted">{t('タイトルプロパティ')}</label>
                 <input
                   className="input"
                   value={settings.notion_mapping.title_prop}
@@ -242,7 +243,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                 />
               </div>
               <div>
-                <label className="text-muted">要約プロパティ</label>
+                <label className="text-muted">{t('要約プロパティ')}</label>
                 <input
                   className="input"
                   value={settings.notion_mapping.summary_prop}
@@ -252,7 +253,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                 />
               </div>
               <div>
-                <label className="text-muted">日時プロパティ</label>
+                <label className="text-muted">{t('日時プロパティ')}</label>
                 <input
                   className="input"
                   value={settings.notion_mapping.date_prop}
@@ -264,7 +265,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)' }}>
-              <div className="text-muted">OAuth 2.0 で接続する場合</div>
+              <div className="text-muted">{t('OAuth 2.0 で接続する場合')}</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px' }}>
                 <input className="input" placeholder="Client ID" value={notionClientId} onChange={(e) => setNotionClientId(e.target.value)} />
                 <input className="input" type="password" placeholder="Client Secret" value={notionClientSecret} onChange={(e) => setNotionClientSecret(e.target.value)} />
@@ -279,24 +280,24 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
                     setNotionAuthUrl(url);
                   }}
                 >
-                  認可URLを生成
+                  {t('認可URLを生成')}
                 </button>
                 {notionAuthUrl && (
                   <a href={notionAuthUrl} target="_blank" rel="noreferrer" className="btn btn-ghost">
                     <ExternalLink size={14} strokeWidth={1.5} />
-                    ブラウザで開く
+                    {t('ブラウザで開く')}
                   </a>
                 )}
-                <input className="input" placeholder="取得した認可 code" value={notionCode} onChange={(e) => setNotionCode(e.target.value)} />
+                <input className="input" placeholder={t('取得した認可 code')} value={notionCode} onChange={(e) => setNotionCode(e.target.value)} />
                 <button
                   type="button"
                   className="btn btn-primary"
                   onClick={async () => {
                     const ws = await onNotionExchangeCode(notionClientId, notionClientSecret, notionCode, notionRedirectUri);
-                    flash(`${ws} に接続しました`);
+                    flash(t('{0} に接続しました', [ws]));
                   }}
                 >
-                  交換
+                  {t('交換')}
                 </button>
               </div>
             </div>
@@ -306,27 +307,27 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
 
       {/* Secondary: Webhook & MCP */}
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <h2 className="section-title">Webhook / MCP 連携</h2>
+        <h2 className="section-title">{t('Webhook / MCP 連携')}</h2>
         <div style={{ display: 'flex', gap: '8px' }}>
           <input
             type="password"
             className="input"
             placeholder={
               secretStatus?.slack_webhook_url
-                ? 'Slack Incoming Webhook URL（保存済み）'
+                ? t('Slack Incoming Webhook URL（保存済み）')
                 : 'Slack Incoming Webhook URL'
             }
             value={secretInputs['slack_webhook_url'] || ''}
             onChange={(e) => setSecretInputs((p) => ({ ...p, slack_webhook_url: e.target.value }))}
           />
           <button type="button" className="btn btn-secondary" onClick={() => saveKey('slack_webhook_url')}>
-            保存
+            {t('保存')}
           </button>
         </div>
         {folders.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <span className="text-muted" style={{ fontSize: '12px' }}>
-              要約完了時に Slack へ自動共有するスペース（選択したスペースのノートのみ自動送信）
+              {t('要約完了時に Slack へ自動共有するスペース（選択したスペースのノートのみ自動送信）')}
             </span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {folders.map((folder) => {
@@ -363,14 +364,14 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
         <input
           type="url"
           className="input"
-          placeholder="汎用 Webhook URL（任意）"
+          placeholder={t('汎用 Webhook URL（任意）')}
           value={settings.generic_webhook_url}
           onChange={(e) => update({ generic_webhook_url: e.target.value })}
         />
         {mcpPreview && !isAndroidRuntime() && (
           <details style={{ fontSize: '12px' }}>
             <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>
-              MCP サーバー設定（Claude Desktop / Cursor 用）を表示
+              {t('MCP サーバー設定（Claude Desktop / Cursor 用）を表示')}
             </summary>
             <pre className="surface-subtle mono-num" style={{ margin: '8px 0 0', fontSize: '12px', overflowX: 'auto' }}>
               {mcpPreview}
@@ -381,9 +382,9 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
 
       {/* Calendar ICS */}
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <h2 className="section-title">カレンダー連携 (ICS URL)</h2>
+        <h2 className="section-title">{t('カレンダー連携 (ICS URL)')}</h2>
         <p className="text-muted" style={{ margin: 0 }}>
-          Google Calendar や Outlook の非公開 ICS URL を登録すると、ホーム画面の予定リストに会議予定と参加者が自動反映されます。
+          {t('Google Calendar や Outlook の非公開 ICS URL を登録すると、ホーム画面の予定リストに会議予定と参加者が自動反映されます。')}
         </p>
         <input
           type="url"
@@ -397,9 +398,9 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
       {/* Issue Tracker: GitHub / Linear / Jira */}
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <div>
-          <h2 className="section-title">Issue / タスク起票連携 (GitHub / Linear / Jira)</h2>
+          <h2 className="section-title">{t('Issue / タスク起票連携 (GitHub / Linear / Jira)')}</h2>
           <p className="text-muted" style={{ margin: '4px 0 0' }}>
-            ノート内のアクション項目からワンクリックで Issue を作成できます。
+            {t('ノート内のアクション項目からワンクリックで Issue を作成できます。')}
           </p>
         </div>
 
@@ -409,7 +410,7 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
             <input
               className="input"
               style={{ flex: '1 1 180px' }}
-              placeholder="owner/repo (例: Terry-Blossom/Notelet)"
+              placeholder={t('owner/repo (例: Terry-Blossom/Notelet)')}
               value={settings.github_repo ?? ''}
               onChange={(e) => update({ github_repo: e.target.value })}
             />
@@ -417,12 +418,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
               type="password"
               className="input"
               style={{ flex: '1 1 200px' }}
-              placeholder={secretStatus?.github_issue_token ? 'GitHub PAT（保存済み）' : 'GitHub Personal Access Token'}
+              placeholder={secretStatus?.github_issue_token ? t('GitHub PAT（保存済み）') : 'GitHub Personal Access Token'}
               value={secretInputs['github_issue_token'] || ''}
               onChange={(e) => setSecretInputs((p) => ({ ...p, github_issue_token: e.target.value }))}
             />
             <button type="button" className="btn btn-secondary" onClick={() => saveKey('github_issue_token')}>
-              保存
+              {t('保存')}
             </button>
           </div>
         </div>
@@ -441,12 +442,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
               type="password"
               className="input"
               style={{ flex: '1 1 200px' }}
-              placeholder={secretStatus?.linear_api_key ? 'Linear API Key（保存済み）' : 'Linear API Key (lin_api_...)'}
+              placeholder={secretStatus?.linear_api_key ? t('Linear API Key（保存済み）') : 'Linear API Key (lin_api_...)'}
               value={secretInputs['linear_api_key'] || ''}
               onChange={(e) => setSecretInputs((p) => ({ ...p, linear_api_key: e.target.value }))}
             />
             <button type="button" className="btn btn-secondary" onClick={() => saveKey('linear_api_key')}>
-              保存
+              {t('保存')}
             </button>
           </div>
         </div>
@@ -479,12 +480,12 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
               type="password"
               className="input"
               style={{ flex: '1 1 180px' }}
-              placeholder={secretStatus?.jira_api_token ? 'Jira API Token（保存済み）' : 'Jira API Token'}
+              placeholder={secretStatus?.jira_api_token ? t('Jira API Token（保存済み）') : 'Jira API Token'}
               value={secretInputs['jira_api_token'] || ''}
               onChange={(e) => setSecretInputs((p) => ({ ...p, jira_api_token: e.target.value }))}
             />
             <button type="button" className="btn btn-secondary" onClick={() => saveKey('jira_api_token')}>
-              保存
+              {t('保存')}
             </button>
           </div>
         </div>
@@ -492,17 +493,17 @@ export const IntegrationsView: React.FC<IntegrationsViewProps> = ({
 
       {/* Granola API */}
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <h2 className="section-title">Granola API キー（インポート用）</h2>
+        <h2 className="section-title">{t('Granola API キー（インポート用）')}</h2>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <input
             type="password"
             className="input"
-            placeholder={secretStatus?.granola_api_key ? 'Granola API Key（保存済み）' : 'Granola API Key'}
+            placeholder={secretStatus?.granola_api_key ? t('Granola API Key（保存済み）') : 'Granola API Key'}
             value={secretInputs['granola_api_key'] || ''}
             onChange={(e) => setSecretInputs((p) => ({ ...p, granola_api_key: e.target.value }))}
           />
           <button type="button" className="btn btn-secondary" onClick={() => saveKey('granola_api_key')}>
-            保存
+            {t('保存')}
           </button>
         </div>
       </section>

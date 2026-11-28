@@ -204,12 +204,18 @@ impl Default for NotionPropertyMapping {
     }
 }
 
+fn default_ui_language() -> String {
+    "en".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub plan_tier: PlanTier,
     pub active_asr_model_id: String,
     pub active_asr_provider: AsrProviderKind,
     pub language: String, // "auto" | "ja" | "en"
+    #[serde(default = "default_ui_language")]
+    pub ui_language: String, // "en" | "ja"
     pub allow_cloud_asr: bool,
     pub llm_provider: String, // "none" | "openai" | "anthropic" | "gemini" | "ollama"
     pub llm_model: String,
@@ -360,6 +366,7 @@ impl Default for AppSettings {
             #[cfg(not(target_os = "android"))]
             active_asr_provider: AsrProviderKind::LocalWhisper,
             language: "ja".to_string(),
+            ui_language: "en".to_string(),
             #[cfg(target_os = "android")]
             allow_cloud_asr: true,
             #[cfg(not(target_os = "android"))]

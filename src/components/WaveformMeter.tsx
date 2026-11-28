@@ -1,4 +1,5 @@
 import React from 'react';
+import { t } from '../i18n';
 
 interface WaveformMeterProps {
   waveform: number[];
@@ -15,7 +16,7 @@ export const WaveformMeter: React.FC<WaveformMeterProps> = ({
 
   return (
     <div
-      aria-label={`入力音量 ${Math.round(levelRms * 100)}%`}
+      aria-label={t('入力音量 {0}%', [Math.round(levelRms * 100)])}
       style={{
         display: 'flex',
         alignItems: 'center',

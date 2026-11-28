@@ -2,6 +2,7 @@ import React from 'react';
 import { Download, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { apiOpenExternalUrl } from '../../lib/tauri';
 import { UpdateCheckResult } from '../../types';
+import { t } from '../../i18n';
 
 interface UpdateSettingsPanelProps {
   updateProgress: number | null;
@@ -44,16 +45,16 @@ export const UpdateSettingsPanel: React.FC<UpdateSettingsPanelProps> = ({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div>
-        <h2 className="section-title">アプリ更新</h2>
+        <h2 className="section-title">{t('アプリ更新')}</h2>
         <p className="text-muted" style={{ margin: '4px 0 0' }}>
-          GitHub Releases から最新バージョンを確認してワンクリックで更新できます。
+          {t('GitHub Releases から最新バージョンを確認してワンクリックで更新できます。')}
         </p>
       </div>
 
       <div className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div>
-            現在のバージョン: <strong className="mono-num">v{updateInfo?.current_version ?? (appVersion || '...')}</strong>
+            {t('現在のバージョン:')} <strong className="mono-num">v{updateInfo?.current_version ?? (appVersion || '...')}</strong>
           </div>
           <button
             type="button"
@@ -77,7 +78,7 @@ export const UpdateSettingsPanel: React.FC<UpdateSettingsPanelProps> = ({
             ) : (
               <RefreshCw size={14} strokeWidth={1.5} />
             )}
-            {checkingUpdate ? '確認中...' : '最新リリースを確認'}
+            {checkingUpdate ? t('確認中...') : t('最新リリースを確認')}
           </button>
         </div>
 
@@ -92,8 +93,8 @@ export const UpdateSettingsPanel: React.FC<UpdateSettingsPanelProps> = ({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
               <span className={`status-chip ${updateInfo.has_update ? 'accent' : 'ok'}`}>
                 {updateInfo.has_update
-                  ? `新しいバージョン v${updateInfo.latest_version} が利用可能です`
-                  : `最新の状態です (v${updateInfo.current_version})`}
+                  ? t('新しいバージョン v{0} が利用可能です', [updateInfo.latest_version])
+                  : t('最新の状態です (v{0})', [updateInfo.current_version])}
               </span>
               {canAutoUpdate && updateInfo.download_url && (
                 <button
@@ -121,9 +122,9 @@ export const UpdateSettingsPanel: React.FC<UpdateSettingsPanelProps> = ({
                   )}
                   {installingUpdate
                     ? updateProgress !== null
-                      ? `ダウンロード中 (${updateProgress}%)`
-                      : '更新中...'
-                    : `v${updateInfo.latest_version} に今すぐアップデート`}
+                      ? t('ダウンロード中 ({0}%)', [updateProgress])
+                      : t('更新中...')
+                    : t('v{0} に今すぐアップデート', [updateInfo.latest_version])}
                 </button>
               )}
               {updateInfo.has_update && !canAutoUpdate && (
@@ -140,13 +141,13 @@ export const UpdateSettingsPanel: React.FC<UpdateSettingsPanelProps> = ({
                   }}
                 >
                   <ExternalLink size={14} strokeWidth={1.5} />
-                  リリースページを開く
+                  {t('リリースページを開く')}
                 </button>
               )}
             </div>
             {updateInfo.has_update && !updateInfo.can_auto_install && (
               <p className="text-muted" style={{ margin: 0, fontSize: '13px' }}>
-                この形式（deb など）ではアプリ内で自動更新できません。リリースページから新しいパッケージを入れてください。
+                {t('この形式（deb など）ではアプリ内で自動更新できません。リリースページから新しいパッケージを入れてください。')}
               </p>
             )}
           </div>

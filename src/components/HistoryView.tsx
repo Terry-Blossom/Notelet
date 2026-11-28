@@ -3,6 +3,7 @@ import { FileText, Loader2, Search, Trash2 } from 'lucide-react';
 import { Folder, Note } from '../types';
 import { formatDateTime, formatMs } from '../lib/format';
 import { NotionSyncBadge } from './NotionSyncBadge';
+import { t } from '../i18n';
 
 interface HistoryViewProps {
   notes: Note[];
@@ -55,7 +56,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             className={`chip-filter ${selectedFolderId === 'all' ? 'active' : ''}`}
             onClick={() => setSelectedFolderId('all')}
           >
-            すべて ({notes.length})
+            {t('すべて ({0})', [notes.length])}
           </button>
           {folders.map((folder) => {
             const count = notes.filter((n) => n.folder_id === folder.id).length;
@@ -85,10 +86,10 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             }}
           />
           <input
-            aria-label="ノートを検索"
+            aria-label={t('ノートを検索')}
             className="input"
             style={{ paddingLeft: '36px', borderRadius: '999px', backgroundColor: 'var(--bg-subtle)' }}
-            placeholder="キーワード、決定事項、文字起こしを検索"
+            placeholder={t('キーワード、決定事項、文字起こしを検索')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -99,14 +100,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         <div style={{ padding: '32px 0', borderTop: '1px solid var(--border-subtle)', textAlign: 'center' }}>
           <FileText size={24} strokeWidth={1.5} style={{ color: 'var(--text-muted)', marginBottom: '8px' }} />
           <p className="text-secondary" style={{ margin: '0px' }}>
-            条件に一致するノートはありません
+            {t('条件に一致するノートはありません')}
           </p>
         </div>
       ) : (
         <div className="flat-list">
           {filteredNotes.map((note) => {
-            const folderName = folders.find((f) => f.id === note.folder_id)?.name ?? '個人';
-            const displayTitle = note.title.trim() || '無題のノート';
+            const folderName = folders.find((f) => f.id === note.folder_id)?.name ?? t('個人');
+            const displayTitle = note.title.trim() || t('無題のノート');
             const isNoteRec = recordingNoteId === note.id;
             return (
               <div key={note.id} className="flat-row">
@@ -131,7 +132,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                     {isNoteRec && (
                       <span className="status-chip danger" style={{ gap: '4px' }}>
                         <Loader2 size={12} strokeWidth={2} className="spin" />
-                        録音中
+                        {t('録音中')}
                       </span>
                     )}
                   </div>
@@ -144,10 +145,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {note.summary || note.segments[0]?.text || note.manual_notes || '文字起こしなし'}
+                    {note.summary || note.segments[0]?.text || note.manual_notes || t('文字起こしなし')}
                   </p>
                   <span className="text-muted mono-num">
-                    {formatDateTime(note.created_at)} ・ {formatMs(note.duration_sec * 1000)} ・ {note.segments.length} セグメント
+                    {t('{0} ・ {1} ・ {2} セグメント', [
+                      formatDateTime(note.created_at),
+                      formatMs(note.duration_sec * 1000),
+                      note.segments.length,
+                    ])}
                   </span>
                 </button>
 
@@ -163,7 +168,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                           setConfirmDeleteId(null);
                         }}
                       >
-                        削除する
+                        {t('削除する')}
                       </button>
                       <button
                         type="button"
@@ -171,13 +176,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                         style={{ height: '28px', padding: '0 8px', fontSize: '12px' }}
                         onClick={() => setConfirmDeleteId(null)}
                       >
-                        キャンセル
+                        {t('キャンセル')}
                       </button>
                     </>
                   ) : (
                     <button
                       type="button"
-                      aria-label={`${displayTitle}を削除`}
+                      aria-label={t('{0}を削除', [displayTitle])}
                       className="btn btn-ghost"
                       style={{ height: '28px', width: '28px', padding: 0 }}
                       onClick={() => setConfirmDeleteId(note.id)}

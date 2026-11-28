@@ -144,6 +144,7 @@ export interface AppSettings {
   active_asr_model_id: string;
   active_asr_provider: AsrProviderKind;
   language: string;
+  ui_language?: 'en' | 'ja';
   allow_cloud_asr: boolean;
   llm_provider: string;
   llm_model: string;

@@ -1,4 +1,5 @@
 import { confirmActionDialog } from '../components/ConfirmDialog';
+import { t } from '../i18n';
 import { apiOpenExternalUrl, isTauriRuntime } from './tauri';
 
 const KNOWN_TECHNICAL_TERMS = [
@@ -134,9 +135,9 @@ export function splitTextWithWikiTerms(
 export async function openWikipediaWithConfirm(term: string): Promise<void> {
   const url = `https://ja.wikipedia.org/wiki/${encodeURIComponent(term)}`;
   const ok = await confirmActionDialog(
-    `「${term}」の Wikipedia ページを開きますか？`,
+    t('「{0}」の Wikipedia ページを開きますか？', [term]),
     url,
-    'Wikipedia で開く'
+    t('Wikipedia で開く')
   );
   if (!ok) return;
   if (isTauriRuntime()) {

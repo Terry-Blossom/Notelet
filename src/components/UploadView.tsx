@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Upload, FileAudio, Loader2, Link2 } from 'lucide-react';
 import { AppSettings, AsrModelInfo, Folder, Note } from '../types';
+import { t } from '../i18n';
 
 interface UploadViewProps {
   settings: AppSettings;
@@ -36,19 +37,19 @@ export const UploadView: React.FC<UploadViewProps> = ({
   return (
     <div className="page-container">
       <div>
-        <h1 className="page-title">アップロード</h1>
+        <h1 className="page-title">{t('アップロード')}</h1>
         <p className="text-secondary" style={{ margin: '4px 0 0' }}>
-          手元にある音声ファイルを読み込み、選択中の音声認識モデルで文字起こしします
+          {t('手元にある音声ファイルを読み込み、選択中の音声認識モデルで文字起こしします')}
         </p>
       </div>
 
       <section className="surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div style={{ fontSize: '14px' }}>
-            使用中のASRモデル: <strong>{activeModel ? activeModel.name : settings.active_asr_model_id || 'モデル未選択'}</strong>
+            {t('使用中のASRモデル: ')}<strong>{activeModel ? activeModel.name : settings.active_asr_model_id || t('モデル未選択')}</strong>
           </div>
           <button type="button" className="btn btn-secondary" onClick={onGoSettings}>
-            モデルを変更
+            {t('モデルを変更')}
           </button>
         </div>
 
@@ -68,10 +69,10 @@ export const UploadView: React.FC<UploadViewProps> = ({
         >
           <Upload size={24} strokeWidth={1.5} color="var(--accent)" />
           <div style={{ fontWeight: 600 }}>
-            {selectedFile ? selectedFile.name : '音声ファイルを選択（WAV / MP3 / M4A / OGG / FLAC）'}
+            {selectedFile ? selectedFile.name : t('音声ファイルを選択（WAV / MP3 / M4A / OGG / FLAC）')}
           </div>
           <div className="text-muted">
-            ローカルモデルは16kHz WAV形式に最適化されています（クラウドASRはMP3/M4A等も直接処理できます）
+            {t('ローカルモデルは16kHz WAV形式に最適化されています（クラウドASRはMP3/M4A等も直接処理できます）')}
           </div>
           <input
             type="file"
@@ -97,7 +98,7 @@ export const UploadView: React.FC<UploadViewProps> = ({
               onClick={() => onUploadAndTranscribe(selectedFile)}
             >
               {busy ? <Loader2 size={16} strokeWidth={1.5} /> : <Upload size={16} strokeWidth={1.5} />}
-              {busy ? '文字起こし中' : '文字起こしを開始'}
+              {busy ? t('文字起こし中') : t('文字起こしを開始')}
             </button>
           </div>
         )}
@@ -119,14 +120,14 @@ export const UploadView: React.FC<UploadViewProps> = ({
           >
             <label className="text-muted" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <Link2 size={13} strokeWidth={1.5} />
-              <span>動画・音声リンク (URL) から文字起こし</span>
+              <span>{t('動画・音声リンク (URL) から文字起こし')}</span>
             </label>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <input
                 type="url"
                 className="input"
                 style={{ flex: '1 1 260px' }}
-                placeholder="https://example.com/meeting.mp4 または動画URL"
+                placeholder={t('https://example.com/meeting.mp4 または動画URL')}
                 value={videoUrl}
                 onChange={(e) => setVideoUrl(e.target.value)}
                 disabled={busy}
@@ -137,7 +138,7 @@ export const UploadView: React.FC<UploadViewProps> = ({
                 disabled={busy || !videoUrl.trim()}
               >
                 {busy ? <Loader2 size={15} strokeWidth={1.5} className="spin" /> : <Link2 size={15} strokeWidth={1.5} />}
-                {busy ? '文字起こし中' : 'リンクから文字起こし'}
+                {busy ? t('文字起こし中') : t('リンクから文字起こし')}
               </button>
             </div>
           </form>
