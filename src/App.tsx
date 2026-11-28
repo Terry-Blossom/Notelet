@@ -1429,7 +1429,7 @@ const MainApp: React.FC = () => {
       if (existing) clearTimeout(existing);
       noteSaveTimersRef.current[normalized.id] = setTimeout(() => {
         void flushPendingNote(normalized.id);
-      }, 500);
+      }, 300);
     }
   };
 
@@ -2291,6 +2291,7 @@ const MainApp: React.FC = () => {
             onStopRecording={handleStopAndFinish}
             onRetranscribeNote={handleRetranscribeNote}
             onUpdateNote={handleUpdateNote}
+            onFlushNote={() => void flushPendingNote()}
             onSelectNote={(id) => {
               void flushPendingNote(activeNoteId ?? undefined);
               setPendingSearchQuery('');

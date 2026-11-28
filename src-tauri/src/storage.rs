@@ -426,7 +426,7 @@ struct SnapshotWriter {
 
 static SNAPSHOT_WRITER: OnceLock<SnapshotWriter> = OnceLock::new();
 
-fn write_delta(delta: PendingDelta) -> Result<(), String> {
+fn write_delta(delta: &PendingDelta) -> Result<(), String> {
     use std::io::Write;
     let journal_guard = JOURNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = journal_path();
@@ -435,7 +435,7 @@ fn write_delta(delta: PendingDelta) -> Result<(), String> {
         .append(true)
         .open(&path)
         .map_err(|e| format!("ジャーナルを開けませんでした: {e}"))?;
-    if let Some(meta) = delta.meta {
+    if let Some(meta) = delta.meta.as_ref() {
         let line = serde_json::json!({ "op": "meta", "snapshot": meta });
         serde_json::to_writer(&mut file, &line)
             .map_err(|e| format!("ジャーナル書き込みに失敗: {e}"))?;
@@ -504,8 +504,35 @@ fn snapshot_writer() -> &'static SnapshotWriter {
                         continue;
                     };
                     let had_changes = !delta.is_empty();
-                    if let Err(err) = write_delta(delta) {
+                    if let Err(err) = write_delta(&delta) {
                         eprintln!("[notelet] async snapshot save failed: {err}");
+                        // 失敗した変更を保留へ戻し、last_saved を巻き戻して再試行する。
+                        let mut guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
+                        let pending = guard.delta.get_or_insert_with(PendingDelta::default);
+                        for (id, note) in &delta.changed {
+                            pending
+                                .changed
+                                .entry(id.clone())
+                                .or_insert_with(|| note.clone());
+                        }
+                        for id in &delta.removed {
+                            pending.removed.insert(id.clone());
+                        }
+                        for (id, version) in &delta.versions {
+                            pending.versions.insert(id.clone(), version.clone());
+                        }
+                        if pending.meta.is_none() {
+                            pending.meta = delta.meta.clone();
+                        }
+                        drop(guard);
+                        let mut last = w.last_saved.lock().unwrap_or_else(|e| e.into_inner());
+                        for id in delta.versions.keys() {
+                            last.remove(id);
+                        }
+                        drop(last);
+                        std::thread::sleep(Duration::from_secs(1));
+                        w.cv.notify_all();
+                        continue;
                     }
                     if had_changes {
                         let guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -551,16 +578,14 @@ pub fn save_snapshot(snapshot: &AppDataSnapshot) -> Result<(), String> {
         delta.removed.insert(id.clone());
         delta.versions.insert(id, String::new());
     }
-    let versions = std::mem::take(&mut delta.versions);
-    for (id, version) in versions {
+    for (id, version) in &delta.versions {
         if version.is_empty() {
-            last.remove(&id);
+            last.remove(id);
         } else {
-            last.insert(id, version);
+            last.insert(id.clone(), version.clone());
         }
     }
-    guard.seq = guard.seq.wrapping_add(1);
-    w.cv.notify_all();
+    guard.seq = guard.seq.wrapping_add(1);    w.cv.notify_all();
     Ok(())
 }
 
@@ -571,7 +596,7 @@ pub fn flush_snapshot_sync() {
             guard.delta.take()
         };
         if let Some(delta) = delta {
-            let _ = write_delta(delta);
+            let _ = write_delta(&delta);
         }
         // 終了時はジャーナルを本体へ畳み込む。
         let _ = compact_journal();
@@ -1132,7 +1157,7 @@ mod migration_tests {
             .changed
             .insert("b".to_string(), sample_note("b", "B", "2026-01-02T00:00:00Z"));
         delta.removed.insert("a".to_string());
-        write_delta(delta).unwrap();
+        write_delta(&delta).unwrap();
 
         let loaded = load_snapshot();
         assert!(loaded.notes.iter().any(|n| n.id == "b"));
