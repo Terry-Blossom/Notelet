@@ -108,10 +108,12 @@ function resolveDataFilePath(dataDir) {
 let snapshotCache = { key: null, snapshot: null };
 
 function loadSnapshot(dataFilePath, scope) {
-  if (!fs.existsSync(dataFilePath)) {
+  let stat;
+  try {
+    stat = fs.statSync(dataFilePath);
+  } catch {
     return { notes: [], folders: [], dictionary: [] };
   }
-  const stat = fs.statSync(dataFilePath);
   const cacheKey = `${dataFilePath}:${stat.mtimeMs}:${stat.size}:${scope}`;
   if (snapshotCache.key === cacheKey) {
     return snapshotCache.snapshot;

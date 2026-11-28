@@ -730,10 +730,13 @@ const MainApp: React.FC = () => {
   const noteSaveSeqRef = React.useRef<Record<string, number>>({});
   const noteSaveTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const notePendingRef = React.useRef<Record<string, Note>>({});
+  const flushPendingNoteRef = React.useRef<(noteId?: string) => Promise<void>>(async () => {});
 
   const syncNoteToNotion = useCallback(
     async (noteId: string, silent = false) => {
       if (!isTauriRuntime()) return;
+      // デバウンス中のローカル編集を先に永続化してから同期する。
+      await flushPendingNoteRef.current(noteId);
       if (notionSyncInFlightRef.current.has(noteId)) return;
       notionSyncInFlightRef.current.add(noteId);
       setSnapshot((prev) => ({
@@ -1378,18 +1381,30 @@ const MainApp: React.FC = () => {
           }
           scheduleAutoNotionSync(id, false);
         } catch (e) {
+          // 失敗時は保留に戻し、次の編集/ flush で再試行できるようにする。
+          if (!notePendingRef.current[id]) {
+            notePendingRef.current[id] = pending;
+          }
           setBannerMessage(String(e));
         }
       }
     },
     [scheduleAutoNotionSync]
   );
+  flushPendingNoteRef.current = flushPendingNote;
 
   useEffect(() => {
     const flush = () => void flushPendingNote();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
     window.addEventListener('beforeunload', flush);
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.removeEventListener('beforeunload', flush);
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
       void flushPendingNote();
     };
   }, [flushPendingNote]);
@@ -1458,6 +1473,7 @@ const MainApp: React.FC = () => {
   };
 
   const handleDeleteFolder = async (folderId: string) => {
+    await flushPendingNote();
     if (isTauriRuntime()) {
       setSnapshot(await apiDeleteFolder(folderId));
     } else {
@@ -1533,6 +1549,7 @@ const MainApp: React.FC = () => {
             await refreshAll();
           }}
           onExportAll={async () => {
+            await flushPendingNote();
             const json = isTauriRuntime()
               ? await apiExportAllData()
               : JSON.stringify(snapshot, null, 2);
@@ -1545,6 +1562,9 @@ const MainApp: React.FC = () => {
             URL.revokeObjectURL(url);
           }}
           onPurgeAll={async () => {
+            for (const noteId of Object.keys(notePendingRef.current)) {
+              cancelPendingNoteSave(noteId);
+            }
             if (isTauriRuntime()) {
               setSnapshot(await apiPurgeAllData());
             } else {
@@ -1555,6 +1575,7 @@ const MainApp: React.FC = () => {
           notes={snapshot.notes}
           onImportNotes={handleImportNotes}
           onRestoreBackup={async (jsonText: string) => {
+            await flushPendingNote();
             const merged = mergeNoteletBackupJson(jsonText, snapshot);
             if (isTauriRuntime()) {
               setSnapshot(await apiRestoreBackupSnapshot(merged.snapshot));
