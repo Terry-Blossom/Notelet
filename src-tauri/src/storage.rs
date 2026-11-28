@@ -270,18 +270,31 @@ fn default_recipes() -> Vec<Recipe> {
 
 pub fn load_snapshot() -> AppDataSnapshot {
     let path = data_file_path();
-    if let Ok(raw) = fs::read_to_string(&path) {
-        if let Ok(mut snap) = serde_json::from_str::<AppDataSnapshot>(&raw) {
-            snap.folders.retain(|f| f.id != "team-shared" && !f.is_shared);
-            if snap.folders.is_empty() {
-                snap.folders = default_folders();
-            }
-            if snap.recipes.is_empty() {
-                snap.recipes = default_recipes();
-            }
-            return snap;
+    let mut snap = fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<AppDataSnapshot>(&raw).ok())
+        .unwrap_or_else(default_snapshot);
+    // WAL（追記ジャーナル）を再生して最新状態にする。
+    apply_journal(&mut snap);
+    snap.folders.retain(|f| f.id != "team-shared" && !f.is_shared);
+    if snap.folders.is_empty() {
+        snap.folders = default_folders();
+    }
+    if snap.recipes.is_empty() {
+        snap.recipes = default_recipes();
+    }
+    if !cfg!(test) {
+        let w = snapshot_writer();
+        let mut last = w.last_saved.lock().unwrap_or_else(|e| e.into_inner());
+        last.clear();
+        for note in &snap.notes {
+            last.insert(note.id.clone(), note.updated_at.clone());
         }
     }
+    snap
+}
+
+fn default_snapshot() -> AppDataSnapshot {
     AppDataSnapshot {
         notes: Vec::new(),
         folders: default_folders(),
@@ -295,6 +308,67 @@ pub fn load_snapshot() -> AppDataSnapshot {
     }
 }
 
+fn journal_path() -> PathBuf {
+    data_file_path().with_file_name("notelet_journal.ndjson")
+}
+
+fn snapshot_meta(snapshot: &AppDataSnapshot) -> AppDataSnapshot {
+    AppDataSnapshot {
+        notes: Vec::new(),
+        folders: snapshot.folders.clone(),
+        dictionary: snapshot.dictionary.clone(),
+        recipes: snapshot.recipes.clone(),
+        settings: snapshot.settings.clone(),
+        audit_logs: snapshot.audit_logs.clone(),
+        chat_history: snapshot.chat_history.clone(),
+        popup_chat_sessions: snapshot.popup_chat_sessions.clone(),
+        deleted_notes: snapshot.deleted_notes.clone(),
+    }
+}
+
+fn apply_journal(snapshot: &mut AppDataSnapshot) {
+    let Ok(raw) = fs::read_to_string(journal_path()) else {
+        return;
+    };
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        // 末尾の書きかけ行は無視する。
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match value["op"].as_str() {
+            Some("meta") => {
+                if let Ok(meta) =
+                    serde_json::from_value::<AppDataSnapshot>(value["snapshot"].clone())
+                {
+                    // メタ情報のみ反映し、ジャーナルで既に適用したノートは保持する。
+                    snapshot.folders = meta.folders;
+                    snapshot.dictionary = meta.dictionary;
+                    snapshot.recipes = meta.recipes;
+                    snapshot.settings = meta.settings;
+                    snapshot.audit_logs = meta.audit_logs;
+                    snapshot.chat_history = meta.chat_history;
+                    snapshot.popup_chat_sessions = meta.popup_chat_sessions;
+                    snapshot.deleted_notes = meta.deleted_notes;
+                }
+            }
+            Some("note") => {
+                if let Ok(note) = serde_json::from_value::<Note>(value["note"].clone()) {
+                    upsert_note(snapshot, note);
+                }
+            }
+            Some("delete") => {
+                if let Some(id) = value["id"].as_str() {
+                    snapshot.notes.retain(|n| n.id != id);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn write_snapshot_to_path(path: &Path, snapshot: &AppDataSnapshot) -> Result<(), String> {
     let json = serde_json::to_vec(snapshot)
         .map_err(|e| format!("データのシリアライズに失敗: {e}"))?;
@@ -304,8 +378,42 @@ fn write_snapshot_to_path(path: &Path, snapshot: &AppDataSnapshot) -> Result<(),
     Ok(())
 }
 
+const JOURNAL_COMPACT_BYTES: u64 = 2 * 1024 * 1024;
+static JOURNAL_LOCK: Mutex<()> = Mutex::new(());
+
+fn compact_journal() -> Result<(), String> {
+    let _guard = JOURNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    compact_journal_locked()
+}
+
+fn compact_journal_locked() -> Result<(), String> {
+    let path = data_file_path();
+    let mut snapshot = fs::read(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<AppDataSnapshot>(&raw).ok())
+        .unwrap_or_else(default_snapshot);
+    apply_journal(&mut snapshot);
+    write_snapshot_to_path(&path, &snapshot)?;
+    let _ = fs::write(journal_path(), b"");
+    Ok(())
+}
+
+#[derive(Default)]
+struct PendingDelta {
+    meta: Option<AppDataSnapshot>,
+    changed: std::collections::HashMap<String, Note>,
+    removed: std::collections::HashSet<String>,
+    versions: std::collections::HashMap<String, String>,
+}
+
+impl PendingDelta {
+    fn is_empty(&self) -> bool {
+        self.meta.is_none() && self.changed.is_empty() && self.removed.is_empty()
+    }
+}
+
 struct PendingSave {
-    target: Option<(PathBuf, AppDataSnapshot)>,
+    delta: Option<PendingDelta>,
     seq: u64,
 }
 
@@ -313,33 +421,76 @@ struct SnapshotWriter {
     state: Mutex<PendingSave>,
     cv: Condvar,
     flushed_cv: Condvar,
+    last_saved: Mutex<std::collections::HashMap<String, String>>,
 }
 
 static SNAPSHOT_WRITER: OnceLock<SnapshotWriter> = OnceLock::new();
+
+fn write_delta(delta: PendingDelta) -> Result<(), String> {
+    use std::io::Write;
+    let journal_guard = JOURNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = journal_path();
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("ジャーナルを開けませんでした: {e}"))?;
+    if let Some(meta) = delta.meta {
+        let line = serde_json::json!({ "op": "meta", "snapshot": meta });
+        serde_json::to_writer(&mut file, &line)
+            .map_err(|e| format!("ジャーナル書き込みに失敗: {e}"))?;
+        file.write_all(b"\n")
+            .map_err(|e| format!("ジャーナル書き込みに失敗: {e}"))?;
+    }
+    for id in &delta.removed {
+        let line = serde_json::json!({ "op": "delete", "id": id });
+        serde_json::to_writer(&mut file, &line)
+            .map_err(|e| format!("ジャーナル書き込みに失敗: {e}"))?;
+        file.write_all(b"\n")
+            .map_err(|e| format!("ジャーナル書き込みに失敗: {e}"))?;
+    }
+    for note in delta.changed.values() {
+        let line = serde_json::json!({ "op": "note", "note": note });
+        serde_json::to_writer(&mut file, &line)
+            .map_err(|e| format!("ジャーナル書き込みに失敗: {e}"))?;
+        file.write_all(b"\n")
+            .map_err(|e| format!("ジャーナル書き込みに失敗: {e}"))?;
+    }
+    file.flush()
+        .map_err(|e| format!("ジャーナル書き込みに失敗: {e}"))?;
+    drop(file);
+    drop(journal_guard);
+    let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    if size > JOURNAL_COMPACT_BYTES {
+        compact_journal()?;
+    }
+    Ok(())
+}
 
 fn snapshot_writer() -> &'static SnapshotWriter {
     SNAPSHOT_WRITER.get_or_init(|| {
         let writer = SnapshotWriter {
             state: Mutex::new(PendingSave {
-                target: None,
+                delta: None,
                 seq: 0,
             }),
             cv: Condvar::new(),
             flushed_cv: Condvar::new(),
+            last_saved: Mutex::new(std::collections::HashMap::new()),
         };
         let _ = std::thread::Builder::new()
             .name("notelet-storage-writer".to_string())
             .spawn(|| {
                 let w = snapshot_writer();
                 loop {
-                    let (path, snap) = {
+                    let delta = {
                         let mut guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
-                        while guard.target.is_none() {
+                        while guard.delta.as_ref().is_none_or(PendingDelta::is_empty) {
                             guard = w.cv.wait(guard).unwrap_or_else(|e| e.into_inner());
                         }
                         let seq_seen = guard.seq;
-                        // 250ms デバウンスで連続更新を合流させ、呼び出し元のロック保持を最小化する
-                        let (g, _) = w
+                        // 250ms デバウンスで連続更新を合流させる。
+                        let (mut g, _) = w
                             .cv
                             .wait_timeout_while(
                                 guard,
@@ -347,19 +498,20 @@ fn snapshot_writer() -> &'static SnapshotWriter {
                                 |st| st.seq == seq_seen,
                             )
                             .unwrap_or_else(|e| e.into_inner());
-                        guard = g;
-                        let Some((p, s)) = guard.target.take() else {
-                            w.flushed_cv.notify_all();
-                            continue;
-                        };
-                        (p, s)
+                        g.delta.take()
                     };
-                    if let Err(err) = write_snapshot_to_path(&path, &snap) {
+                    let Some(delta) = delta else {
+                        continue;
+                    };
+                    let had_changes = !delta.is_empty();
+                    if let Err(err) = write_delta(delta) {
                         eprintln!("[notelet] async snapshot save failed: {err}");
                     }
-                    let guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
-                    if guard.target.is_none() {
-                        w.flushed_cv.notify_all();
+                    if had_changes {
+                        let guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
+                        if guard.delta.as_ref().is_none_or(PendingDelta::is_empty) {
+                            w.flushed_cv.notify_all();
+                        }
                     }
                 }
             });
@@ -373,8 +525,40 @@ pub fn save_snapshot(snapshot: &AppDataSnapshot) -> Result<(), String> {
         return write_snapshot_to_path(&path, snapshot);
     }
     let w = snapshot_writer();
+    let mut last = w.last_saved.lock().unwrap_or_else(|e| e.into_inner());
     let mut guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
-    guard.target = Some((path, snapshot.clone()));
+    let delta = guard.delta.get_or_insert_with(PendingDelta::default);
+    delta.meta = Some(snapshot_meta(snapshot));
+
+    let current_ids: std::collections::HashSet<&str> =
+        snapshot.notes.iter().map(|n| n.id.as_str()).collect();
+    for note in &snapshot.notes {
+        if last.get(&note.id) != Some(&note.updated_at) {
+            delta.changed.insert(note.id.clone(), note.clone());
+            delta.removed.remove(&note.id);
+            delta
+                .versions
+                .insert(note.id.clone(), note.updated_at.clone());
+        }
+    }
+    let removed_ids: Vec<String> = last
+        .keys()
+        .filter(|id| !current_ids.contains(id.as_str()))
+        .cloned()
+        .collect();
+    for id in removed_ids {
+        delta.changed.remove(&id);
+        delta.removed.insert(id.clone());
+        delta.versions.insert(id, String::new());
+    }
+    let versions = std::mem::take(&mut delta.versions);
+    for (id, version) in versions {
+        if version.is_empty() {
+            last.remove(&id);
+        } else {
+            last.insert(id, version);
+        }
+    }
     guard.seq = guard.seq.wrapping_add(1);
     w.cv.notify_all();
     Ok(())
@@ -382,15 +566,16 @@ pub fn save_snapshot(snapshot: &AppDataSnapshot) -> Result<(), String> {
 
 pub fn flush_snapshot_sync() {
     if let Some(w) = SNAPSHOT_WRITER.get() {
-        let mut guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((path, snap)) = guard.target.take() {
-            drop(guard);
-            let _ = write_snapshot_to_path(&path, &snap);
-        } else {
-            let _ = w
-                .flushed_cv
-                .wait_timeout_while(guard, Duration::from_secs(2), |st| st.target.is_some());
+        let delta = {
+            let mut guard = w.state.lock().unwrap_or_else(|e| e.into_inner());
+            guard.delta.take()
+        };
+        if let Some(delta) = delta {
+            let _ = write_delta(delta);
         }
+        // 終了時はジャーナルを本体へ畳み込む。
+        let _ = compact_journal();
+        w.flushed_cv.notify_all();
     }
 }
 
@@ -891,6 +1076,77 @@ pub fn normalize_media_to_16k_wav(input_path: &Path) -> (PathBuf, u64) {
 mod migration_tests {
     use super::*;
 
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn sample_note(id: &str, title: &str, updated_at: &str) -> Note {
+        Note {
+            id: id.to_string(),
+            title: title.to_string(),
+            created_at: updated_at.to_string(),
+            updated_at: updated_at.to_string(),
+            duration_sec: 0,
+            folder_id: "personal".to_string(),
+            tags: Vec::new(),
+            participants: Vec::new(),
+            manual_notes: String::new(),
+            segments: Vec::new(),
+            summary: String::new(),
+            decisions: Vec::new(),
+            action_items: Vec::new(),
+            follow_up_draft: String::new(),
+            asr_model_id: String::new(),
+            asr_provider_label: String::new(),
+            language: "ja".to_string(),
+            diarization_supported: false,
+            notion_sync: crate::models::NotionSyncState {
+                page_id: None,
+                page_url: None,
+                database_id: None,
+                last_synced_at: None,
+                status: "not_synced".to_string(),
+                last_error: None,
+            },
+            audio_path: None,
+            audio_encrypted: false,
+            storage_mode: "local".to_string(),
+            pinned: false,
+            summary_history: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn journal_replay_and_compaction_keep_latest_notes() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("notelet-journal-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("NOTELET_DATA_DIR", &dir);
+
+        let mut base = default_snapshot();
+        base.notes = vec![sample_note("a", "A", "2026-01-01T00:00:00Z")];
+        write_snapshot_to_path(&data_file_path(), &base).unwrap();
+        let _ = fs::remove_file(journal_path());
+
+        let mut delta = PendingDelta::default();
+        delta.meta = Some(snapshot_meta(&base));
+        delta
+            .changed
+            .insert("b".to_string(), sample_note("b", "B", "2026-01-02T00:00:00Z"));
+        delta.removed.insert("a".to_string());
+        write_delta(delta).unwrap();
+
+        let loaded = load_snapshot();
+        assert!(loaded.notes.iter().any(|n| n.id == "b"));
+        assert!(!loaded.notes.iter().any(|n| n.id == "a"));
+
+        compact_journal().unwrap();
+        let raw = fs::read_to_string(data_file_path()).unwrap();
+        assert!(raw.contains("\"id\":\"b\""));
+        assert!(!raw.contains("\"id\":\"a\""));
+
+        std::env::remove_var("NOTELET_DATA_DIR");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn rewrites_legacy_paths_in_snapshot() {
         let root = std::env::temp_dir().join(format!("notelet-migration-{}", Uuid::new_v4()));
@@ -940,8 +1196,7 @@ mod migration_tests {
     }
 
     #[test]
-    fn managed_audio_path_rejects_parent_and_outside_paths() {
-        let root = std::env::temp_dir().join(format!("notelet-audio-{}", Uuid::new_v4()));
+    fn managed_audio_path_rejects_parent_and_outside_paths() {        let root = std::env::temp_dir().join(format!("notelet-audio-{}", Uuid::new_v4()));
         let audio = root.join("audio");
         let temp = root.join("temp_recordings");
         fs::create_dir_all(&audio).unwrap();
