@@ -118,6 +118,7 @@ interface NoteEditorViewProps {
   onStopRecording?: () => Promise<void> | void;
   onRetranscribeNote?: (noteId: string) => Promise<void> | void;
   onUpdateNote: (note: Note) => void;
+  onFlushNote?: () => void;
   onSelectNote?: (noteId: string) => void;
   onCreateNoteInFolder?: (folderId: string) => void;
   onSaveFolder?: (folder: Folder) => Promise<void>;
@@ -161,6 +162,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
   onStopRecording,
   onRetranscribeNote,
   onUpdateNote,
+  onFlushNote,
   onSelectNote,
   onCreateNoteInFolder,
   onSaveFolder,
@@ -2134,6 +2136,8 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                   updated_at: new Date().toISOString(),
                 });
               }
+              // デバウンス中に閉じられても失われないよう即時 flush する。
+              onFlushNote?.();
             }}
             onKeyDown={handleTitleKeyDown}
           />
@@ -3139,6 +3143,7 @@ export const NoteEditorView: React.FC<NoteEditorViewProps> = ({
                 memoEditorRef={memoEditorRef}
                 applyMemoCommand={applyMemoCommand}
                 saveMemoHtml={saveMemoHtml}
+                onFlush={onFlushNote}
               />
             )}
           </div>

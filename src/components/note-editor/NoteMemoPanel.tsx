@@ -4,12 +4,14 @@ interface NoteMemoPanelProps {
   memoEditorRef: React.RefObject<HTMLDivElement | null>;
   applyMemoCommand: (command: string, value?: string) => void;
   saveMemoHtml: (html: string) => void;
+  onFlush?: () => void;
 }
 
 export const NoteMemoPanel: React.FC<NoteMemoPanelProps> = React.memo(({
   memoEditorRef,
   applyMemoCommand,
   saveMemoHtml,
+  onFlush,
 }) => (
   <div className="note-notes-tab">
     <section className="note-card" style={{ padding: 0 }}>
@@ -84,7 +86,10 @@ export const NoteMemoPanel: React.FC<NoteMemoPanelProps> = React.memo(({
         suppressContentEditableWarning
         className="rich-memo-editor"
         onInput={(e) => saveMemoHtml(e.currentTarget.innerHTML)}
-        onBlur={(e) => saveMemoHtml(e.currentTarget.innerHTML)}
+        onBlur={(e) => {
+          saveMemoHtml(e.currentTarget.innerHTML);
+          onFlush?.();
+        }}
       />
     </section>
   </div>
